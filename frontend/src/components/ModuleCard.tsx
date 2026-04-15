@@ -59,7 +59,7 @@ export default function ModuleCard({ agent, selected, onToggle, disabled = false
     <button
       type="button"
       className={`relative flex flex-col gap-2.5 rounded-lg border p-3.5 text-left transition-colors
-        ${selected ? 'border-primary bg-accent' : 'border-border bg-card hover:border-primary/30 hover:bg-accent/50'}
+        ${selected ? 'border-primary bg-accent shadow-sm' : 'border-border bg-card hover:border-primary/20 hover:bg-accent/30'}
         ${disabled ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
       onClick={() => !disabled && onToggle(agent.id)}
       aria-pressed={selected}
@@ -92,7 +92,7 @@ export default function ModuleCard({ agent, selected, onToggle, disabled = false
       {/* Tags */}
       <div className="flex flex-wrap gap-1">
         {persona.personality.map((tag) => (
-          <span key={tag} className="rounded bg-secondary px-1.5 py-0.5 text-[11px] text-secondary-foreground">
+          <span key={tag} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
             {tag}
           </span>
         ))}

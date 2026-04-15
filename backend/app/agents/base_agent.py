@@ -38,8 +38,11 @@ class BaseAgent(ABC):
         upstream_results: Optional[list[AgentResult]] = None,
         feishu_context: Optional[dict] = None,
     ) -> AgentResult:
-        prompt = self._build_prompt(task_description, data_summary, upstream_results, feishu_context)
+        prompt = self._build_prompt(
+            task_description, data_summary, upstream_results, feishu_context
+        )
         raw = await self._call_llm(prompt)
+        await self._reflect_on_output(raw, task_description)
         return self._parse_output(raw)
 
     def _build_prompt(
@@ -64,10 +67,15 @@ class BaseAgent(ABC):
         if upstream_results:
             parts = []
             for r in upstream_results:
-                summary_text = "\n".join(
-                    f"  [{s.title}]\n  {s.content[:500]}" for s in r.sections[:3]
+                section_text = "\n".join(
+                    f"  [{s.title}]\n  {s.content[:1500]}" for s in r.sections
                 )
-                parts.append(f"【{r.agent_name}的分析】\n{summary_text}")
+                action_text = ""
+                if r.action_items:
+                    action_text = "\n  [行动项]\n" + "\n".join(
+                        f"  - {a}" for a in r.action_items[:10]
+                    )
+                parts.append(f"【{r.agent_name}的分析】\n{section_text}{action_text}")
             upstream_section = (
                 "\n<upstream_analysis>\n"
                 + "\n\n".join(parts)
@@ -98,6 +106,31 @@ class BaseAgent(ABC):
             temperature=0.7,
             max_tokens=2000,
         )
+
+    async def _reflect_on_output(self, raw: str, task_description: str) -> str:
+        """AutoGen-style reflection: quick quality check on agent output."""
+        from app.core.llm_client import call_llm
+
+        critique_prompt = (
+            f"以下是一个AI分析助手对任务的输出：\n<output>\n{raw[:2000]}\n</output>\n\n"
+            f"任务要求：{task_description[:300]}\n\n"
+            "请快速评估：这个输出是否覆盖了任务的主要方面，并包含具体可操作的建议？\n"
+            "如果质量合格，只回复：PASS\n"
+            "如果有重大缺失（如缺少关键分析或建议为空），回复：FAIL: <缺失点，30字以内>"
+        )
+        try:
+            verdict = await call_llm(
+                system_prompt="你是一个严格的输出质量评审员，只回复PASS或FAIL。",
+                user_prompt=critique_prompt,
+                temperature=0,
+                max_tokens=60,
+            )
+            if not verdict.upper().startswith("PASS"):
+                logger.warning(f"[{self.agent_id}] reflection critique: {verdict}")
+            return verdict
+        except Exception as e:
+            logger.debug(f"[{self.agent_id}] reflection skipped: {e}")
+            return "PASS"
 
     def _parse_output(self, raw: str) -> AgentResult:
         """将 LLM 输出解析成结构化结果。子类可覆盖。"""

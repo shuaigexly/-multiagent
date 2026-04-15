@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import axios from 'axios';
 import { ArrowLeft, ChevronDown, Loader2, FileText, BarChart3, MessageSquare, CheckSquare, Check } from 'lucide-react';
 import FeishuAssetCard from '../components/FeishuAssetCard';
 import { AGENT_PERSONAS } from '../components/ModuleCard';
 import { getTaskResults, publishTask } from '../services/api';
+import { getChats } from '../services/feishu';
+import type { FeishuChat } from '../services/feishu';
 import type { TaskResultsResponse } from '../services/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +25,10 @@ const PUBLISH_OPTIONS = [
   { value: 'task', label: '飞书任务', desc: '待办清单', icon: CheckSquare },
 ];
 
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+type ActionTaskState = 'idle' | 'loading' | 'success' | 'error';
+
 export default function ResultView() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
@@ -31,16 +38,42 @@ export default function ResultView() {
   const [publishTypes, setPublishTypes] = useState<string[]>(['doc', 'task']);
   const [docTitle, setDocTitle] = useState('');
   const [chatId, setChatId] = useState('');
+  const [chats, setChats] = useState<FeishuChat[]>([]);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actionTaskStates, setActionTaskStates] = useState<Map<string, ActionTaskState>>(new Map());
 
   useEffect(() => {
     if (!taskId) { setLoading(false); return; }
+    getChats().then(setChats).catch(() => {});
     getTaskResults(taskId)
       .then((r) => { setData(r); setExpandedAgent(r.agent_results[0]?.agent_id ?? null); })
       .catch(() => setError('加载结果失败'))
       .finally(() => setLoading(false));
   }, [taskId]);
+
+  const setActionTaskState = (item: string, state: ActionTaskState) => {
+    setActionTaskStates((prev) => {
+      const next = new Map(prev);
+      next.set(item, state);
+      return next;
+    });
+  };
+
+  const createActionTask = async (item: string) => {
+    if (!taskId || actionTaskStates.get(item) === 'loading') return;
+
+    setActionTaskState(item, 'loading');
+
+    try {
+      await axios.post(`${BASE_URL}/api/v1/feishu/tasks`, { summary: item, source_task_id: taskId });
+      setActionTaskState(item, 'success');
+      window.setTimeout(() => setActionTaskState(item, 'idle'), 2000);
+    } catch {
+      setActionTaskState(item, 'error');
+      window.setTimeout(() => setActionTaskState(item, 'idle'), 2000);
+    }
+  };
 
   const handlePublish = async () => {
     if (!taskId) return;
@@ -131,8 +164,32 @@ export default function ResultView() {
                   {result.action_items.length > 0 && (
                     <div>
                       <div className="text-xs font-medium text-foreground mb-1">行动项</div>
-                      <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-0.5">
-                        {result.action_items.map((item) => <li key={item}>{item}</li>)}
+                      <ol className="space-y-1.5">
+                        {result.action_items.map((item) => {
+                          const actionTaskState = actionTaskStates.get(item) ?? 'idle';
+
+                          return (
+                            <li key={item} className="flex items-start gap-2">
+                              <span className="flex-1 text-sm text-muted-foreground">{item}</span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={actionTaskState === 'loading'}
+                                  onClick={() => void createActionTask(item)}
+                                  className="text-[11px] border border-border rounded px-2 py-0.5 hover:border-primary hover:text-primary transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {actionTaskState === 'loading' ? '创建中...' : '→ 飞书任务'}
+                                </button>
+                                {actionTaskState === 'success' && (
+                                  <span className="text-[11px] text-success">✓ 已创建</span>
+                                )}
+                                {actionTaskState === 'error' && (
+                                  <span className="text-[11px] text-destructive">✗ 失败</span>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
                       </ol>
                     </div>
                   )}
@@ -185,7 +242,18 @@ export default function ResultView() {
             </div>
             <div>
               <label className="text-[11px] text-muted-foreground mb-1 block">群聊 ID（可选）</label>
-              <Input value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="留空使用默认" />
+              <select
+                value={chatId}
+                onChange={(e) => setChatId(e.target.value)}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="">留空使用默认</option>
+                {chats.map((c) => (
+                  <option key={c.chat_id} value={c.chat_id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <div className="flex justify-end">

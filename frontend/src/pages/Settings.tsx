@@ -94,8 +94,8 @@ export default function Settings() {
     <div className="max-w-4xl mx-auto px-5 py-6 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">设置</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">管理 LLM 与飞书凭证</p>
+          <h1 className="text-xl font-semibold text-foreground">设置</h1>
+          <p className="mt-1 text-sm text-muted-foreground">管理 LLM 与飞书凭证</p>
         </div>
         <div className="flex gap-2">
           <span className={`rounded px-2 py-0.5 text-xs font-medium ${llmOk ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
@@ -111,10 +111,10 @@ export default function Settings() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* LLM */}
-        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-          <div className="text-sm font-medium text-foreground">LLM 配置</div>
+        <div className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="text-sm font-semibold text-foreground">LLM 配置</div>
           <div>
-            <label className="text-[11px] text-muted-foreground block mb-1">Provider</label>
+            <label className="mb-1 block text-xs font-medium text-foreground">Provider</label>
             <Select value={llmProvider} onValueChange={setLlmProvider}>
               <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -124,16 +124,16 @@ export default function Settings() {
             </Select>
           </div>
           <div>
-            <label className="text-[11px] text-muted-foreground block mb-1">API Key</label>
+            <label className="mb-1 block text-xs font-medium text-foreground">API Key</label>
             <Input className="h-9" type="password" value={llmApiKey} onChange={e => setLlmApiKey(e.target.value)} placeholder={config?.llm_api_key?.value || '输入 API Key'} />
             <p className="text-[11px] text-muted-foreground mt-0.5">留空则保持不变</p>
           </div>
           <div>
-            <label className="text-[11px] text-muted-foreground block mb-1">Base URL</label>
+            <label className="mb-1 block text-xs font-medium text-foreground">Base URL</label>
             <Input className="h-9" value={llmBaseUrl} onChange={e => setLlmBaseUrl(e.target.value)} />
           </div>
           <div>
-            <label className="text-[11px] text-muted-foreground block mb-1">Model</label>
+            <label className="mb-1 block text-xs font-medium text-foreground">Model</label>
             <Input className="h-9" value={llmModel} onChange={e => setLlmModel(e.target.value)} />
           </div>
           <div className="flex items-center gap-2 pt-1">
@@ -152,10 +152,10 @@ export default function Settings() {
         </div>
 
         {/* Feishu */}
-        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-          <div className="text-sm font-medium text-foreground">飞书配置</div>
+        <div className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="text-sm font-semibold text-foreground">飞书配置</div>
           <div>
-            <label className="text-[11px] text-muted-foreground block mb-1">Region</label>
+            <label className="mb-1 block text-xs font-medium text-foreground">Region</label>
             <Select value={feishuRegion} onValueChange={setFeishuRegion}>
               <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -165,11 +165,11 @@ export default function Settings() {
             </Select>
           </div>
           <div>
-            <label className="text-[11px] text-muted-foreground block mb-1">App ID</label>
+            <label className="mb-1 block text-xs font-medium text-foreground">App ID</label>
             <Input className="h-9" value={feishuAppId} onChange={e => setFeishuAppId(e.target.value)} placeholder="cli_xxx" />
           </div>
           <div>
-            <label className="text-[11px] text-muted-foreground block mb-1">App Secret</label>
+            <label className="mb-1 block text-xs font-medium text-foreground">App Secret</label>
             <Input className="h-9" type="password" value={feishuAppSecret} onChange={e => setFeishuAppSecret(e.target.value)} placeholder={config?.feishu_app_secret?.value || '输入 App Secret'} />
             <p className="text-[11px] text-muted-foreground mt-0.5">留空则保持不变</p>
           </div>

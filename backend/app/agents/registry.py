@@ -21,6 +21,17 @@ AGENT_REGISTRY: dict[str, BaseAgent] = {
 # CEO 助理总是最后执行（汇总角色）
 SEQUENTIAL_LAST = {"ceo_assistant"}
 
+# Dependency graph: agent X must complete before agents in its value set start
+# Used by orchestrator for topological execution ordering
+AGENT_DEPENDENCIES: dict[str, set[str]] = {
+    "data_analyst": {"finance_advisor", "ceo_assistant"},
+    "finance_advisor": {"ceo_assistant"},
+    "product_manager": {"ceo_assistant"},
+    "operations_manager": {"ceo_assistant"},
+    "seo_advisor": {"ceo_assistant"},
+    "content_manager": {"ceo_assistant"},
+}
+
 AGENT_INFO = [
     {
         "id": "data_analyst",

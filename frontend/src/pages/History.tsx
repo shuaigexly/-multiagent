@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Plus } from 'lucide-react';
+import { Inbox, Loader2, Plus } from 'lucide-react';
 import { listTasks } from '../services/api';
 import type { TaskListItem } from '../services/types';
 import { Button } from '@/components/ui/button';
@@ -37,8 +37,8 @@ export default function History() {
     <div className="max-w-4xl mx-auto px-5 py-6 space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">历史任务</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">回看任务执行状态和生成结果</p>
+          <h1 className="text-xl font-semibold text-foreground">历史任务</h1>
+          <p className="mt-1 text-sm text-muted-foreground">回看任务执行状态和生成结果</p>
         </div>
         <span className="text-xs text-muted-foreground">{tasks.length} 个任务</span>
       </div>
@@ -51,20 +51,24 @@ export default function History() {
         </div>
       ) : tasks.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
-          <div className="text-4xl">🗂️</div>
-          <div className="text-base font-medium text-foreground">暂无历史任务</div>
-          <p className="text-sm text-muted-foreground">创建第一个 AI 工作流</p>
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
+            <Inbox className="h-6 w-6" />
+          </div>
+          <div className="space-y-1">
+            <div className="text-base font-medium text-foreground">暂无历史任务</div>
+            <p className="text-sm text-muted-foreground">创建第一个 AI 工作流</p>
+          </div>
           <Button variant="outline" onClick={() => navigate('/')}><Plus className="h-3.5 w-3.5" />创建任务</Button>
         </div>
       ) : (
-        <div className="space-y-1.5">
+        <div className="space-y-2.5">
           {tasks.map((t) => {
             const s = STATUS_MAP[t.status] ?? { label: t.status, cls: 'bg-secondary text-secondary-foreground' };
             const canNav = t.status !== 'pending' && t.status !== 'planning';
             return (
               <div
                 key={t.id}
-                className={`flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3 transition-colors ${canNav ? 'cursor-pointer hover:bg-secondary/50' : 'opacity-60'}`}
+                className={`flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3 shadow-sm transition-all ${canNav ? 'cursor-pointer hover:bg-card hover:shadow-md' : 'opacity-60'}`}
                 onClick={() => canNav && navigate(`/results/${t.id}`)}
                 role={canNav ? 'button' : undefined}
                 tabIndex={canNav ? 0 : -1}

@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Check, Upload, FileText, X, Loader2, ArrowRight, Info } from 'lucide-react';
 import ModuleCard from '../components/ModuleCard';
 import ExecutionTimeline from '../components/ExecutionTimeline';
+import ContextSuggestions, { type Suggestion } from '../components/ContextSuggestions';
 import { confirmTask, createSSEConnection, getTaskStatus, listAgents, submitTask } from '../services/api';
+import { getFeishuContext, getChats, type FeishuContext } from '../services/feishu';
 import type { AgentInfo, SSEEvent, TaskPlanResponse } from '../services/types';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -18,10 +20,98 @@ const PRESET_COMBOS = [
   { label: '立项评估组', modules: ['product_manager', 'finance_advisor', 'ceo_assistant'] },
   { label: '全明星阵容', modules: ALL_AGENT_MODULES },
 ];
+const WORKFLOW_TEMPLATES = [
+  {
+    id: 'weekly_report',
+    label: '周报生成',
+    icon: '📊',
+    desc: '自动汇总本周经营数据',
+    prompt: '请分析本周经营数据，包括：\n1. 核心业务指标与上周对比\n2. 收入/成本/利润的主要波动点\n3. 识别出需要关注的风险信号\n4. 下周优先级行动建议（3-5条）\n最终输出一份适合发给管理层的周报。',
+    modules: ['data_analyst', 'finance_advisor', 'ceo_assistant'],
+  },
+  {
+    id: 'meeting_prep',
+    label: '会前准备',
+    icon: '📋',
+    desc: '生成议题和预期结论',
+    prompt: '请为即将召开的管理层会议准备材料，包括：\n1. 梳理本次会议的核心议题（3-5个）\n2. 每个议题的背景说明和讨论要点\n3. 预期需要做的决策和结论\n4. 会后跟进事项清单\n请以清晰的飞书文档格式输出。',
+    modules: ['product_manager', 'operations_manager', 'ceo_assistant'],
+  },
+  {
+    id: 'sprint_review',
+    label: '迭代复盘',
+    icon: '🔄',
+    desc: '产品迭代回顾与规划',
+    prompt: '请协助完成本迭代（Sprint）的复盘工作：\n1. 梳理本迭代完成/未完成的功能目标\n2. 分析延期/阻塞的根本原因\n3. 用户反馈和产品数据变化\n4. 下一迭代重点任务优先级排序\n5. 流程改进建议',
+    modules: ['product_manager', 'data_analyst', 'operations_manager'],
+  },
+  {
+    id: 'growth_analysis',
+    label: '增长分析',
+    icon: '🚀',
+    desc: '识别增长机会与瓶颈',
+    prompt: '请进行全面的增长分析：\n1. 流量/获客渠道效率对比\n2. 用户转化漏斗各环节流失分析\n3. 留存和活跃度趋势\n4. 识别 TOP3 增长机会和对应策略\n5. 内容/SEO 优化建议',
+    modules: ['seo_advisor', 'content_manager', 'data_analyst'],
+  },
+];
 type Step = 'input' | 'planning' | 'confirm' | 'running' | 'done';
 
 function isSameSelection(a: string[], b: string[]) {
   return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+}
+
+function buildSuggestions(ctx: FeishuContext, chats: Array<{ chat_id: string; name: string; description: string | null; chat_type: string }>): Suggestion[] {
+  const suggestions: Suggestion[] = [];
+
+  // Drive files → data analysis suggestions (up to 3)
+  ctx.drive.slice(0, 3).forEach((f, i) => {
+    suggestions.push({
+      id: `doc-${i}`,
+      type: 'doc',
+      source: '飞书文档',
+      label: f.name,
+      prompt: `分析《${f.name}》，提取关键洞察和行动建议`,
+      agents: ['data_analyst', 'ceo_assistant'],
+    });
+  });
+
+  // Calendar events → meeting prep suggestions (up to 3)
+  ctx.calendar.slice(0, 3).forEach((e, i) => {
+    suggestions.push({
+      id: `cal-${i}`,
+      type: 'calendar',
+      source: '日历',
+      label: e.summary,
+      prompt: `为《${e.summary}》准备会议材料，梳理议题和预期结论`,
+      agents: ['product_manager', 'ceo_assistant'],
+    });
+  });
+
+  // Pending tasks → execution plan suggestions (up to 3)
+  ctx.tasks.filter(t => !t.completed).slice(0, 3).forEach((t, i) => {
+    suggestions.push({
+      id: `task-${i}`,
+      type: 'task',
+      source: '待办',
+      label: t.summary,
+      prompt: `推进「${t.summary}」，制定详细执行计划和关键节点`,
+      agents: ['operations_manager', 'ceo_assistant'],
+    });
+  });
+
+  // Chats → follow-up suggestions (up to 2)
+  chats.slice(0, 2).forEach((c, i) => {
+    suggestions.push({
+      id: `chat-${i}`,
+      type: 'chat',
+      source: '群聊',
+      label: c.name,
+      prompt: `梳理「${c.name}」群聊中的待办和关键信息，生成跟进建议`,
+      agents: ['operations_manager', 'ceo_assistant'],
+    });
+  });
+
+  return suggestions;
 }
 
 export default function Workbench() {
@@ -38,12 +128,35 @@ export default function Workbench() {
   const [loading, setLoading] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [feishuCtx, setFeishuCtx] = useState<FeishuContext | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [ctxLoading, setCtxLoading] = useState(true);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
 
-  useEffect(() => { listAgents().then(setAgents).catch(() => setError('加载团队成员失败')); }, []);
+  useEffect(() => {
+    listAgents().then(setAgents).catch(() => setError('加载团队成员失败'));
+    Promise.all([
+      getFeishuContext(),
+      getChats().catch(() => [] as Array<{ chat_id: string; name: string; description: string | null; chat_type: string }>),
+    ])
+      .then(([ctx, chats]) => {
+        setFeishuCtx(ctx);
+        setSuggestions(buildSuggestions(ctx, chats.slice(0, 5)));
+      })
+      .catch(() => {})
+      .finally(() => setCtxLoading(false));
+  }, []);
   useEffect(() => () => { eventSourceRef.current?.close(); }, []);
 
   const toggleModule = (id: string) =>
     setSelectedModules(p => p.includes(id) ? p.filter(i => i !== id) : [...p, id]);
+
+  const handleSuggestionSelect = (s: Suggestion) => {
+    if (formLocked) return;
+    setInputText(s.prompt);
+    setSelectedModules(s.agents);
+    setSelectedSuggestion(s.id);
+  };
 
   const startSSE = (tid: string, recover: 'input' | 'confirm') => {
     eventSourceRef.current?.close();
@@ -71,12 +184,12 @@ export default function Workbench() {
     setError(null); setEvents([]);
     if (selectedModules.length > 0) {
       setPlan(null); setLoading(true); setStep('running');
-      try { const r = await submitTask(inputText, file ?? undefined); setTaskId(r.task_id); await confirmTask(r.task_id, selectedModules); startSSE(r.task_id, 'input'); }
+      try { const r = await submitTask(inputText, file ?? undefined, feishuCtx ?? undefined); setTaskId(r.task_id); await confirmTask(r.task_id, selectedModules); startSSE(r.task_id, 'input'); }
       catch { setStep('input'); setError('执行失败'); setLoading(false); }
       return;
     }
     setLoading(true); setStep('planning');
-    try { const r = await submitTask(inputText, file ?? undefined); setPlan(r); setTaskId(r.task_id); setSelectedModules(r.selected_modules); setStep('confirm'); }
+    try { const r = await submitTask(inputText, file ?? undefined, feishuCtx ?? undefined); setPlan(r); setTaskId(r.task_id); setSelectedModules(r.selected_modules); setStep('confirm'); }
     catch { setStep('input'); setError('AI 组队失败'); }
     finally { setLoading(false); }
   };
@@ -107,18 +220,58 @@ export default function Workbench() {
         <p className="text-sm text-muted-foreground mt-1">选好你的团队，告诉他们任务目标，AI 帮你执行并输出到飞书。</p>
       </div>
 
+      {/* Smart suggestions from Feishu context */}
+      <ContextSuggestions
+          suggestions={suggestions}
+          loading={ctxLoading}
+          selectedId={selectedSuggestion}
+          onSelect={handleSuggestionSelect}
+          disabled={formLocked}
+        />
+
+      {/* Workflow Templates */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-foreground">快速开始</span>
+          <span className="text-xs text-muted-foreground">选择一个工作流模板</span>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          {WORKFLOW_TEMPLATES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              disabled={formLocked}
+              onClick={() => {
+                if (formLocked) return;
+                setInputText(t.prompt);
+                setSelectedModules(t.modules);
+                setSelectedSuggestion(null);
+              }}
+              className={`flex flex-col gap-1 rounded-lg border bg-card p-3 text-left transition-all shadow-sm hover:border-primary/40 hover:shadow-md disabled:opacity-50 disabled:pointer-events-none
+                ${inputText === t.prompt ? 'border-primary bg-accent/50' : 'border-border'}`}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="text-base">{t.icon}</span>
+                <span className="text-xs font-medium text-foreground">{t.label}</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">{t.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Steps */}
       <div className="flex items-center gap-0">
         {['发布任务', '选择团队', '执行中'].map((label, i) => (
           <div key={label} className="flex items-center flex-1">
             <div className="flex items-center gap-2">
-              <div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium
+              <div className={`flex h-6 w-6 items-center justify-center rounded-full text-sm font-medium
                 ${stepStates[i] === 2 ? 'bg-primary text-primary-foreground' :
                   stepStates[i] === 1 ? 'border-2 border-primary text-primary' :
                   'border border-border text-muted-foreground'}`}>
                 {stepStates[i] === 2 ? <Check className="h-3 w-3" /> : i + 1}
               </div>
-              <span className={`text-xs ${stepStates[i] > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>{label}</span>
+              <span className={`text-sm ${stepStates[i] > 0 ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>{label}</span>
             </div>
             {i < 2 && <div className={`flex-1 h-px mx-3 ${stepStates[i + 1] >= 1 ? 'bg-primary' : 'bg-border'}`} />}
           </div>
@@ -133,7 +286,7 @@ export default function Workbench() {
       )}
 
       {/* Input Section */}
-      <div className="rounded-lg border border-border bg-card">
+      <div className="rounded-lg border border-border bg-card shadow-sm">
         <div className="p-4 space-y-4">
           {/* Textarea */}
           <textarea
@@ -149,9 +302,9 @@ export default function Workbench() {
 
           {/* File upload */}
           <div
-            className={`flex items-center gap-3 rounded-md border border-dashed px-3 py-2.5 transition-colors
-              ${formLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-secondary/50'}
-              ${file ? 'border-primary/40 bg-accent/50' : 'border-border'}`}
+            className={`flex items-center gap-3 rounded-md border border-dashed px-3 py-3 transition-colors
+              ${formLocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-secondary'}
+              ${file ? 'border-primary/40 bg-accent/50' : 'border-border bg-card'}`}
             onClick={() => !formLocked && fileInputRef.current?.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); if (!formLocked && e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); }}
@@ -189,7 +342,7 @@ export default function Workbench() {
               <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
               <div>
                 <div className="text-sm font-medium text-foreground">AI 已推荐团队 · <span className="text-primary">{plan.task_type_label}</span></div>
-                <p className="text-xs text-muted-foreground mt-0.5">{plan.reasoning}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{plan.reasoning}</p>
               </div>
             </div>
           )}
@@ -200,14 +353,14 @@ export default function Workbench() {
               <button key={c.label} type="button" disabled={selectionLocked}
                 onClick={() => setSelectedModules(c.modules)}
                 className={`rounded-md px-3 py-1 text-xs transition-colors
-                  ${isSameSelection(selectedModules, c.modules) ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-accent'}
+                  ${isSameSelection(selectedModules, c.modules) ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary'}
                   disabled:opacity-50`}
               >{c.label}</button>
             ))}
           </div>
 
           {/* Agent grid */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
             {agents.map((a) => (
               <ModuleCard key={a.id} agent={a} selected={selectedModules.includes(a.id)} onToggle={toggleModule} disabled={selectionLocked} />
             ))}
@@ -215,7 +368,7 @@ export default function Workbench() {
         </div>
 
         {/* Action bar */}
-        <div className="flex items-center justify-between border-t border-border px-4 py-3 bg-secondary/30">
+        <div className="flex items-center justify-between border-t border-border bg-card px-4 py-3">
           <div className="text-xs text-muted-foreground">
             {selectedModules.length > 0 ? `已选择 ${selectedModules.length} 名成员` : '未指定成员，AI 将自动组队'}
           </div>
@@ -232,7 +385,7 @@ export default function Workbench() {
 
       {/* Execution */}
       {(step === 'running' || step === 'done') && (
-        <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+        <div className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-medium text-foreground">{step === 'done' ? '执行完成' : '执行中'}</h2>
@@ -242,7 +395,7 @@ export default function Workbench() {
             </div>
             <span className="text-xs text-muted-foreground">{progressValue}%</span>
           </div>
-          <Progress value={progressValue} className="h-1.5" />
+          <Progress value={progressValue} className="h-1" />
           <ExecutionTimeline events={events} status={step === 'done' ? 'done' : 'running'} />
 
           {step === 'done' && taskId && (

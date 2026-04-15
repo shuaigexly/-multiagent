@@ -6,6 +6,7 @@ LLM 调用工厂。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.core.settings import (
@@ -70,16 +71,29 @@ async def _call_openai_compatible(
         api_key=get_llm_api_key(),
         base_url=get_llm_base_url(),
     )
-    resp = await client.chat.completions.create(
-        model=get_llm_model(),
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return resp.choices[0].message.content.strip()
+    last_err = None
+    for attempt in range(3):
+        try:
+            resp = await client.chat.completions.create(
+                model=get_llm_model(),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                wait = 2 ** attempt
+                logger.warning(
+                    f"LLM call attempt {attempt + 1} failed: {e}. "
+                    f"Retrying in {wait}s..."
+                )
+                await asyncio.sleep(wait)
+    raise RuntimeError(f"LLM call failed after 3 attempts: {last_err}") from last_err
 
 
 async def _call_feishu_aily(system_prompt: str, user_prompt: str) -> str:
