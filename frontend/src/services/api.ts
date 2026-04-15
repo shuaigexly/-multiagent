@@ -38,6 +38,11 @@ export async function getTaskResults(taskId: string): Promise<TaskResultsRespons
   return resp.data;
 }
 
+export async function getTaskStatus(taskId: string): Promise<{ status: string }> {
+  const res = await api.get<{ status: string }>(`/api/v1/tasks/${taskId}/status`);
+  return res.data;
+}
+
 export async function listTasks(): Promise<TaskListItem[]> {
   const resp = await api.get('/api/v1/tasks');
   return resp.data;

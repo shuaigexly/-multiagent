@@ -31,34 +31,22 @@ class EventEmitter:
         agent_name: Optional[str] = None,
         payload: Optional[dict] = None,
     ) -> int:
-        """原子分配 sequence，落库，再广播。返回分配到的 sequence。"""
-        async with self.db.begin_nested():
-            # 1. 原子递增 tasks.last_sequence
-            result = await self.db.execute(
-                select(Task.last_sequence).where(Task.id == self.task_id).with_for_update()
-            )
-            current_seq = result.scalar_one_or_none() or 0
-            new_seq = current_seq + 1
+        """Allocate sequence with CAS retry, persist event, commit, then publish."""
+        new_seq = await self._next_sequence()
 
-            await self.db.execute(
-                update(Task)
-                .where(Task.id == self.task_id)
-                .values(last_sequence=new_seq, updated_at=datetime.utcnow())
-            )
+        event = TaskEvent(
+            task_id=self.task_id,
+            sequence=new_seq,
+            event_type=event_type,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            payload=payload or {},
+            created_at=datetime.utcnow(),
+        )
+        self.db.add(event)
+        # Commit before Redis publish so consumers never see uncommitted events
+        await self.db.commit()
 
-            # 2. 插入 task_events
-            event = TaskEvent(
-                task_id=self.task_id,
-                sequence=new_seq,
-                event_type=event_type,
-                agent_id=agent_id,
-                agent_name=agent_name,
-                payload=payload or {},
-                created_at=datetime.utcnow(),
-            )
-            self.db.add(event)
-
-        # 3. 事务提交后，Redis PUBLISH
         if self.redis:
             try:
                 message = json.dumps(
@@ -77,6 +65,24 @@ class EventEmitter:
                 logger.warning(f"Redis publish failed (non-fatal): {e}")
 
         return new_seq
+
+    async def _next_sequence(self) -> int:
+        """Increment last_sequence using optimistic CAS; retry on concurrent modification."""
+        for _ in range(5):
+            result = await self.db.execute(
+                select(Task.last_sequence).where(Task.id == self.task_id)
+            )
+            current = result.scalar_one_or_none() or 0
+            new_seq = current + 1
+            update_result = await self.db.execute(
+                update(Task)
+                .where(Task.id == self.task_id, Task.last_sequence == current)
+                .values(last_sequence=new_seq, updated_at=datetime.utcnow())
+            )
+            if update_result.rowcount == 1:
+                return new_seq
+            await asyncio.sleep(0.01)
+        raise RuntimeError(f"Failed to allocate event sequence for task {self.task_id}")
 
     async def emit_task_recognized(self, task_type: str, task_type_label: str, modules: list):
         await self.emit(

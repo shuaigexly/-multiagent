@@ -1,6 +1,13 @@
 from datetime import datetime
 from typing import Optional, List, Any
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, field_validator
+
+
+VALID_MODULES = {
+    "data_analyst", "finance_advisor", "seo_advisor",
+    "content_manager", "product_manager", "operations_manager", "ceo_assistant",
+}
+VALID_ASSET_TYPES = {"doc", "bitable", "message", "task"}
 
 
 class TaskCreate(BaseModel):
@@ -25,6 +32,17 @@ class TaskPlanResponse(BaseModel):
 
 class TaskConfirm(BaseModel):
     selected_modules: List[str]
+
+    @field_validator("selected_modules")
+    @classmethod
+    def validate_modules(cls, v):
+        v = list(dict.fromkeys(v))  # deduplicate, preserve order
+        if not v:
+            raise ValueError("至少选择一个模块")
+        invalid = set(v) - VALID_MODULES
+        if invalid:
+            raise ValueError(f"未知模块: {invalid}")
+        return v
 
 
 class TaskEventOut(BaseModel):
@@ -59,9 +77,26 @@ class TaskResultsResponse(BaseModel):
 
 
 class PublishRequest(BaseModel):
-    asset_types: List[str]   # ["doc", "bitable", "message", "task"]
+    asset_types: List[str]
     doc_title: Optional[str] = None
     chat_id: Optional[str] = None
+
+    @field_validator("asset_types")
+    @classmethod
+    def validate_asset_types(cls, v):
+        if not v:
+            raise ValueError("asset_types 不能为空")
+        invalid = set(v) - VALID_ASSET_TYPES
+        if invalid:
+            raise ValueError(f"未知资产类型: {invalid}")
+        return list(set(v))
+
+    @field_validator("doc_title")
+    @classmethod
+    def validate_doc_title(cls, v):
+        if v is not None and len(v) > 100:
+            raise ValueError("doc_title 不超过 100 字符")
+        return v
 
 
 class PublishResponse(BaseModel):

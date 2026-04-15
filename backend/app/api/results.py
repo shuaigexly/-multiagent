@@ -3,13 +3,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_api_key
 from app.models.database import Task, TaskResult, PublishedAsset, get_db
 from app.models.schemas import TaskResultsResponse, AgentResultOut, ResultSection
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["results"])
 
 
-@router.get("/{task_id}/results", response_model=TaskResultsResponse)
+@router.get(
+    "/{task_id}/results",
+    response_model=TaskResultsResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def get_results(task_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()

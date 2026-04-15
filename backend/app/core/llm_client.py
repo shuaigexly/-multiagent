@@ -1,0 +1,89 @@
+"""
+LLM 调用工厂。
+根据 LLM_PROVIDER 环境变量路由到不同实现：
+  openai_compatible  → 任何兼容 OpenAI /chat/completions 的服务商（默认）
+  feishu_aily        → 飞书 Aily 智能伙伴（需企业开通飞书 AI）
+"""
+from __future__ import annotations
+
+import logging
+
+from app.core.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+async def call_llm(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    temperature: float = 0.7,
+    max_tokens: int = 2000,
+) -> str:
+    """
+    统一 LLM 调用入口。
+
+    Args:
+        system_prompt: 系统提示词
+        user_prompt: 用户消息（包含任务内容）
+        temperature: 生成温度（0-2），feishu_aily 模式下忽略此参数
+        max_tokens: 最大输出 token 数，feishu_aily 模式下忽略此参数
+
+    Returns:
+        模型返回的文本
+
+    Raises:
+        RuntimeError: 配置错误或调用失败
+    """
+    provider = settings.llm_provider.strip().lower()
+
+    if provider == "feishu_aily":
+        return await _call_feishu_aily(system_prompt, user_prompt)
+    else:
+        if provider != "openai_compatible":
+            logger.warning(
+                "未知 LLM_PROVIDER=%r，降级使用 openai_compatible 模式", provider
+            )
+        return await _call_openai_compatible(
+            system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens
+        )
+
+
+async def _call_openai_compatible(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    """调用任何兼容 OpenAI Chat Completions 接口的服务商。
+
+    支持：OpenAI、DeepSeek、火山方舟/豆包、通义千问、智谱 GLM、百川、MiniMax、Ollama 等。
+    """
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+    )
+    resp = await client.chat.completions.create(
+        model=settings.llm_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+async def _call_feishu_aily(system_prompt: str, user_prompt: str) -> str:
+    """调用飞书 Aily AI 智能伙伴。
+
+    Aily 是单轮会话制，不支持 system/user 分离，两者合并后发送。
+    需设置 AILY_APP_ID 环境变量。
+    """
+    from app.feishu.aily import call_aily
+
+    combined = f"{system_prompt}\n\n---\n\n{user_prompt}"
+    return await call_aily(combined)

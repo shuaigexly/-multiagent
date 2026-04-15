@@ -7,7 +7,6 @@ import logging
 from typing import Optional
 from pydantic import BaseModel
 
-from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +93,8 @@ async def plan_task(user_input: str, feishu_context: Optional[dict] = None) -> T
 
 
 async def _llm_plan(user_input: str) -> TaskPlan:
-    from openai import AsyncOpenAI
-    client = AsyncOpenAI(
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
-    )
+    from app.core.llm_client import call_llm
+
     task_types_desc = "\n".join(
         f"- {k}: {v['label']} — {v['description']}"
         for k, v in TASK_TYPES.items()
@@ -107,13 +103,12 @@ async def _llm_plan(user_input: str) -> TaskPlan:
         task_types_desc=task_types_desc,
         user_input=user_input,
     )
-    resp = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[{"role": "user", "content": prompt}],
+    raw = await call_llm(
+        system_prompt="你是一个任务分析专家，只返回 JSON，不要其他文字。",
+        user_prompt=prompt,
         temperature=0,
         max_tokens=300,
     )
-    raw = resp.choices[0].message.content.strip()
     # 清理 markdown 代码块
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -144,14 +139,14 @@ def _keyword_plan(user_input: str) -> TaskPlan:
         key = "content_growth"
     elif any(k in text for k in ["风险", "预警", "风控"]):
         key = "risk_analysis"
+    elif any(k in text for k in ["群", "聊天", "讨论"]):
+        key = "chat_organization"
     elif any(k in text for k in ["知识库", "整理", "归档"]):
         key = "knowledge_organization"
     elif any(k in text for k in ["文档", "批注", "修改"]):
         key = "document_processing"
     elif any(k in text for k in ["日历", "时间", "会议"]):
         key = "calendar_analysis"
-    elif any(k in text for k in ["群", "聊天", "讨论"]):
-        key = "chat_organization"
     else:
         key = "general"
     t = TASK_TYPES[key]

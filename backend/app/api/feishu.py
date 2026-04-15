@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_api_key
 from app.core.event_emitter import EventEmitter
 from app.feishu.publisher import publish_results
 from app.models.database import Task, TaskResult, get_db
@@ -14,7 +15,11 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["feishu"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("/{task_id}/publish", response_model=PublishResponse)
+@router.post(
+    "/{task_id}/publish",
+    response_model=PublishResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def publish_task(
     task_id: str,
     body: PublishRequest,
@@ -59,7 +64,7 @@ async def publish_task(
     return PublishResponse(published=published)
 
 
-@router.get("/agents")
+@router.get("/agents", dependencies=[Depends(require_api_key)])
 async def list_agents():
     """返回所有可用 Agent 模块信息"""
     from app.agents.registry import AGENT_INFO

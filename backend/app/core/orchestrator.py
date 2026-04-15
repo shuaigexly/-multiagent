@@ -91,4 +91,7 @@ async def orchestrate(
         if result:
             all_results.append(result)
 
+    if not all_results:
+        raise RuntimeError("所有 Agent 模块均执行失败，任务无结果")
+
     return all_results

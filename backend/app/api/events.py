@@ -2,72 +2,73 @@
 import asyncio
 import json
 import logging
-from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.models.database import Task, TaskEvent, get_db
+from app.core.auth import require_api_key
+from app.models.database import AsyncSessionLocal, Task, TaskEvent
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["events"])
 logger = logging.getLogger(__name__)
 
 
-@router.get("/{task_id}/events")
-async def task_events(task_id: str, db: AsyncSession = Depends(get_db)):
+@router.get("/{task_id}/events", dependencies=[Depends(require_api_key)])
+async def task_events(task_id: str, request: Request):
     """SSE 流：推送任务执行进度事件（业务语言，非技术日志）"""
-    result = await db.execute(select(Task).where(Task.id == task_id))
-    task = result.scalar_one_or_none()
-    if not task:
-        raise HTTPException(404, "任务不存在")
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Task.id).where(Task.id == task_id))
+        if not result.scalar_one_or_none():
+            raise HTTPException(404, "任务不存在")
 
     return EventSourceResponse(
-        _event_generator(task_id, db),
+        _event_generator(task_id, request),
         media_type="text/event-stream",
     )
 
 
-async def _event_generator(task_id: str, db: AsyncSession) -> AsyncIterator[dict]:
+async def _event_generator(task_id: str, request: Request):
     last_seq = 0
-    max_polls = 300   # 最多轮询 5 分钟（每秒一次）
 
-    for _ in range(max_polls):
-        result = await db.execute(
-            select(TaskEvent)
-            .where(TaskEvent.task_id == task_id, TaskEvent.sequence > last_seq)
-            .order_by(TaskEvent.sequence)
-            .limit(20)
-        )
-        events = result.scalars().all()
+    while True:
+        if await request.is_disconnected():
+            return
 
-        for event in events:
-            payload = event.payload or {}
-            # 将 event_type 转成用户友好的消息
-            user_message = _to_user_message(event.event_type, event.agent_name, payload)
-            data = {
-                "sequence": event.sequence,
-                "event_type": event.event_type,
-                "agent_name": event.agent_name,
-                "message": user_message,
-                "payload": payload,
-            }
-            yield {"data": json.dumps(data, ensure_ascii=False)}
-            last_seq = event.sequence
+        async with AsyncSessionLocal() as db:
+            events_result = await db.execute(
+                select(TaskEvent)
+                .where(TaskEvent.task_id == task_id, TaskEvent.sequence > last_seq)
+                .order_by(TaskEvent.sequence)
+                .limit(20)
+            )
+            new_events = events_result.scalars().all()
 
-        # 检查任务是否完成
-        task_result = await db.execute(
-            select(Task.status).where(Task.id == task_id)
-        )
-        status = task_result.scalar_one_or_none()
+            for event in new_events:
+                payload = event.payload or {}
+                user_message = _to_user_message(
+                    event.event_type, event.agent_name, payload
+                )
+                data = {
+                    "sequence": event.sequence,
+                    "event_type": event.event_type,
+                    "agent_name": event.agent_name,
+                    "message": user_message,
+                    "payload": payload,
+                }
+                yield {"data": json.dumps(data, ensure_ascii=False)}
+                last_seq = event.sequence
+
+            status_result = await db.execute(
+                select(Task.status).where(Task.id == task_id)
+            )
+            status = status_result.scalar_one_or_none()
+
         if status in ("done", "failed"):
             yield {"data": json.dumps({"event_type": "stream.end", "status": status})}
             return
 
         await asyncio.sleep(1)
-
-    yield {"data": json.dumps({"event_type": "stream.timeout"})}
 
 
 def _to_user_message(event_type: str, agent_name: str | None, payload: dict) -> str:

@@ -1,8 +1,9 @@
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Integer, Text, DateTime, JSON,
-    create_engine, event
+    create_engine, event, UniqueConstraint
 )
+from sqlalchemy import event as sa_event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 import uuid
@@ -38,6 +39,7 @@ class Task(Base):
 
 class TaskEvent(Base):
     __tablename__ = "task_events"
+    __table_args__ = (UniqueConstraint("task_id", "sequence", name="uq_task_event_seq"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String, nullable=False, index=True)
@@ -81,6 +83,14 @@ engine = create_async_engine(
     echo=False,
     connect_args={"check_same_thread": False},
 )
+
+
+@sa_event.listens_for(engine.sync_engine, "connect")
+def set_sqlite_pragmas(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
 
 AsyncSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
