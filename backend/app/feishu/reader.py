@@ -31,11 +31,18 @@ def _message_preview(content: str | None) -> str:
 
 async def list_drive_files(page_size: int = 20) -> list[dict]:
     try:
+        import lark_oapi as lark
         from app.feishu.client import get_feishu_client
+        from app.feishu.user_token import get_user_access_token
 
         client = get_feishu_client()
         req = ListFileRequest.builder().page_size(page_size).build()
-        resp = await asyncio.to_thread(client.drive.v1.file.list, req)
+        user_token = get_user_access_token()
+        if user_token:
+            option = lark.RequestOption.builder().user_access_token(user_token).build()
+            resp = await asyncio.to_thread(client.drive.v1.file.list, req, option)
+        else:
+            resp = await asyncio.to_thread(client.drive.v1.file.list, req)
         if not resp.success():
             logger.error(f"列出飞书云盘文件失败: {resp.msg} (code={resp.code})")
             return []
@@ -175,7 +182,9 @@ async def list_chat_messages(chat_id: str, page_size: int = 20) -> list[dict]:
 
 async def list_calendar_events(start_time: str, end_time: str, page_size: int = 50) -> list[dict]:
     try:
+        import lark_oapi as lark
         from app.feishu.client import get_feishu_client
+        from app.feishu.user_token import get_user_access_token
 
         client = get_feishu_client()
         req = (
@@ -186,7 +195,12 @@ async def list_calendar_events(start_time: str, end_time: str, page_size: int = 
             .page_size(page_size)
             .build()
         )
-        resp = await asyncio.to_thread(client.calendar.v4.calendar_event.list, req)
+        user_token = get_user_access_token()
+        if user_token:
+            option = lark.RequestOption.builder().user_access_token(user_token).build()
+            resp = await asyncio.to_thread(client.calendar.v4.calendar_event.list, req, option)
+        else:
+            resp = await asyncio.to_thread(client.calendar.v4.calendar_event.list, req)
         if not resp.success():
             logger.error(f"列出日历事件失败: {resp.msg} (code={resp.code})")
             return []
@@ -211,13 +225,25 @@ async def list_calendar_events(start_time: str, end_time: str, page_size: int = 
 
 async def list_tasks(page_size: int = 50) -> list[dict]:
     try:
+        import lark_oapi as lark
         from app.feishu.client import get_feishu_client
+        from app.feishu.user_token import get_user_access_token, set_user_access_token
+
+        user_token = get_user_access_token()
+        if not user_token:
+            logger.info("飞书任务 API 需要用户授权，请在「设置」页面点击「授权飞书任务」")
+            return []
 
         client = get_feishu_client()
         req = ListTaskRequest.builder().page_size(page_size).build()
-        resp = await asyncio.to_thread(client.task.v2.task.list, req)
+        option = lark.RequestOption.builder().user_access_token(user_token).build()
+        resp = await asyncio.to_thread(client.task.v2.task.list, req, option)
         if not resp.success():
-            logger.error(f"列出任务失败: {resp.msg} (code={resp.code})")
+            if resp.code == 99991668:
+                logger.warning("飞书用户 token 已过期，请重新授权（code=99991668）")
+                set_user_access_token(None)  # 清除过期 token
+            else:
+                logger.error(f"列出任务失败: {resp.msg} (code={resp.code})")
             return []
 
         tasks = resp.data.items if resp.data and resp.data.items else []

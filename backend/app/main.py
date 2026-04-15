@@ -9,7 +9,7 @@ import redis.asyncio as aioredis
 from sqlalchemy import select, update
 
 from app.api import config as config_api
-from app.api import events, feishu, feishu_context as feishu_context_api, results, tasks
+from app.api import events, feishu, feishu_context as feishu_context_api, feishu_oauth as feishu_oauth_api, results, tasks
 from app.core.settings import apply_db_config, settings
 from app.feishu.client import reset_feishu_client
 from app.models.database import AsyncSessionLocal, Task, UserConfig, init_db
@@ -69,9 +69,18 @@ async def _recover_interrupted_tasks():
 
 
 async def _load_runtime_config():
+    from app.feishu.user_token import set_user_access_token, set_user_open_id
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(UserConfig))
-        apply_db_config({row.key: row.value for row in result.scalars().all()})
+        rows = {row.key: row.value for row in result.scalars().all()}
+        apply_db_config(rows)
+        # 启动时恢复用户 OAuth token
+        if user_token := rows.get("feishu_user_access_token"):
+            set_user_access_token(user_token)
+            logger.info("已从数据库恢复飞书用户 OAuth token")
+        if open_id := rows.get("feishu_user_open_id"):
+            set_user_open_id(open_id)
+            logger.info(f"已从数据库恢复飞书用户 open_id: {open_id}")
     reset_feishu_client()
 
 
@@ -97,6 +106,7 @@ app.include_router(events.router)
 app.include_router(results.router)
 app.include_router(feishu.router)
 app.include_router(feishu_context_api.router)
+app.include_router(feishu_oauth_api.router)
 app.include_router(config_api.router)
 
 

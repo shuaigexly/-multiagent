@@ -131,6 +131,8 @@ async def publish_results(
 
     # 群消息
     if "message" in asset_types:
+        if not chat_id:
+            raise ValueError("发送群消息需要提供飞书群 ID（chat_id），请在发布面板中选择目标群聊")
         await emitter.emit_feishu_writing("消息")
         try:
             # 找 CEO 助理的摘要
@@ -159,6 +161,8 @@ async def publish_results(
             await db.commit()
             published.append({"type": "message", "title": "群消息已发送",
                                "message_id": msg_result["message_id"]})
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"群消息发送失败: {e}")
 

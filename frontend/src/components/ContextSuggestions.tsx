@@ -15,6 +15,7 @@ interface Props {
   selectedId: string | null;
   onSelect: (s: Suggestion) => void;
   disabled?: boolean;
+  feishuConfigured?: boolean;
 }
 
 const TYPE_CONFIG = {
@@ -24,7 +25,7 @@ const TYPE_CONFIG = {
   chat: { icon: MessageSquare, color: 'text-purple-500', bg: 'bg-purple-50', label: '群聊' },
 };
 
-export default function ContextSuggestions({ suggestions, loading, selectedId, onSelect, disabled }: Props) {
+export default function ContextSuggestions({ suggestions, loading, selectedId, onSelect, disabled, feishuConfigured }: Props) {
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-2">
@@ -45,7 +46,11 @@ export default function ContextSuggestions({ suggestions, loading, selectedId, o
         </div>
       ) : !loading && suggestions.length === 0 ? (
         <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-card/50 px-4 py-3">
-          <span className="text-xs text-muted-foreground">请先在「设置」中配置飞书凭证，即可在此显示智能推荐</span>
+          <span className="text-xs text-muted-foreground">
+            {feishuConfigured
+              ? '飞书中暂无云盘文件、日历或待办任务数据'
+              : '请先在「设置」中配置飞书凭证，即可在此显示智能推荐'}
+          </span>
         </div>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-1 -mx-0.5 px-0.5">

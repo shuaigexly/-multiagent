@@ -132,11 +132,20 @@ export default function Workbench() {
   const [feishuCtx, setFeishuCtx] = useState<FeishuContext | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [ctxLoading, setCtxLoading] = useState(true);
+  const [feishuConfigured, setFeishuConfigured] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     listAgents().then(setAgents).catch(() => setError('加载团队成员失败'));
+    // 从后端同步 LLM 配置状态到 localStorage，确保 isStoredLLMConfigured() 准确
+    // 同时检查飞书是否已配置
+    import('../services/config').then(({ getConfig, setStoredLLMConfigured }) => {
+      getConfig().then(cfg => {
+        setStoredLLMConfigured(Boolean(cfg.llm_api_key?.set));
+        setFeishuConfigured(Boolean(cfg.feishu_app_id?.set && cfg.feishu_app_secret?.set));
+      }).catch(() => {});
+    });
     Promise.all([
       getFeishuContext(),
       getChats().catch(() => [] as Array<{ chat_id: string; name: string; description: string | null; chat_type: string }>),
@@ -250,6 +259,7 @@ export default function Workbench() {
           selectedId={selectedSuggestion}
           onSelect={handleSuggestionSelect}
           disabled={formLocked}
+          feishuConfigured={feishuConfigured}
         />
 
       {/* Workflow Templates */}

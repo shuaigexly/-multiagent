@@ -85,11 +85,18 @@ export default function ResultView() {
 
   const handlePublish = async () => {
     if (!taskId) return;
+    if (publishTypes.includes('message') && !chatId) {
+      setError('发送群消息必须先选择目标群聊');
+      return;
+    }
     setPublishing(true); setError(null);
     try {
       await publishTask(taskId, publishTypes, { docTitle: docTitle || undefined, chatId: chatId || undefined });
       setData(await getTaskResults(taskId));
-    } catch { setError('发布失败，请检查飞书配置'); }
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(msg || '发布失败，请检查飞书配置');
+    }
     finally { setPublishing(false); }
   };
 
@@ -278,23 +285,35 @@ export default function ResultView() {
               <Input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="4 月经营分析周报" />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground mb-1 block">群聊 ID（可选）</label>
+              <label className={`text-[11px] mb-1 block ${publishTypes.includes('message') ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                群聊{publishTypes.includes('message') ? <span className="text-destructive ml-0.5">*</span> : '（可选）'}
+              </label>
               <select
                 value={chatId}
                 onChange={(e) => setChatId(e.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                className={`h-9 w-full rounded-md border bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring
+                  ${publishTypes.includes('message') && !chatId ? 'border-destructive focus:ring-destructive' : 'border-input'}`}
               >
-                <option value="">留空使用默认</option>
+                <option value="">请选择群聊</option>
                 {chats.map((c) => (
                   <option key={c.chat_id} value={c.chat_id}>
                     {c.name}
                   </option>
                 ))}
               </select>
+              {publishTypes.includes('message') && !chatId && (
+                <p className="text-[11px] text-destructive mt-0.5">发送群消息必须选择目标群聊</p>
+              )}
             </div>
           </div>
-          <div className="flex justify-end">
-            <Button disabled={publishing || publishTypes.length === 0} onClick={handlePublish}>
+          <div className="flex items-center justify-end gap-2">
+            {publishTypes.includes('message') && !chatId && (
+              <span className="text-xs text-destructive">请先选择群聊，否则无法发布</span>
+            )}
+            <Button
+              disabled={publishing || publishTypes.length === 0 || (publishTypes.includes('message') && !chatId)}
+              onClick={handlePublish}
+            >
               {publishing ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />发布中</> : '发布到飞书'}
             </Button>
           </div>

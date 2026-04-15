@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { getConfig, saveConfigs, setStoredLLMConfigured, testFeishu, testLLM, type ConfigMap, type ConnectionTestResult } from '../services/config';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,11 @@ export default function Settings() {
   const [feishuAppSecret, setFeishuAppSecret] = useState('');
   const [llmTest, setLlmTest] = useState<ConnectionTestResult | null>(null);
   const [feishuTest, setFeishuTest] = useState<ConnectionTestResult | null>(null);
+  const [taskAuthorized, setTaskAuthorized] = useState(false);
+  const [authorizingTask, setAuthorizingTask] = useState(false);
+  const [searchParams] = useSearchParams();
+
+  const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   const load = async () => {
     const d = await getConfig(); setConfig(d);
@@ -44,9 +50,19 @@ export default function Settings() {
     setLlmModel(d.llm_model?.value || 'gpt-4o-mini');
     setFeishuRegion(d.feishu_region?.value || 'cn');
     setFeishuAppId(d.feishu_app_id?.value || '');
+    // 检查任务 OAuth 状态
+    fetch(`${BASE_URL}/api/v1/feishu/oauth/status`)
+      .then(r => r.json()).then(d => setTaskAuthorized(Boolean(d.authorized))).catch(() => {});
   };
 
-  useEffect(() => { load().catch(e => setError(getErr(e, '加载失败'))).finally(() => setLoading(false)); }, []);
+  useEffect(() => {
+    load().catch(e => setError(getErr(e, '加载失败'))).finally(() => setLoading(false));
+    // 处理 OAuth 回调结果
+    const oauthResult = searchParams.get('oauth');
+    if (oauthResult === 'success') {
+      setTaskAuthorized(true);
+    }
+  }, []);
 
   const saveLLM = async () => {
     setSaving('llm'); setError(null); setLlmTest(null);
@@ -73,6 +89,25 @@ export default function Settings() {
     try { setLlmTest(await testLLM(llmApiKey.trim(), llmBaseUrl.trim(), llmModel.trim())); }
     catch (e) { setLlmTest({ ok: false, message: getErr(e, '测试失败') }); }
     finally { setTestingLLM(false); }
+  };
+
+  const handleAuthorizeTask = async () => {
+    setAuthorizingTask(true);
+    try {
+      const backendOrigin = BASE_URL;
+      const frontendOrigin = window.location.origin;
+      const r = await fetch(`${BASE_URL}/api/v1/feishu/oauth/url?backend_origin=${encodeURIComponent(backendOrigin)}&frontend_origin=${encodeURIComponent(frontendOrigin)}`);
+      const data = await r.json();
+      if (data.ok && data.url) {
+        window.location.href = data.url;
+      } else {
+        setError(data.message || '获取授权链接失败');
+      }
+    } catch (e) {
+      setError(getErr(e, '获取授权链接失败'));
+    } finally {
+      setAuthorizingTask(false);
+    }
   };
 
   const doTestFeishu = async () => {
@@ -195,6 +230,46 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {/* 飞书任务 OAuth 授权 */}
+      {Boolean(config?.feishu_app_id?.set) && (
+        <div className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-foreground">飞书任务授权</div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                任务 API 需要用户级 OAuth 授权（独立于应用凭证）
+              </p>
+            </div>
+            <span className={`rounded px-2 py-0.5 text-xs font-medium ${taskAuthorized ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
+              {taskAuthorized ? '已授权 ✓' : '未授权'}
+            </span>
+          </div>
+          {searchParams.get('oauth') === 'success' && (
+            <div className="flex items-center gap-1.5 text-xs text-success">
+              <CheckCircle2 className="h-3.5 w-3.5" />授权成功，任务数据已可读取
+            </div>
+          )}
+          {searchParams.get('oauth') === 'error' && (
+            <div className="flex items-center gap-1.5 text-xs text-destructive">
+              <XCircle className="h-3.5 w-3.5" />授权失败：{searchParams.get('msg') || '未知错误'}
+            </div>
+          )}
+          <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+            授权前请先在飞书开放平台 → 安全设置 → 重定向 URL 中添加：<br />
+            <code className="font-mono">{(import.meta.env.VITE_API_URL || 'http://localhost:8000')}/api/v1/feishu/oauth/callback</code>
+          </div>
+          <Button
+            variant={taskAuthorized ? 'outline' : 'default'}
+            size="sm"
+            onClick={handleAuthorizeTask}
+            disabled={authorizingTask}
+          >
+            {authorizingTask ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            {taskAuthorized ? '重新授权' : '授权飞书任务'}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

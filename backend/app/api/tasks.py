@@ -254,12 +254,16 @@ async def _execute_task(
                 selected_modules,
             )
 
-            # 解析数据
+            # 解析数据：优先用上传文件，其次读取飞书上下文中的文档内容
             data_summary = None
             if task.input_file and os.path.exists(task.input_file):
                 async with aiofiles.open(task.input_file, "r", encoding="utf-8", errors="replace") as f:
                     file_content = await f.read()
                 data_summary = parse_content(file_content, os.path.basename(task.input_file))
+
+            # 若无上传文件，则尝试从飞书上下文中读取真实文档内容
+            if not data_summary and task.feishu_context:
+                data_summary = await _enrich_from_feishu_context(task.feishu_context, emitter, task_id)
 
             # 执行 Agent 模块
             TASK_TIMEOUT = int(os.getenv("TASK_TIMEOUT_SECONDS", "300"))
@@ -332,3 +336,71 @@ async def _execute_task(
                     await emitter2.emit_task_error(str(e))
             except Exception:
                 pass
+
+
+async def _enrich_from_feishu_context(
+    feishu_context: dict,
+    emitter: "EventEmitter",
+    task_id: str,
+) -> "DataSummary | None":
+    """
+    从 feishu_context 中读取真实飞书数据（文档内容 + 任务/日历摘要），
+    合并为 DataSummary 供 Agent 分析使用。
+    读取失败时静默降级，不中断任务。
+    """
+    from app.feishu.reader import read_doc_content
+    from app.core.data_parser import DataSummary
+
+    parts: list[str] = []
+
+    # 1. 读取飞书文档（docx）内容，最多 2 篇
+    drive_files = feishu_context.get("drive", [])
+    doc_files = [f for f in drive_files if f.get("type") == "docx"][:2]
+    for f in doc_files:
+        token = f.get("token")
+        name = f.get("name", "未命名文档")
+        if not token:
+            continue
+        try:
+            await emitter.emit("context.retrieved", payload={"doc_count": 0, "summary": f"正在读取飞书文档：{name}"})
+            content = await read_doc_content(token)
+            if content and content.strip():
+                parts.append(f"【飞书文档：{name}】\n{content[:4000]}")
+                logger.info(f"[task={task_id}] 读取文档成功: {name}，{len(content)} 字")
+            else:
+                logger.info(f"[task={task_id}] 文档内容为空: {name}")
+        except Exception as e:
+            logger.warning(f"[task={task_id}] 读取文档失败({name}): {e}")
+
+    # 2. 附加任务摘要
+    tasks_list = feishu_context.get("tasks", [])
+    pending_tasks = [t for t in tasks_list if not t.get("completed")]
+    if pending_tasks:
+        task_lines = "\n".join(
+            f"- {t.get('summary', '无标题')}" + (f"（截止：{t['due']}）" if t.get("due") else "")
+            for t in pending_tasks[:10]
+        )
+        parts.append(f"【飞书待办任务（{len(pending_tasks)} 项）】\n{task_lines}")
+
+    # 3. 附加日历摘要
+    calendar_list = feishu_context.get("calendar", [])
+    if calendar_list:
+        cal_lines = "\n".join(
+            f"- {e.get('summary', '无标题')}" + (f"（{e.get('start_time', '')}）" if e.get("start_time") else "")
+            for e in calendar_list[:10]
+        )
+        parts.append(f"【近期日历事项（{len(calendar_list)} 项）】\n{cal_lines}")
+
+    if not parts:
+        logger.info(f"[task={task_id}] feishu_context 中无可读取的有效数据")
+        return None
+
+    combined = "\n\n---\n\n".join(parts)
+    return DataSummary(
+        raw_preview=combined[:1000],
+        columns=[],
+        row_count=len(parts),
+        basic_stats={},
+        content_type="text",
+        full_text=combined[:8000],
+    )

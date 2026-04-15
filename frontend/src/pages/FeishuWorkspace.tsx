@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   CalendarDays,
   CheckSquare,
@@ -6,15 +7,18 @@ import {
   Inbox,
   Loader2,
   MessageSquare,
+  Settings,
   Users,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
 import {
   getCalendarEvents,
   getChats,
   getDriveFiles,
   getFeishuTasks,
 } from '@/services/feishu';
+import { getConfig } from '@/services/config';
 import type {
   CalendarEvent,
   DriveFile,
@@ -97,7 +101,9 @@ function ErrorState({ message }: { message: string }) {
 }
 
 export default function FeishuWorkspace() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>('drive');
+  const [feishuConfigured, setFeishuConfigured] = useState<boolean | null>(null);
 
   const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
   const [driveLoading, setDriveLoading] = useState(false);
@@ -120,6 +126,13 @@ export default function FeishuWorkspace() {
   const [chatsLoaded, setChatsLoaded] = useState(false);
 
   useEffect(() => {
+    getConfig().then(cfg => {
+      setFeishuConfigured(Boolean(cfg.feishu_app_id?.set && cfg.feishu_app_secret?.set));
+    }).catch(() => setFeishuConfigured(false));
+  }, []);
+
+  useEffect(() => {
+    if (feishuConfigured !== true) return;
     if (activeTab === 'drive' && !driveLoaded && !driveLoading) {
       setDriveLoading(true);
       setDriveError(null);
@@ -178,6 +191,35 @@ export default function FeishuWorkspace() {
     tasksLoaded,
     tasksLoading,
   ]);
+
+  if (feishuConfigured === null) return (
+    <div className="flex items-center justify-center min-h-[60vh] gap-2 text-sm text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin" />加载中...
+    </div>
+  );
+
+  if (!feishuConfigured) return (
+    <div className="max-w-4xl mx-auto px-5 py-6">
+      <div className="mb-5">
+        <h1 className="text-xl font-semibold text-foreground">飞书工作区</h1>
+        <p className="mt-1 text-sm text-muted-foreground">查看已授权飞书中的文档、日历、任务和群聊</p>
+      </div>
+      <div className="flex flex-col items-center justify-center py-20 gap-4 text-center rounded-lg border border-dashed border-border bg-card">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent">
+          <Settings className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <div className="space-y-1">
+          <div className="text-base font-medium text-foreground">飞书未配置</div>
+          <p className="text-sm text-muted-foreground max-w-xs">
+            需要配置飞书 App ID 和 App Secret 才能查看飞书工作区数据
+          </p>
+        </div>
+        <Button onClick={() => navigate('/settings')}>
+          前往设置配置飞书
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="max-w-4xl mx-auto px-5 py-6 space-y-5">

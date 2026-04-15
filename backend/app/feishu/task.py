@@ -6,6 +6,7 @@ from typing import Optional
 from lark_oapi.api.task.v2 import (
     CreateTaskRequest,
     InputTask,
+    Member,
     Due,
 )
 
@@ -20,8 +21,15 @@ async def create_task(title: str, notes: Optional[str] = None, due_ms: Optional[
 
 
 async def _create_task_impl(title: str, notes: Optional[str] = None, due_ms: Optional[int] = None) -> dict:
-    """创建飞书任务，返回 {"task_guid": "...", "url": "..."}"""
+    """创建飞书任务，返回 {"task_guid": "...", "url": "..."}
+    优先使用 user_access_token（任务归属当前用户可见），无授权时降级为 tenant_access_token。
+    """
+    import lark_oapi as lark
+    from app.feishu.user_token import get_user_access_token, get_user_open_id
+
     client = get_feishu_client()
+    user_token = get_user_access_token()
+    user_open_id = get_user_open_id()
 
     task_builder = InputTask.builder().summary(title)
     if notes:
@@ -29,15 +37,25 @@ async def _create_task_impl(title: str, notes: Optional[str] = None, due_ms: Opt
     if due_ms:
         due = Due.builder().timestamp(str(due_ms)).is_all_day(False).build()
         task_builder = task_builder.due(due)
+    # 将授权用户设为负责人，使任务出现在「我负责的」列表并可通过 AppLink 打开
+    if user_open_id:
+        member = Member.builder().id(user_open_id).type("user").role("assignee").build()
+        task_builder = task_builder.members([member])
 
     req = CreateTaskRequest.builder().request_body(task_builder.build()).build()
-    resp = await asyncio.to_thread(client.task.v2.task.create, req)
+
+    if user_token:
+        option = lark.RequestOption.builder().user_access_token(user_token).build()
+        resp = await asyncio.to_thread(client.task.v2.task.create, req, option)
+    else:
+        resp = await asyncio.to_thread(client.task.v2.task.create, req)
+
     if not resp.success():
         raise RuntimeError(f"创建任务失败: {resp.msg}")
 
     task_guid = resp.data.task.guid
     url = f"{get_applink_base_url()}/client/todo/detail?guid={task_guid}"
-    logger.info(f"飞书任务创建成功: {task_guid}")
+    logger.info(f"飞书任务创建成功: {task_guid} (用户token={'有' if user_token else '无'})")
     return {"task_guid": task_guid, "url": url, "title": title}
 
 

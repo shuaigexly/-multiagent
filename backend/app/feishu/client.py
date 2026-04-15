@@ -74,9 +74,11 @@ def reset_feishu_client():
 
 
 def get_feishu_base_url() -> str:
-    """返回飞书/Lark 开放平台 URL 前缀（用于生成文档、知识库等链接）"""
+    """返回飞书/Lark 用户侧 URL 前缀（用于生成可被用户直接打开的文档、知识库链接）
+    注意：open.feishu.cn 是 API 域名，用户侧访问需用 feishu.cn
+    """
     region = get_feishu_region().strip().lower()
-    return "https://open.larksuite.com" if region == "intl" else "https://open.feishu.cn"
+    return "https://larksuite.com" if region == "intl" else "https://feishu.cn"
 
 
 def get_applink_base_url() -> str:
