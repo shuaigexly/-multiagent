@@ -8,7 +8,8 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base_agent import AgentResult
-from app.feishu import doc, bitable, im, task as feishu_task
+from app.feishu import bitable, doc, im, slides, task as feishu_task
+from app.feishu.client import get_feishu_client
 from app.core.event_emitter import EventEmitter
 from app.models.database import PublishedAsset
 
@@ -67,7 +68,7 @@ async def publish_results(
     if "doc" in asset_types:
         await emitter.emit_feishu_writing("文档")
         try:
-            result = await doc.create_document(title=title, content=full_report)
+            result = await doc.create_rich_document(title=title, agent_results=agent_results)
             asset = PublishedAsset(
                 task_id=task_id,
                 asset_type="doc",
@@ -83,45 +84,50 @@ async def publish_results(
             logger.error(f"飞书文档发布失败: {e}")
 
     # 多维表格
-    if "bitable" in asset_types and action_items:
+    if "bitable" in asset_types:
         await emitter.emit_feishu_writing("多维表格")
         try:
-            bitable_result = await bitable.create_bitable(name=f"{title} - 行动清单")
-            table_id = await bitable.create_table(
-                app_token=bitable_result["app_token"],
-                table_name="行动建议",
-                fields=[
-                    {"field_name": "行动项", "type": 1},
-                    {"field_name": "来源", "type": 1},
-                    {"field_name": "状态", "type": 1},
-                ],
-            )
-            records = [
-                {
-                    "行动项": item,
-                    "来源": task_type_label,
-                    "状态": "待处理",
-                }
-                for item in action_items[:100]
-            ]
-            await bitable.batch_add_records(
-                app_token=bitable_result["app_token"],
-                table_id=table_id,
-                records=records,
+            bitable_title = f"{title} - 分析协作"
+            bitable_result = await bitable.create_analysis_bitable(
+                name=bitable_title,
+                agent_results=agent_results,
             )
             asset = PublishedAsset(
                 task_id=task_id,
                 asset_type="bitable",
-                title=f"{title} - 行动清单",
+                title=bitable_title,
                 feishu_url=bitable_result["url"],
                 feishu_id=bitable_result["app_token"],
             )
             db.add(asset)
             await db.commit()
-            published.append({"type": "bitable", "title": f"{title} - 行动清单",
-                               "url": bitable_result["url"]})
+            published.append({"type": "bitable", "title": bitable_title, "url": bitable_result["url"]})
         except Exception as e:
             logger.error(f"多维表格发布失败: {e}")
+
+    # 演示文稿
+    if "slides" in asset_types:
+        await emitter.emit_feishu_writing("演示文稿")
+        try:
+            slides_title = f"{title} - 演示文稿"
+            slides_result = await slides.create_presentation(
+                title=slides_title,
+                agent_results=agent_results,
+                client=get_feishu_client(),
+            )
+            asset = PublishedAsset(
+                task_id=task_id,
+                asset_type="slides",
+                title=slides_title,
+                feishu_url=slides_result["url"],
+                feishu_id=slides_result.get("presentation_token") or slides_result.get("doc_token"),
+                meta={"render_type": slides_result["type"]},
+            )
+            db.add(asset)
+            await db.commit()
+            published.append({"type": "slides", "title": slides_title, "url": slides_result["url"]})
+        except Exception as e:
+            logger.error(f"演示文稿发布失败: {e}")
 
     # 群消息
     if "message" in asset_types:

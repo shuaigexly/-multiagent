@@ -7,7 +7,7 @@ VALID_MODULES = {
     "data_analyst", "finance_advisor", "seo_advisor",
     "content_manager", "product_manager", "operations_manager", "ceo_assistant",
 }
-VALID_ASSET_TYPES = {"doc", "bitable", "message", "task"}
+VALID_ASSET_TYPES = {"doc", "bitable", "slides", "message", "task"}
 
 
 class TaskCreate(BaseModel):
@@ -89,7 +89,7 @@ class PublishRequest(BaseModel):
         invalid = set(v) - VALID_ASSET_TYPES
         if invalid:
             raise ValueError(f"未知资产类型: {invalid}")
-        return list(set(v))
+        return list(dict.fromkeys(v))
 
     @field_validator("doc_title")
     @classmethod

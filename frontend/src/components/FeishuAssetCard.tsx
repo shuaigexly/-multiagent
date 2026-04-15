@@ -1,4 +1,4 @@
-import { ExternalLink, FileText, BarChart3, MessageSquare, CheckSquare, BookOpen, Paperclip } from 'lucide-react';
+import { ExternalLink, FileText, BarChart3, MessageSquare, CheckSquare, BookOpen, Paperclip, Presentation } from 'lucide-react';
 import type { PublishedAsset } from '../services/types';
 
 interface Props { asset: PublishedAsset; }
@@ -6,6 +6,7 @@ interface Props { asset: PublishedAsset; }
 const ASSET_META: Record<string, { label: string; icon: typeof FileText }> = {
   doc: { label: '文档', icon: FileText },
   bitable: { label: '多维表格', icon: BarChart3 },
+  slides: { label: '演示文稿', icon: Presentation },
   message: { label: '消息', icon: MessageSquare },
   task: { label: '任务', icon: CheckSquare },
   wiki: { label: '知识库', icon: BookOpen },

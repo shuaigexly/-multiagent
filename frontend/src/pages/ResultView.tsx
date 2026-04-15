@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, ChevronDown, Loader2, FileText, BarChart3, MessageSquare, CheckSquare, Check } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Loader2, FileText, BarChart3, MessageSquare, CheckSquare, Check, Presentation } from 'lucide-react';
 import FeishuAssetCard from '../components/FeishuAssetCard';
 import { AGENT_PERSONAS } from '../components/ModuleCard';
 import { getTaskResults, publishTask } from '../services/api';
@@ -22,6 +22,7 @@ const STATUS_MAP: Record<string, { label: string; cls: string }> = {
 const PUBLISH_OPTIONS = [
   { value: 'doc', label: '飞书文档', desc: '完整分析报告', icon: FileText },
   { value: 'bitable', label: '多维表格', desc: '结构化数据', icon: BarChart3 },
+  { value: 'slides', label: '演示文稿', desc: '汇报式展示', icon: Presentation },
   { value: 'message', label: '群消息', desc: '摘要通知', icon: MessageSquare },
   { value: 'task', label: '飞书任务', desc: '待办清单', icon: CheckSquare },
 ];
