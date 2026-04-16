@@ -6,7 +6,7 @@ import uuid
 from typing import Optional
 
 import aiofiles
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,7 @@ from app.core.event_emitter import EventEmitter
 from app.core.orchestrator import orchestrate
 from app.core.settings import settings
 from app.core.task_planner import plan_task
-from app.models.database import Task, TaskEvent, TaskResult, get_db
+from app.models.database import PublishedAsset, Task, TaskEvent, TaskResult, get_db
 from app.models.schemas import (
     TaskConfirm,
     TaskCreate,
@@ -138,9 +138,28 @@ async def confirm_task(
 
 
 @router.get("", response_model=list[TaskListItem], dependencies=[Depends(require_api_key)])
-async def list_tasks(db: AsyncSession = Depends(get_db)):
+async def list_tasks(
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    status: str | None = Query(None),
+    search: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    status = (status or "").strip() or None
+    search = (search or "").strip() or None
+    effective_limit = 50 if not request.query_params else limit
+
+    query = select(Task)
+    if status:
+        query = query.where(Task.status == status)
+    if search:
+        query = query.where(
+            func.lower(func.coalesce(Task.input_text, "")).like(f"%{search.lower()}%")
+        )
+
     result = await db.execute(
-        select(Task).order_by(Task.created_at.desc()).limit(50)
+        query.order_by(Task.created_at.desc()).offset(offset).limit(effective_limit)
     )
     tasks = result.scalars().all()
     return [
@@ -165,21 +184,37 @@ async def get_task_status(task_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{task_id}", dependencies=[Depends(require_api_key)])
-async def cancel_task(task_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        update(Task)
-        .where(Task.id == task_id, Task.status.in_(["planning", "pending", "running"]))
-        .values(status="cancelled")
-    )
+async def delete_task(
+    task_id: str,
+    action: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    if action == "cancel":
+        result = await db.execute(
+            update(Task)
+            .where(Task.id == task_id, Task.status.in_(["planning", "pending", "running"]))
+            .values(status="cancelled")
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            current_status = await db.scalar(select(Task.status).where(Task.id == task_id))
+            if current_status is None:
+                raise HTTPException(404, "任务不存在")
+            if current_status == "cancelled":
+                return {"status": "cancelled"}
+            raise HTTPException(400, f"任务状态 {current_status} 无法取消")
+        return {"status": "cancelled"}
+
+    task_exists = await db.scalar(select(Task.id).where(Task.id == task_id))
+    if task_exists is None:
+        raise HTTPException(404, "任务不存在")
+
+    await db.execute(delete(TaskResult).where(TaskResult.task_id == task_id))
+    await db.execute(delete(TaskEvent).where(TaskEvent.task_id == task_id))
+    await db.execute(delete(PublishedAsset).where(PublishedAsset.task_id == task_id))
+    await db.execute(delete(Task).where(Task.id == task_id))
     await db.commit()
-    if result.rowcount == 0:
-        current_status = await db.scalar(select(Task.status).where(Task.id == task_id))
-        if current_status is None:
-            raise HTTPException(404, "任务不存在")
-        if current_status == "cancelled":
-            return {"status": "cancelled"}
-        raise HTTPException(400, f"任务状态 {current_status} 无法取消")
-    return {"status": "cancelled"}
+    return {"ok": True}
 
 
 async def _is_task_cancelled(db: AsyncSession, task_id: str) -> bool:

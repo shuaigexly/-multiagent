@@ -44,12 +44,23 @@ export async function getTaskStatus(taskId: string): Promise<{ status: string }>
 }
 
 export async function cancelTask(taskId: string): Promise<{ status: string }> {
-  const res = await api.delete<{ status: string }>(`/api/v1/tasks/${taskId}`);
+  const res = await api.delete<{ status: string }>(`/api/v1/tasks/${taskId}`, {
+    params: { action: 'cancel' },
+  });
   return res.data;
 }
 
-export async function listTasks(): Promise<TaskListItem[]> {
-  const resp = await api.get('/api/v1/tasks');
+export async function deleteTask(taskId: string): Promise<void> {
+  await api.delete(`/api/v1/tasks/${taskId}`);
+}
+
+export async function listTasks(params?: {
+  limit?: number;
+  offset?: number;
+  status?: string;
+  search?: string;
+}): Promise<TaskListItem[]> {
+  const resp = await api.get('/api/v1/tasks', { params });
   return resp.data;
 }
 

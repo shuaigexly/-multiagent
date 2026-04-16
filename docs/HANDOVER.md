@@ -42,6 +42,17 @@ LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o
 ```
 
+### Docker 部署
+
+- 已提供 `backend/Dockerfile`、`frontend/Dockerfile`、`docker-compose.yml`。
+- 首次部署先手动创建 `backend/.env`，可从 `backend/.env.example` 复制后修改。
+- 建议在 `backend/.env` 中保留 SQLite，并使用 `DATABASE_URL=sqlite+aiosqlite:///./data/workbench.db`。
+- 启动命令：`docker compose up --build -d`。
+- 后端默认映射到 `http://localhost:8000`，前端映射到 `http://localhost:5173`。
+- SQLite 数据目录挂载到仓库根目录 `data/`，上传文件挂载到 `uploads/`。
+- `redis` 服务已在 compose 中提供；当前为可选，不依赖它也可运行主流程。
+- 停止命令：`docker compose down`。
+
 ---
 
 ## 三、完整请求链路

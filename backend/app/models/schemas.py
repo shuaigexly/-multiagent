@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List, Any
-from pydantic import BaseModel, model_validator, field_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 
 VALID_MODULES = {
@@ -105,7 +105,7 @@ class PublishResponse(BaseModel):
 
 class TaskListItem(BaseModel):
     id: str
-    status: str
+    status: str = Field(description="任务状态：planning、pending、running、done、failed、cancelled")
     task_type_label: Optional[str]
     input_text: Optional[str]
     created_at: datetime
