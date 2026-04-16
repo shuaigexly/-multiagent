@@ -15,6 +15,38 @@ from app.core.event_emitter import EventEmitter
 logger = logging.getLogger(__name__)
 
 
+def _assess_data_availability(
+    data_summary: Optional[DataSummary],
+    feishu_context: Optional[dict],
+) -> tuple[bool, str]:
+    """
+    Returns (can_proceed, message).
+    can_proceed=False means no analyzable data exists.
+    """
+    # Check uploaded file data
+    if data_summary is not None:
+        return True, ""
+
+    # Check feishu context
+    if feishu_context:
+        drive = feishu_context.get("drive") or []
+        tasks = feishu_context.get("tasks") or []
+        calendar = feishu_context.get("calendar") or []
+        if drive or tasks or calendar:
+            return True, ""
+
+    # No data at all
+    message = (
+        "暂无可分析的数据，无法启动智能分析。\n\n"
+        "请提供以下任意一项后重试：\n"
+        "• 上传数据文件（.csv / .txt / .md）\n"
+        "• 在飞书设置中选择关联的云文档或电子表格\n"
+        "• 关联飞书任务清单或近期日历事项\n\n"
+        "数据来源支持通过飞书 OAuth 授权后自动读取，或直接粘贴飞书文档链接。"
+    )
+    return False, message
+
+
 async def run_agent_safe(
     agent_id: str,
     task_description: str,
@@ -80,6 +112,23 @@ async def orchestrate(
     3. Within a wave, run agents in parallel
     4. ceo_assistant always in the final wave (SEQUENTIAL_LAST)
     """
+    can_proceed, no_data_message = _assess_data_availability(data_summary, feishu_context)
+    if not can_proceed:
+        # Return a single informational result instead of running agents
+        no_data_result = AgentResult(
+            agent_id="system",
+            agent_name="系统提示",
+            sections=[ResultSection(title="需要数据", content=no_data_message)],
+            action_items=[
+                "上传数据文件（.csv / .txt / .md）",
+                "选择飞书云文档或电子表格",
+                "关联飞书任务或日历事项",
+            ],
+            raw_output=no_data_message,
+        )
+        await emitter.emit("task.no_data", payload={"message": no_data_message})
+        return [no_data_result]
+
     selected_set = set(selected_modules)
 
     # Build effective deps restricted to selected modules

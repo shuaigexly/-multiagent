@@ -98,13 +98,21 @@ class BaseAgent(ABC):
                 + "\n</upstream_analysis>\n"
             )
 
+        # Load and inject matching skills
+        from app.core.skill_loader import format_skills_for_prompt, get_skills_for_agent
+        skills = get_skills_for_agent(self.agent_id)
+        skill_section = format_skills_for_prompt(skills)
+
         ctx_str = str(feishu_context or {})
-        return self.USER_PROMPT_TEMPLATE.format(
+        base_prompt = self.USER_PROMPT_TEMPLATE.format(
             task_description=f"<user_task>\n{_escape_xml(task_description)}\n</user_task>",
             data_section=data_section,
             upstream_section=upstream_section,
             feishu_context=f"<feishu_context>\n{ctx_str}\n</feishu_context>",
         )
+        if skill_section:
+            base_prompt = skill_section + "\n\n" + base_prompt
+        return base_prompt
 
     async def _call_llm(self, user_prompt: str) -> str:
         from app.core.llm_client import call_llm
