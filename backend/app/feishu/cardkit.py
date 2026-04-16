@@ -8,6 +8,7 @@ import httpx
 from app.agents.base_agent import AgentResult
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret, get_feishu_region
 from app.feishu.client import get_feishu_base_url
+from app.feishu.retry import with_retry
 from app.feishu.user_token import get_user_access_token
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,7 @@ def _build_card_content(title: str, results: list[AgentResult]) -> dict:
     }
 
 
-async def send_card_to_chat(chat_id: str, title: str, results: list[AgentResult]) -> dict:
+async def _send_card_to_chat_impl(chat_id: str, title: str, results: list[AgentResult]) -> dict:
     """Send an agent results card to a Feishu group chat."""
     token = get_user_access_token() or await _get_tenant_access_token()
     api_base_url = _get_feishu_api_base_url()
@@ -181,7 +182,11 @@ async def send_card_to_chat(chat_id: str, title: str, results: list[AgentResult]
     return {"message_id": msg_id, "url": f"{user_base_url}/im/chat/{chat_id}/message/{msg_id}"}
 
 
-async def send_card_to_user(open_id: str, title: str, results: list[AgentResult]) -> dict:
+async def send_card_to_chat(chat_id: str, title: str, results: list[AgentResult]) -> dict:
+    return await with_retry(_send_card_to_chat_impl, chat_id, title, results)
+
+
+async def _send_card_to_user_impl(open_id: str, title: str, results: list[AgentResult]) -> dict:
     """发卡片私信给用户（receive_id_type=open_id）"""
     token = get_user_access_token() or await _get_tenant_access_token()
     api_base_url = _get_feishu_api_base_url()
@@ -210,6 +215,10 @@ async def send_card_to_user(open_id: str, title: str, results: list[AgentResult]
     resp_chat_id = resp_data.get("chat_id", "")
     url = f"{user_base_url}/im/chat/{resp_chat_id}/message/{msg_id}" if resp_chat_id else None
     return {"message_id": msg_id, "url": url}
+
+
+async def send_card_to_user(open_id: str, title: str, results: list[AgentResult]) -> dict:
+    return await with_retry(_send_card_to_user_impl, open_id, title, results)
 
 
 async def _get_tenant_access_token() -> str:
