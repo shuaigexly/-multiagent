@@ -1,5 +1,6 @@
 """飞书 OAuth 用户授权（用于获取 user_access_token，支持任务 API 等用户级接口）"""
 import logging
+import os
 import secrets
 import time
 from urllib.parse import quote
@@ -10,7 +11,12 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.settings import get_feishu_app_id, get_feishu_app_secret, get_feishu_region
+from app.core.settings import (
+    get_feishu_app_id,
+    get_feishu_app_secret,
+    get_feishu_region,
+    settings as _settings,
+)
 from app.feishu.token_crypto import encrypt_token
 from app.feishu.user_token import (
     get_user_access_token,
@@ -43,6 +49,14 @@ def _cleanup_pending_states(now: float | None = None) -> None:
         _pending_states.pop(token, None)
 
 
+def _is_allowed_origin(origin: str) -> bool:
+    allowed = [
+        o.strip()
+        for o in os.getenv("ALLOWED_ORIGINS", _settings.allowed_origins).split(",")
+    ]
+    return origin.rstrip("/") in [a.rstrip("/") for a in allowed if a]
+
+
 def _create_oauth_state(frontend_origin: str) -> str:
     _cleanup_pending_states()
     token = secrets.token_urlsafe(16)
@@ -70,7 +84,7 @@ async def get_oauth_status():
     return {"authorized": bool(get_user_access_token())}
 
 
-@router.get("/oauth/refresh")
+@router.post("/oauth/refresh")
 async def refresh_oauth_token():
     """使用服务端保存的 refresh_token 刷新用户 OAuth token"""
     try:
@@ -86,6 +100,9 @@ async def get_oauth_url(
     frontend_origin: str = Query("http://localhost:8080"),
 ):
     """生成飞书 OAuth 授权 URL"""
+    if not _is_allowed_origin(frontend_origin):
+        return {"ok": False, "message": f"不允许的 frontend_origin: {frontend_origin}"}
+
     app_id = get_feishu_app_id()
     if not app_id:
         return {"ok": False, "message": "飞书 App ID 未配置"}

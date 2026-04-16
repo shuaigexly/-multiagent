@@ -28,6 +28,11 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 logger = logging.getLogger(__name__)
 
 
+def _escape_like(value: str) -> str:
+    """Escape SQLite LIKE metacharacters."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @router.post("", response_model=TaskPlanResponse, dependencies=[Depends(require_api_key)])
 async def create_task(
     input_text: Optional[str] = Form(None),
@@ -158,8 +163,9 @@ async def list_tasks(
     if status:
         query = query.where(Task.status == status)
     if search:
+        escaped = _escape_like(search.lower())
         query = query.where(
-            func.lower(func.coalesce(Task.input_text, "")).like(f"%{search.lower()}%")
+            func.lower(func.coalesce(Task.input_text, "")).like(f"%{escaped}%", escape="\\")
         )
 
     result = await db.execute(

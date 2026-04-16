@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Literal
 
-import httpx
 from fastapi import APIRouter, Depends
 from openai import AsyncOpenAI
 from pydantic import BaseModel, field_validator, model_validator
@@ -275,17 +274,28 @@ async def test_feishu(body: FeishuTestRequest):
 
 @router.post("/test-bot", dependencies=[Depends(require_api_key)])
 async def test_bot():
-    challenge = "test_ping"
     try:
-        async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=5.0) as client:
-            response = await client.post(
-                "/api/v1/feishu/bot/event",
-                json={"type": "url_verification", "challenge": challenge},
-            )
-        payload = response.json()
-    except Exception:
-        payload = {}
+        verification_token = get_feishu_bot_verification_token()
+        encrypt_key = get_feishu_bot_encrypt_key()
 
-    if payload.get("challenge") == challenge:
-        return {"ok": True, "message": "Bot 事件订阅配置正常"}
-    return {"ok": False, "message": "Bot 未响应 challenge，请检查 Verification Token 配置"}
+        if encrypt_key:
+            from lark_oapi.core.utils import AESCipher
+
+            AESCipher(encrypt_key)
+
+        config_summary: list[str] = []
+        if verification_token:
+            config_summary.append("Verification Token ✓")
+        else:
+            config_summary.append("Verification Token 未设置（开发模式）")
+        if encrypt_key:
+            config_summary.append("Encrypt Key ✓")
+        else:
+            config_summary.append("Encrypt Key 未设置（明文模式）")
+
+        return {
+            "ok": True,
+            "message": "Bot 配置正常：" + "，".join(config_summary),
+        }
+    except Exception as exc:
+        return {"ok": False, "message": f"Bot 配置异常: {str(exc)[:200]}"}

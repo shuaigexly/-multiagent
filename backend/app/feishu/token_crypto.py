@@ -1,24 +1,36 @@
 """飞书 OAuth token 的静态加密/解密。"""
 import logging
-from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
+_fernet_cache: Fernet | None | bool = False
 
 
-@lru_cache(maxsize=1)
 def _get_fernet() -> Fernet | None:
+    global _fernet_cache
+    if _fernet_cache is not False:
+        return _fernet_cache
+
     key = settings.token_encryption_key.strip()
     if not key:
+        _fernet_cache = None
         return None
     try:
-        return Fernet(key.encode())
+        _fernet_cache = Fernet(key.encode())
+        return _fernet_cache
     except Exception:
         logger.warning("TOKEN_ENCRYPTION_KEY 无效，已禁用 token 加密")
+        _fernet_cache = None
         return None
+
+
+def reset_fernet_cache() -> None:
+    """Call this after TOKEN_ENCRYPTION_KEY is changed at runtime."""
+    global _fernet_cache
+    _fernet_cache = False
 
 
 def encrypt_token(plaintext: str) -> str:

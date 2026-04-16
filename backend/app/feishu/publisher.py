@@ -2,6 +2,7 @@
 Publisher：将分析结果发布到飞书各类资产
 入口函数：publish_results()
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -69,7 +70,10 @@ async def publish_results(
     if "doc" in asset_types:
         await emitter.emit_feishu_writing("文档")
         try:
-            result = await doc.create_rich_document(title=title, agent_results=agent_results)
+            result = await asyncio.wait_for(
+                doc.create_rich_document(title=title, agent_results=agent_results),
+                timeout=60.0,
+            )
             asset = PublishedAsset(
                 task_id=task_id,
                 asset_type="doc",
@@ -104,9 +108,12 @@ async def publish_results(
         await emitter.emit_feishu_writing("多维表格")
         try:
             bitable_title = f"{title} - 分析协作"
-            bitable_result = await bitable.create_analysis_bitable(
-                name=bitable_title,
-                agent_results=agent_results,
+            bitable_result = await asyncio.wait_for(
+                bitable.create_analysis_bitable(
+                    name=bitable_title,
+                    agent_results=agent_results,
+                ),
+                timeout=60.0,
             )
             asset = PublishedAsset(
                 task_id=task_id,
@@ -142,10 +149,13 @@ async def publish_results(
         await emitter.emit_feishu_writing("演示文稿")
         try:
             slides_title = f"{title} - 演示文稿"
-            slides_result = await slides.create_presentation(
-                title=slides_title,
-                agent_results=agent_results,
-                client=get_feishu_client(),
+            slides_result = await asyncio.wait_for(
+                slides.create_presentation(
+                    title=slides_title,
+                    agent_results=agent_results,
+                    client=get_feishu_client(),
+                ),
+                timeout=60.0,
             )
             asset = PublishedAsset(
                 task_id=task_id,
@@ -190,18 +200,24 @@ async def publish_results(
         await emitter.emit_feishu_writing("互动卡片")
         try:
             if _target_chat_id:
-                card_result = await send_card_to_chat(
-                    chat_id=_target_chat_id,
-                    title=f"📊 {title}",
-                    results=agent_results,
+                card_result = await asyncio.wait_for(
+                    send_card_to_chat(
+                        chat_id=_target_chat_id,
+                        title=f"📊 {title}",
+                        results=agent_results,
+                    ),
+                    timeout=60.0,
                 )
             else:
                 from app.feishu.cardkit import send_card_to_user
 
-                card_result = await send_card_to_user(
-                    open_id=_target_open_id,
-                    title=f"📊 {title}",
-                    results=agent_results,
+                card_result = await asyncio.wait_for(
+                    send_card_to_user(
+                        open_id=_target_open_id,
+                        title=f"📊 {title}",
+                        results=agent_results,
+                    ),
+                    timeout=60.0,
                 )
             asset = PublishedAsset(
                 task_id=task_id,
@@ -263,16 +279,22 @@ async def publish_results(
                 summary_text = f"【{task_type_label}】分析完成，共 {len(agent_results)} 个模块参与分析。"
 
             if _target_chat_id:
-                msg_result = await im.send_card_message(
-                    title=f"📊 {title}",
-                    content=summary_text,
-                    chat_id=_target_chat_id,
+                msg_result = await asyncio.wait_for(
+                    im.send_card_message(
+                        title=f"📊 {title}",
+                        content=summary_text,
+                        chat_id=_target_chat_id,
+                    ),
+                    timeout=60.0,
                 )
             else:
-                msg_result = await im.send_dm_card(
-                    open_id=_target_open_id,
-                    title=f"📊 {title}",
-                    content=summary_text,
+                msg_result = await asyncio.wait_for(
+                    im.send_dm_card(
+                        open_id=_target_open_id,
+                        title=f"📊 {title}",
+                        content=summary_text,
+                    ),
+                    timeout=60.0,
                 )
             asset = PublishedAsset(
                 task_id=task_id,
@@ -311,7 +333,10 @@ async def publish_results(
         try:
             # 过滤掉 [摘要] 开头的 action_items
             task_items = [i for i in action_items if not i.startswith("[摘要]")][:10]
-            task_results = await feishu_task.batch_create_tasks(task_items)
+            task_results = await asyncio.wait_for(
+                feishu_task.batch_create_tasks(task_items),
+                timeout=60.0,
+            )
             for tr in task_results:
                 asset = PublishedAsset(
                     task_id=task_id,

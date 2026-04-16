@@ -8,7 +8,12 @@ import type {
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-const api = axios.create({ baseURL: BASE_URL });
+const api = axios.create({
+  baseURL: BASE_URL,
+  headers: {
+    ...(import.meta.env.VITE_API_KEY ? { 'X-API-Key': import.meta.env.VITE_API_KEY } : {}),
+  },
+});
 
 export async function submitTask(
   inputText: string,
@@ -83,5 +88,9 @@ export async function listAgents(): Promise<AgentInfo[]> {
 }
 
 export function createSSEConnection(taskId: string): EventSource {
-  return new EventSource(`${BASE_URL}/api/v1/tasks/${taskId}/events`);
+  const apiKey = import.meta.env.VITE_API_KEY || '';
+  const url = `${BASE_URL}/api/v1/tasks/${taskId}/events${
+    apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : ''
+  }`;
+  return new EventSource(url);
 }

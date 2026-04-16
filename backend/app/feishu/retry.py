@@ -1,8 +1,10 @@
 import asyncio
 import logging
+import re
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+_CLIENT_ERROR_PATTERN = re.compile(r"\b4(?:0[0-9]|1[0-7])\b")
 
 
 def _is_token_expired(exc: Exception) -> bool:
@@ -16,8 +18,9 @@ def _is_token_expired(exc: Exception) -> bool:
 
 
 def _is_client_error(exc: Exception) -> bool:
-    message = str(exc).strip().lower()
-    return message.startswith(("400", "401", "403", "404"))
+    """Return True for 4xx client errors that should not be retried."""
+    message = str(exc)
+    return bool(_CLIENT_ERROR_PATTERN.search(message)) and not _is_token_expired(exc)
 
 
 async def with_retry(

@@ -5,11 +5,11 @@ import logging
 import os
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.auth import require_api_key
+from app.core.settings import settings
 from app.models.database import AsyncSessionLocal, Task, TaskEvent
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["events"])
@@ -17,9 +17,20 @@ logger = logging.getLogger(__name__)
 MAX_SSE_SECONDS = int(os.getenv("MAX_SSE_SECONDS", "600"))
 
 
-@router.get("/{task_id}/events", dependencies=[Depends(require_api_key)])
-async def task_events(task_id: str, request: Request):
+@router.get("/{task_id}/events")
+async def task_events(
+    task_id: str,
+    request: Request,
+    x_api_key: str = Header("", alias="X-API-Key"),
+    api_key: str = Query(""),
+):
     """SSE 流：推送任务执行进度事件（业务语言，非技术日志）"""
+    expected = settings.api_key
+    if expected:
+        token = x_api_key or api_key
+        if token != expected:
+            raise HTTPException(401, "Invalid API key")
+
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Task.id).where(Task.id == task_id))
         if not result.scalar_one_or_none():

@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import (
     Column, String, Integer, Text, DateTime, JSON,
-    create_engine, event, UniqueConstraint
+    create_engine, event, UniqueConstraint, Index
 )
 from sqlalchemy import event as sa_event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -34,13 +34,20 @@ class Task(Base):
     result_summary = Column(Text, nullable=True)         # 最终汇总结论
     error_message = Column(Text, nullable=True)
     last_sequence = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
 
 class TaskEvent(Base):
     __tablename__ = "task_events"
-    __table_args__ = (UniqueConstraint("task_id", "sequence", name="uq_task_event_seq"),)
+    __table_args__ = (
+        UniqueConstraint("task_id", "sequence", name="uq_task_event_seq"),
+        Index("ix_task_events_task_id_seq", "task_id", "sequence"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String, nullable=False, index=True)
@@ -49,7 +56,7 @@ class TaskEvent(Base):
     agent_id = Column(String, nullable=True)
     agent_name = Column(String, nullable=True)
     payload = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class TaskResult(Base):
@@ -62,7 +69,7 @@ class TaskResult(Base):
     sections = Column(JSON, nullable=True)       # list[{title, content}]
     action_items = Column(JSON, nullable=True)   # list[str]
     raw_output = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class PublishedAsset(Base):
@@ -75,7 +82,7 @@ class PublishedAsset(Base):
     feishu_url = Column(String, nullable=True)
     feishu_id = Column(String, nullable=True)
     meta = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class UserConfig(Base):
@@ -83,7 +90,11 @@ class UserConfig(Base):
 
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
 
 class FeishuBotEvent(Base):
@@ -96,23 +107,25 @@ class FeishuBotEvent(Base):
     open_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 # Async engine
+_connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 engine = create_async_engine(
     settings.database_url,
     echo=False,
-    connect_args={"check_same_thread": False},
+    connect_args=_connect_args,
 )
 
 
-@sa_event.listens_for(engine.sync_engine, "connect")
-def set_sqlite_pragmas(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=5000")
-    cursor.close()
+if settings.database_url.startswith("sqlite"):
+    @sa_event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragmas(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
 
 AsyncSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
