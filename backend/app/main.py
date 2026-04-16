@@ -12,6 +12,7 @@ from app.api import config as config_api
 from app.api import events, feishu, feishu_context as feishu_context_api, feishu_oauth as feishu_oauth_api, results, tasks
 from app.core.settings import apply_db_config, settings
 from app.feishu.client import reset_feishu_client
+from app.feishu import mcp_client
 from app.models.database import AsyncSessionLocal, Task, UserConfig, init_db
 from app.core.event_emitter import EventEmitter
 
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
     yield
     if app.state.redis_client:
         await app.state.redis_client.aclose()
+    await mcp_client.shutdown()
     logger.info("飞书 AI 工作台关闭")
 
 

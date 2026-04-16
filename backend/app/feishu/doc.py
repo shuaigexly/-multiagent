@@ -21,6 +21,7 @@ from lark_oapi.api.docx.v1 import (
 )
 
 from app.agents.base_agent import AgentResult
+from app.feishu import cli_bridge
 from app.feishu.client import get_feishu_base_url, get_feishu_client
 from app.feishu.retry import with_retry
 
@@ -73,6 +74,34 @@ async def create_rich_document(
 ) -> dict:
     block_specs = _build_agent_block_specs(agent_results)
     return await create_structured_document(title=title, block_specs=block_specs, folder_token=folder_token)
+
+
+async def create_doc_from_markdown(
+    title: str,
+    markdown: str,
+    folder_token: Optional[str] = None,
+) -> dict:
+    """Create a Feishu doc from Markdown, preferring lark-cli when available."""
+    if cli_bridge.is_cli_available():
+        try:
+            cli_result = await cli_bridge.cli_create_doc(title, markdown, folder_token)
+            doc_token = (
+                cli_result.get("token")
+                or cli_result.get("doc_token")
+                or cli_result.get("document_id")
+                or cli_result.get("file_token")
+                or ""
+            )
+            return {
+                "doc_token": doc_token,
+                "url": cli_result.get("url") or (f"{get_feishu_base_url()}/docx/{doc_token}" if doc_token else ""),
+                "title": title,
+                **({"raw": cli_result["raw"]} if "raw" in cli_result else {}),
+            }
+        except Exception as exc:
+            logger.warning("lark-cli markdown doc creation failed: %s, falling back to plain doc", exc)
+
+    return await create_document(title, markdown, folder_token)
 
 
 def build_heading_block(level: int, text: str) -> Block:

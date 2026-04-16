@@ -31,8 +31,8 @@ async def publish_task(
         raise HTTPException(404, "任务不存在")
     if task.status != "done":
         raise HTTPException(400, "任务尚未完成")
-    if "message" in body.asset_types and not body.chat_id:
-        raise HTTPException(400, "发送群消息需要提供目标群 ID（chat_id），请在群聊标签页复制群 ID 后填入")
+    if ("message" in body.asset_types or "card" in body.asset_types) and not body.chat_id:
+        raise HTTPException(400, "发送群消息/卡片需要提供目标群 ID（chat_id）")
 
     results_q = await db.execute(
         select(TaskResult).where(TaskResult.task_id == task_id)

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base_agent import AgentResult
 from app.feishu import bitable, doc, im, slides, task as feishu_task
+from app.feishu.cardkit import send_card_to_chat
 from app.feishu.client import get_feishu_client
 from app.core.event_emitter import EventEmitter
 from app.models.database import PublishedAsset
@@ -128,6 +129,37 @@ async def publish_results(
             published.append({"type": "slides", "title": slides_title, "url": slides_result["url"]})
         except Exception as e:
             logger.error(f"演示文稿发布失败: {e}")
+
+    # 互动卡片
+    if "card" in asset_types:
+        if not chat_id:
+            raise ValueError("发送互动卡片需要提供飞书群 ID（chat_id），请在发布面板中选择目标群聊")
+        await emitter.emit_feishu_writing("互动卡片")
+        try:
+            card_result = await send_card_to_chat(
+                chat_id=chat_id,
+                title=f"📊 {title}",
+                results=agent_results,
+            )
+            asset = PublishedAsset(
+                task_id=task_id,
+                asset_type="card",
+                title="互动卡片",
+                feishu_url=card_result.get("url"),
+                feishu_id=card_result["message_id"],
+            )
+            db.add(asset)
+            await db.commit()
+            published.append({
+                "type": "card",
+                "title": "互动卡片已发送",
+                "url": card_result.get("url"),
+                "message_id": card_result["message_id"],
+            })
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"互动卡片发送失败: {e}")
 
     # 群消息
     if "message" in asset_types:

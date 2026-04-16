@@ -1,4 +1,5 @@
 """Feishu Slides/Presentation creator with doc fallback."""
+import html
 import json
 import logging
 from typing import Optional, Sequence
@@ -6,6 +7,7 @@ from typing import Optional, Sequence
 import lark_oapi as lark
 
 from app.agents.base_agent import AgentResult
+from app.feishu import cli_bridge
 from app.feishu.client import get_feishu_base_url
 from app.feishu.doc import (
     RichBlockSpec,
@@ -29,6 +31,25 @@ async def create_presentation(
     Try Feishu Presentation API (raw HTTP), fall back to structured doc.
     Returns {"url": ..., "type": "slides"|"doc_slides"}
     """
+    if cli_bridge.is_cli_available():
+        try:
+            slides_xml = _build_cli_slides_xml(agent_results)
+            cli_result = await cli_bridge.cli_create_slides(title, slides_xml, folder_token)
+            slide_token = (
+                cli_result.get("token")
+                or cli_result.get("presentation_token")
+                or cli_result.get("file_token")
+                or cli_result.get("doc_token")
+            )
+            return {
+                "presentation_token": slide_token,
+                "url": cli_result.get("url") or _build_slide_url(slide_token),
+                "title": title,
+                "type": "slides",
+            }
+        except Exception as exc:
+            logger.warning("lark-cli slides creation failed: %s, trying REST API", exc)
+
     try:
         return await _create_via_presentation_api(title, agent_results, client, folder_token)
     except Exception as exc:
@@ -160,6 +181,34 @@ def _build_slide_bullets(result: AgentResult) -> list[str]:
                 return bullets
 
     return bullets[:5]
+
+
+def _build_cli_slides_xml(agent_results: Sequence[AgentResult]) -> list[str]:
+    if not agent_results:
+        return [_build_slide_xml("暂无内容", "当前没有可展示的分析结果。")]
+
+    slides_xml = []
+    for result in agent_results:
+        title = result.agent_name or "未命名模块"
+        bullets = _build_slide_bullets(result)
+        key_content = "\n".join(bullets) or "暂无可展示内容。"
+        slides_xml.append(_build_slide_xml(title, key_content[:900]))
+    return slides_xml
+
+
+def _build_slide_xml(title: str, content: str) -> str:
+    escaped_title = html.escape(title, quote=True)
+    escaped_content = html.escape(content, quote=True)
+    return (
+        f'<slide><elements><title text="{escaped_title}"/>'
+        f'<text text="{escaped_content}"/></elements></slide>'
+    )
+
+
+def _build_slide_url(slide_token: Optional[str]) -> str:
+    if not slide_token:
+        return ""
+    return f"{get_feishu_base_url()}/slides/{slide_token}"
 
 
 def _collect_action_items(agent_results: Sequence[AgentResult]) -> list[str]:

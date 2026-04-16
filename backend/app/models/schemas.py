@@ -7,7 +7,7 @@ VALID_MODULES = {
     "data_analyst", "finance_advisor", "seo_advisor",
     "content_manager", "product_manager", "operations_manager", "ceo_assistant",
 }
-VALID_ASSET_TYPES = {"doc", "bitable", "slides", "message", "task"}
+VALID_ASSET_TYPES = {"doc", "bitable", "slides", "message", "task", "card"}
 
 
 class TaskCreate(BaseModel):
