@@ -26,3 +26,9 @@
 | growth_funnel | growth_funnel.md | data_analyst,seo_advisor,content_manager | high | 增长漏斗：AARRR分层/渠道ROI矩阵/北极星指标/瓶颈诊断树 |
 | operations_execution | operations_execution.md | operations_manager | normal | 运营执行：四象限优先级/OKR对齐检查/跨团队风险/追踪报告 |
 | business_diagnosis | business_diagnosis.md | data_analyst,finance_advisor,ceo_assistant | high | 经营诊断：收入成本利润三角/KPI异常规则/季节性调整/五问框架 |
+| feishu_card_elements | feishu_card_elements.md | all | high | 飞书卡片元素规范：lark_md语法/@提及/元素tag/模板色/长度限制 |
+| issue_tree_analysis | issue_tree_analysis.md | all | high | 议题树分析：假设驱动/MECE拆解/验证路径/置信度标注 |
+| data_storytelling | data_storytelling.md | data_analyst,ceo_assistant,finance_advisor | high | 数据叙事：图表选择/数字规范/5步叙事弧/比较框架 |
+| okr_review | okr_review.md | operations_manager,ceo_assistant | high | OKR健康评估：进度比公式/评级标准/季度复盘结构/对齐检查 |
+| competitive_analysis | competitive_analysis.md | product_manager,seo_advisor,finance_advisor | normal | 竞品分析：3C战略三角/Porter五力/功能差距矩阵/结论框架 |
+| risk_early_warning | risk_early_warning.md | finance_advisor,ceo_assistant,operations_manager | high | 风险预警矩阵：概率×影响/先行指标/缓解策略/表述规范 |
