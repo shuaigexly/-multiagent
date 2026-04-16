@@ -1,9 +1,11 @@
 """飞书 OAuth 用户授权（用于获取 user_access_token，支持任务 API 等用户级接口）"""
 import logging
+import secrets
+import time
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,10 +18,44 @@ router = APIRouter(prefix="/api/v1/feishu", tags=["feishu-oauth"])
 logger = logging.getLogger(__name__)
 
 CALLBACK_PATH = "/api/v1/feishu/oauth/callback"
+STATE_TTL_SECONDS = 10 * 60
+_pending_states: dict[str, tuple[str, float]] = {}
 
 
 def _feishu_base() -> str:
     return "https://open.larksuite.com" if get_feishu_region() == "intl" else "https://open.feishu.cn"
+
+
+def _cleanup_pending_states(now: float | None = None) -> None:
+    now = now or time.time()
+    expired = [
+        token
+        for token, (_, created_at) in _pending_states.items()
+        if now - created_at > STATE_TTL_SECONDS
+    ]
+    for token in expired:
+        _pending_states.pop(token, None)
+
+
+def _create_oauth_state(frontend_origin: str) -> str:
+    _cleanup_pending_states()
+    token = secrets.token_urlsafe(16)
+    _pending_states[token] = (frontend_origin, time.time())
+    return f"{frontend_origin}|{token}"
+
+
+def _consume_oauth_state(state: str) -> str:
+    _cleanup_pending_states()
+    if "|" not in state:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    frontend_origin, token = state.rsplit("|", 1)
+    pending = _pending_states.pop(token, None)
+    if pending is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    expected_origin, created_at = pending
+    if time.time() - created_at > STATE_TTL_SECONDS or frontend_origin != expected_origin:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    return expected_origin
 
 
 @router.get("/oauth/status")
@@ -40,11 +76,12 @@ async def get_oauth_url(
 
     callback = f"{backend_origin}{CALLBACK_PATH}"
     base = _feishu_base()
+    state = _create_oauth_state(frontend_origin)
     url = (
         f"{base}/open-apis/authen/v1/index"
         f"?app_id={app_id}"
         f"&redirect_uri={quote(callback, safe='')}"
-        f"&state={quote(frontend_origin, safe='')}"
+        f"&state={quote(state, safe='')}"
     )
     return {"ok": True, "url": url, "callback": callback}
 
@@ -52,14 +89,14 @@ async def get_oauth_url(
 @router.get("/oauth/callback")
 async def oauth_callback(
     code: str = Query(...),
-    state: str = Query("http://localhost:8080"),
+    state: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
     """接收飞书 OAuth 回调，交换 user_access_token 并存入数据库"""
     app_id = get_feishu_app_id()
     app_secret = get_feishu_app_secret()
     base = _feishu_base()
-    frontend_origin = state  # state 传递的是前端 origin
+    frontend_origin = _consume_oauth_state(state)
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:

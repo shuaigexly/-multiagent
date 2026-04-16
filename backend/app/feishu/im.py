@@ -34,7 +34,10 @@ async def _send_message_impl(
         .request_body(req_body)
         .build()
     )
-    resp = await asyncio.to_thread(client.im.v1.message.create, req)
+    resp = await asyncio.wait_for(
+        asyncio.to_thread(client.im.v1.message.create, req),
+        timeout=30.0,
+    )
     if not resp.success():
         raise RuntimeError(f"发送消息失败: {resp.msg}")
     return {"message_id": resp.data.message_id}

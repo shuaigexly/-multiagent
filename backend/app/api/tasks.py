@@ -256,14 +256,31 @@ async def _execute_task(
 
             # 解析数据：优先用上传文件，其次读取飞书上下文中的文档内容
             data_summary = None
-            if task.input_file and os.path.exists(task.input_file):
-                async with aiofiles.open(task.input_file, "r", encoding="utf-8", errors="replace") as f:
-                    file_content = await f.read()
-                data_summary = parse_content(file_content, os.path.basename(task.input_file))
+            input_file_path = task.input_file
+            if input_file_path and os.path.exists(input_file_path):
+                try:
+                    async with aiofiles.open(input_file_path, "r", encoding="utf-8", errors="replace") as f:
+                        file_content = await f.read()
+                    data_summary = parse_content(file_content, os.path.basename(input_file_path))
+                finally:
+                    try:
+                        os.unlink(input_file_path)
+                    except OSError:
+                        pass
 
             # 若无上传文件，则尝试从飞书上下文中读取真实文档内容
             if not data_summary and task.feishu_context:
-                data_summary = await _enrich_from_feishu_context(task.feishu_context, emitter, task_id)
+                try:
+                    data_summary = await asyncio.wait_for(
+                        _enrich_from_feishu_context(task.feishu_context, emitter, task_id),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("飞书上下文读取超时（30s），跳过上下文增强")
+                    data_summary = None
+                except Exception as e:
+                    logger.warning("飞书上下文读取失败: %s", e)
+                    data_summary = None
 
             # 执行 Agent 模块
             TASK_TIMEOUT = int(os.getenv("TASK_TIMEOUT_SECONDS", "300"))
@@ -334,8 +351,8 @@ async def _execute_task(
                 ):
                     emitter2 = EventEmitter(task_id=task_id, db=db)
                     await emitter2.emit_task_error(str(e))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("任务失败状态更新或错误事件发送失败: %s", exc)
 
 
 async def _enrich_from_feishu_context(

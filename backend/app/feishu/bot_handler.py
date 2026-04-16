@@ -94,7 +94,10 @@ async def reply_text_in_thread(message_id: str, text: str) -> None:
     )
 
     try:
-        response = await asyncio.to_thread(client.im.v1.message.reply, request)
+        response = await asyncio.wait_for(
+            asyncio.to_thread(client.im.v1.message.reply, request),
+            timeout=30.0,
+        )
         if not response.success():
             logger.warning("Bot 回帖失败 message_id=%s: %s", message_id, response.msg)
     except Exception as exc:

@@ -35,11 +35,15 @@ def _get_bot_settings() -> dict[str, str]:
     }
 
 
-def _verify_token(body: dict[str, Any], token: str) -> bool:
-    if not token:
+def _verify_token(body: dict[str, Any], expected_token: str) -> bool:
+    if not expected_token:
         return True
     header = body.get("header") or {}
-    return body.get("token") == token or header.get("token") == token
+    candidates = (body.get("token"), header.get("token"))
+    return any(
+        isinstance(candidate, str) and hmac.compare_digest(candidate, expected_token)
+        for candidate in candidates
+    )
 
 
 def _verify_signature(request: Request, raw_body: bytes, encrypt_key: str) -> bool:
@@ -71,24 +75,29 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
     飞书事件回调入口。
     要求在 3 秒内返回 200，实际任务执行放到 BackgroundTasks。
     """
+    cfg = _get_bot_settings()
     try:
         raw_body = await request.body()
-        body = _decode_request_body(raw_body, _get_bot_settings()["encrypt_key"])
+        raw_payload = json.loads(raw_body.decode("utf-8"))
+        is_encrypted = bool(raw_payload.get("encrypt"))
+        body = _decode_request_body(raw_body, cfg["encrypt_key"])
         logger.info("Bot event received event_id=%s", (body.get("header") or {}).get("event_id", "unknown"))
     except Exception as exc:
         logger.warning("Bot event: 请求体解析失败: %s", exc)
-        return JSONResponse({"ok": True})
+        return JSONResponse({"ok": False}, status_code=400)
 
     if body.get("type") == "url_verification":
         return JSONResponse({"challenge": body.get("challenge", "")})
 
-    cfg = _get_bot_settings()
-    if not _verify_signature(request, raw_body, cfg["encrypt_key"]):
+    if cfg["encrypt_key"] and not is_encrypted:
+        logger.warning("Bot event: 已配置 Encrypt Key，但事件未加密，已拒绝")
+        return JSONResponse({"ok": False}, status_code=401)
+    if cfg["encrypt_key"] and not _verify_signature(request, raw_body, cfg["encrypt_key"]):
         logger.warning("Bot event: 签名校验失败，已忽略")
-        return JSONResponse({"ok": True})
-    if not _verify_token(body, cfg["verification_token"]):
+        return JSONResponse({"ok": False}, status_code=401)
+    if cfg["verification_token"] and not _verify_token(body, cfg["verification_token"]):
         logger.warning("Bot event: verification_token 不匹配，已忽略")
-        return JSONResponse({"ok": True})
+        return JSONResponse({"ok": False}, status_code=401)
 
     header = body.get("header") or {}
     if header.get("event_type") != "im.message.receive_v1":

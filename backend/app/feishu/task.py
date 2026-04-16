@@ -46,9 +46,15 @@ async def _create_task_impl(title: str, notes: Optional[str] = None, due_ms: Opt
 
     if user_token:
         option = lark.RequestOption.builder().user_access_token(user_token).build()
-        resp = await asyncio.to_thread(client.task.v2.task.create, req, option)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.task.v2.task.create, req, option),
+            timeout=30.0,
+        )
     else:
-        resp = await asyncio.to_thread(client.task.v2.task.create, req)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.task.v2.task.create, req),
+            timeout=30.0,
+        )
 
     if not resp.success():
         raise RuntimeError(f"创建任务失败: {resp.msg}")

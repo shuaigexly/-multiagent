@@ -176,7 +176,10 @@ async def _create_document_shell(
     req_body = CreateDocumentRequestBody.builder().title(title).build()
     req = CreateDocumentRequest.builder().request_body(req_body).build()
 
-    resp: CreateDocumentResponse = await asyncio.to_thread(client.docx.v1.document.create, req)
+    resp: CreateDocumentResponse = await asyncio.wait_for(
+        asyncio.to_thread(client.docx.v1.document.create, req),
+        timeout=30.0,
+    )
     if not resp.success():
         raise RuntimeError(f"创建飞书文档失败: {resp.msg} (code={resp.code})")
 
@@ -241,7 +244,10 @@ async def _append_block_chunk(
         .request_body(req_body)
         .build()
     )
-    resp = await asyncio.to_thread(client.docx.v1.document_block_children.create, req)
+    resp = await asyncio.wait_for(
+        asyncio.to_thread(client.docx.v1.document_block_children.create, req),
+        timeout=30.0,
+    )
     if not resp.success():
         raise RuntimeError(f"追加文档内容失败: {resp.msg} (code={resp.code})")
     return list((resp.data.children or []) if resp.data else [])
@@ -290,7 +296,10 @@ async def _append_child_blocks(
             .request_body(req_body)
             .build()
         )
-        resp = await asyncio.to_thread(client.docx.v1.document_block_children.create, req)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.docx.v1.document_block_children.create, req),
+            timeout=30.0,
+        )
         if not resp.success():
             raise RuntimeError(f"追加 callout 子块失败: {resp.msg} (code={resp.code})")
         insert_index += len(chunk)

@@ -10,6 +10,15 @@ from app.core.settings import settings
 logger = logging.getLogger(__name__)
 
 
+def _escape_xml(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
 class ResultSection(BaseModel):
     title: str
     content: str
@@ -57,12 +66,13 @@ class BaseAgent(ABC):
     ) -> str:
         data_section = ""
         if data_summary:
+            raw_preview = _escape_xml(data_summary.raw_preview[:2000])
             data_section = (
                 "\n<data_input>\n"
                 f"类型：{data_summary.content_type}\n"
                 f"行数/段落数：{data_summary.row_count}\n"
                 f"列名：{', '.join(data_summary.columns) if data_summary.columns else '无'}\n"
-                f"预览：\n{data_summary.raw_preview[:2000]}\n"
+                f"预览：\n{raw_preview}\n"
                 "</data_input>\n"
             )
 
@@ -87,7 +97,7 @@ class BaseAgent(ABC):
 
         ctx_str = str(feishu_context or {})
         return self.USER_PROMPT_TEMPLATE.format(
-            task_description=f"<user_task>\n{task_description}\n</user_task>",
+            task_description=f"<user_task>\n{_escape_xml(task_description)}\n</user_task>",
             data_section=data_section,
             upstream_section=upstream_section,
             feishu_context=f"<feishu_context>\n{ctx_str}\n</feishu_context>",

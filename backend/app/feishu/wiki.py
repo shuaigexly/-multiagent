@@ -40,7 +40,10 @@ async def _create_wiki_node_impl(
         .request_body(node_builder.build())
         .build()
     )
-    resp = await asyncio.to_thread(client.wiki.v2.space_node.create, req)
+    resp = await asyncio.wait_for(
+        asyncio.to_thread(client.wiki.v2.space_node.create, req),
+        timeout=30.0,
+    )
     if not resp.success():
         raise RuntimeError(f"创建知识库节点失败: {resp.msg}")
 

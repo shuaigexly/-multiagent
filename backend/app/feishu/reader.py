@@ -40,9 +40,15 @@ async def list_drive_files(page_size: int = 20) -> list[dict]:
         user_token = get_user_access_token()
         if user_token:
             option = lark.RequestOption.builder().user_access_token(user_token).build()
-            resp = await asyncio.to_thread(client.drive.v1.file.list, req, option)
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(client.drive.v1.file.list, req, option),
+                timeout=30.0,
+            )
         else:
-            resp = await asyncio.to_thread(client.drive.v1.file.list, req)
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(client.drive.v1.file.list, req),
+                timeout=30.0,
+            )
         if not resp.success():
             logger.error(f"列出飞书云盘文件失败: {resp.msg} (code={resp.code})")
             return []
@@ -70,7 +76,10 @@ async def list_wiki_spaces(page_size: int = 20) -> list[dict]:
 
         client = get_feishu_client()
         req = ListSpaceRequest.builder().page_size(page_size).build()
-        resp = await asyncio.to_thread(client.wiki.v2.space.list, req)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.wiki.v2.space.list, req),
+            timeout=30.0,
+        )
         if not resp.success():
             logger.error(f"列出知识库空间失败: {resp.msg} (code={resp.code})")
             return []
@@ -100,7 +109,10 @@ async def list_wiki_nodes(space_id: str, page_size: int = 50) -> list[dict]:
             .page_size(page_size)
             .build()
         )
-        resp = await asyncio.to_thread(client.wiki.v2.space_node.list, req)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.wiki.v2.space_node.list, req),
+            timeout=30.0,
+        )
         if not resp.success():
             logger.error(f"列出知识库节点失败: {resp.msg} (code={resp.code})")
             return []
@@ -127,7 +139,10 @@ async def list_chats(page_size: int = 20) -> list[dict]:
 
         client = get_feishu_client()
         req = ListChatRequest.builder().page_size(page_size).build()
-        resp = await asyncio.to_thread(client.im.v1.chat.list, req)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.im.v1.chat.list, req),
+            timeout=30.0,
+        )
         if not resp.success():
             logger.error(f"列出群聊失败: {resp.msg} (code={resp.code})")
             return []
@@ -159,7 +174,10 @@ async def list_chat_messages(chat_id: str, page_size: int = 20) -> list[dict]:
             .page_size(page_size)
             .build()
         )
-        resp = await asyncio.to_thread(client.im.v1.message.list, req)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.im.v1.message.list, req),
+            timeout=30.0,
+        )
         if not resp.success():
             logger.error(f"列出群消息失败: {resp.msg} (code={resp.code})")
             return []
@@ -198,9 +216,15 @@ async def list_calendar_events(start_time: str, end_time: str, page_size: int = 
         user_token = get_user_access_token()
         if user_token:
             option = lark.RequestOption.builder().user_access_token(user_token).build()
-            resp = await asyncio.to_thread(client.calendar.v4.calendar_event.list, req, option)
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(client.calendar.v4.calendar_event.list, req, option),
+                timeout=30.0,
+            )
         else:
-            resp = await asyncio.to_thread(client.calendar.v4.calendar_event.list, req)
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(client.calendar.v4.calendar_event.list, req),
+                timeout=30.0,
+            )
         if not resp.success():
             logger.error(f"列出日历事件失败: {resp.msg} (code={resp.code})")
             return []
@@ -237,7 +261,10 @@ async def list_tasks(page_size: int = 50) -> list[dict]:
         client = get_feishu_client()
         req = ListTaskRequest.builder().page_size(page_size).build()
         option = lark.RequestOption.builder().user_access_token(user_token).build()
-        resp = await asyncio.to_thread(client.task.v2.task.list, req, option)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.task.v2.task.list, req, option),
+            timeout=30.0,
+        )
         if not resp.success():
             if resp.code == 99991668:
                 logger.warning("飞书用户 token 已过期，请重新授权（code=99991668）")
@@ -270,7 +297,10 @@ async def read_doc_content(document_id: str) -> str:
 
         client = get_feishu_client()
         req = RawContentDocumentRequest.builder().document_id(document_id).build()
-        resp = await asyncio.to_thread(client.docx.v1.document.raw_content, req)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.docx.v1.document.raw_content, req),
+            timeout=30.0,
+        )
         if not resp.success():
             logger.error(f"读取文档内容失败: {resp.msg} (code={resp.code})")
             return ""

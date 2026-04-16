@@ -10,6 +10,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_api_key
 from app.core.settings import (
     apply_db_config,
     get_feishu_app_id,
@@ -195,7 +196,7 @@ async def _test_feishu_credentials(app_id: str, app_secret: str, region: str):
         raise RuntimeError(response.msg or "获取 tenant_access_token 失败")
 
 
-@router.get("", response_model=dict[str, ConfigStatus])
+@router.get("", response_model=dict[str, ConfigStatus], dependencies=[Depends(require_api_key)])
 async def get_config_status():
     payload: dict[str, ConfigStatus] = {}
     for key in CONFIG_KEYS:
@@ -205,7 +206,7 @@ async def get_config_status():
     return payload
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_api_key)])
 async def save_config(
     body: SaveConfigRequest,
     db: AsyncSession = Depends(get_db),
@@ -217,10 +218,17 @@ async def save_config(
     return {"ok": True, "saved": list(applied.keys())}
 
 
-@router.post("/test-llm")
+@router.post("/test-llm", dependencies=[Depends(require_api_key)])
 async def test_llm(body: LLMTestRequest):
-    api_key = _normalize_value(body.api_key) or get_llm_api_key()
-    base_url = _normalize_value(body.base_url) or get_llm_base_url()
+    requested_base_url = _normalize_value(body.base_url)
+    requested_api_key = _normalize_value(body.api_key)
+    if requested_base_url and not requested_api_key:
+        stored_base = get_llm_base_url()
+        if requested_base_url != stored_base:
+            return {"ok": False, "message": "自定义 base_url 时必须同时提供 api_key"}
+
+    api_key = requested_api_key or get_llm_api_key()
+    base_url = requested_base_url or get_llm_base_url()
     model = _normalize_value(body.model) or get_llm_model()
 
     if not api_key:
@@ -246,7 +254,7 @@ async def test_llm(body: LLMTestRequest):
         return {"ok": False, "message": str(exc)}
 
 
-@router.post("/test-feishu")
+@router.post("/test-feishu", dependencies=[Depends(require_api_key)])
 async def test_feishu(body: FeishuTestRequest):
     app_id = _normalize_value(body.app_id) or get_feishu_app_id()
     app_secret = _normalize_value(body.app_secret) or get_feishu_app_secret()

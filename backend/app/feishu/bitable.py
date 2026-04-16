@@ -108,7 +108,10 @@ async def _create_bitable_impl(name: str, client=None) -> dict:
     client = client or get_feishu_client()
     req_body = ReqApp.builder().name(name).build()
     req = CreateAppRequest.builder().request_body(req_body).build()
-    resp = await asyncio.to_thread(client.bitable.v1.app.create, req)
+    resp = await asyncio.wait_for(
+        asyncio.to_thread(client.bitable.v1.app.create, req),
+        timeout=30.0,
+    )
     if not resp.success():
         raise RuntimeError(f"创建多维表格失败: {resp.msg}")
     app_token = resp.data.app.app_token
@@ -127,7 +130,10 @@ async def _create_table_impl(
     client = client or get_feishu_client()
     req_body = CreateAppTableRequestBody.builder().table(AppTable.builder().name(table_name).build()).build()
     req = CreateAppTableRequest.builder().app_token(app_token).request_body(req_body).build()
-    resp = await asyncio.to_thread(client.bitable.v1.app_table.create, req)
+    resp = await asyncio.wait_for(
+        asyncio.to_thread(client.bitable.v1.app_table.create, req),
+        timeout=30.0,
+    )
     if not resp.success():
         raise RuntimeError(f"创建表格失败: {resp.msg}")
 
@@ -178,7 +184,10 @@ async def _rename_primary_field(
         .request_body(req_body)
         .build()
     )
-    resp = await asyncio.to_thread(client.bitable.v1.app_table_field.update, req)
+    resp = await asyncio.wait_for(
+        asyncio.to_thread(client.bitable.v1.app_table_field.update, req),
+        timeout=30.0,
+    )
     if not resp.success():
         raise RuntimeError(f"更新默认字段失败: {resp.msg}")
 
@@ -197,7 +206,10 @@ async def _create_field(
         .request_body(req_body)
         .build()
     )
-    resp = await asyncio.to_thread(client.bitable.v1.app_table_field.create, req)
+    resp = await asyncio.wait_for(
+        asyncio.to_thread(client.bitable.v1.app_table_field.create, req),
+        timeout=30.0,
+    )
     if not resp.success():
         raise RuntimeError(f"创建字段失败: {field['field_name']} ({resp.msg})")
     return resp.data.field.field_id
@@ -223,7 +235,10 @@ async def _batch_add_records_impl(
             .request_body(req_body)
             .build()
         )
-        resp = await asyncio.to_thread(client.bitable.v1.app_table_record.batch_create, req)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.bitable.v1.app_table_record.batch_create, req),
+            timeout=30.0,
+        )
         if not resp.success():
             logger.warning("批量添加记录失败: %s", resp.msg)
             continue

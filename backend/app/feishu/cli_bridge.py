@@ -22,7 +22,7 @@ async def cli_create_doc(title: str, markdown: str, folder_token: Optional[str] 
     args = [
         "npx",
         "--yes",
-        "@larksuite/cli@latest",
+        "@larksuite/cli@1.1.0",
         "lark-doc",
         "+create",
         "--title",
@@ -44,7 +44,7 @@ async def cli_create_slides(
     args = [
         "npx",
         "--yes",
-        "@larksuite/cli@latest",
+        "@larksuite/cli@1.1.0",
         "lark-slides",
         "+create",
         "--title",
