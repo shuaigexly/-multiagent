@@ -142,7 +142,7 @@ async def oauth_callback(
             app_token = r1.json().get("app_access_token", "")
             if not app_token:
                 logger.error("OAuth: 获取 app_access_token 失败")
-                return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg=获取app_token失败")
+                return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote('获取app_token失败', safe='')}")
 
             # Step 2: 用 code 换取 user_access_token
             r2 = await client.post(
@@ -155,14 +155,14 @@ async def oauth_callback(
 
         if data.get("code") != 0:
             logger.error(f"OAuth token 交换失败: {data}")
-            return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={data.get('msg', '授权失败')}")
+            return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(str(data.get('msg', '授权失败')), safe='')}")
 
         user_data = data.get("data", {})
         access_token = user_data.get("access_token", "")
         refresh_token = user_data.get("refresh_token", "")
 
         if not access_token:
-            return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg=未获取到用户token")
+            return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote('未获取到用户token', safe='')}")
 
         open_id = user_data.get("open_id", "")
         encrypted_access_token = encrypt_token(access_token)
@@ -196,4 +196,4 @@ async def oauth_callback(
 
     except Exception as e:
         logger.error(f"OAuth 回调异常: {e}", exc_info=True)
-        return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={str(e)[:80]}")
+        return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(str(e)[:80], safe='')}")
