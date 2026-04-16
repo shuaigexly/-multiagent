@@ -270,6 +270,7 @@ AGENT_DEPENDENCIES["{new_agent_id}"] = {"ceo_assistant"}  # 如果需要先于 C
 | `TASK_TIMEOUT_SECONDS` | 否 | 任务执行总超时（秒） | `300`（默认） |
 | `MAX_CONCURRENT_TASKS` | 否 | 最大并发执行任务数 | `3`（默认） |
 | `MAX_SSE_SECONDS` | 否 | SSE 连接最大保持时长（秒） | `600`（默认） |
+| `FRONTEND_BASE_URL` | 否 | 前端访问地址（Bot 回复报告链接用） | `http://localhost:5173` |
 
 ---
 
