@@ -13,29 +13,132 @@ from app.feishu.user_token import get_user_access_token
 logger = logging.getLogger(__name__)
 
 
+def _smart_truncate(text: str, max_len: int) -> str:
+    """Truncate text intelligently at sentence or bullet boundaries."""
+    normalized = text.strip()
+    if len(normalized) <= max_len:
+        return normalized
+
+    bullet_lines = [
+        line.strip()
+        for line in normalized.splitlines()
+        if line.strip() and (
+            line.strip().startswith(("-", "•", "*"))
+            or (len(line.strip()) > 1 and line.strip()[0].isdigit() and line.strip()[1] in ".、")
+        )
+    ]
+    if bullet_lines:
+        selected: list[str] = []
+        current_len = 0
+        for bullet in bullet_lines[:3]:
+            addition = bullet if not selected else f"\n{bullet}"
+            if current_len + len(addition) > max_len:
+                break
+            selected.append(bullet)
+            current_len += len(addition)
+        if selected:
+            return "\n".join(selected)
+
+    cutoff = min(len(normalized), max_len)
+    sentence_candidates = [
+        pos for pos in (
+            normalized.find("。", 0, cutoff + 1),
+            normalized.find("\n", 0, cutoff + 1),
+        )
+        if pos != -1
+    ]
+    if sentence_candidates:
+        sentence_end = min(sentence_candidates) + 1
+        if sentence_end <= cutoff:
+            return normalized[:sentence_end].strip()
+
+    truncated = normalized[:cutoff]
+    for marker in ("。", "\n", "；", "，", " "):
+        boundary = truncated.rfind(marker)
+        if boundary >= int(cutoff * 0.5):
+            keep_len = boundary if marker == " " else boundary + 1
+            return f"{truncated[:keep_len].rstrip()}..."
+    return f"{truncated.rstrip()}..."
+
+
 def _build_card_content(title: str, results: list[AgentResult]) -> dict:
-    """Build Feishu interactive card JSON from agent results."""
+    """Build structured Feishu card with smart content selection."""
     elements = []
-    for result in results:
-        elements.append({"tag": "markdown", "content": f"**{result.agent_name}**"})
-        for section in result.sections[:3]:
+    total_actions = sum(len(result.action_items) for result in results)
+    elements.append(
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**{len(results)} 个分析模块** · {total_actions} 项行动建议",
+            },
+        }
+    )
+    elements.append({"tag": "hr"})
+
+    all_actions = " ".join(item for result in results for item in result.action_items)
+    header_template = "blue"
+    if "风险" in all_actions or "⚠️" in all_actions:
+        header_template = "red"
+    elif "机会" in all_actions or "增长" in all_actions:
+        header_template = "green"
+
+    for index, result in enumerate(results):
+        elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"**{result.agent_name}**",
+                },
+            }
+        )
+
+        best_section = next(
+            (
+                section
+                for section in result.sections
+                if any(keyword in section.title for keyword in ["核心", "结论", "总体", "评估"])
+            ),
+            result.sections[0] if result.sections else None,
+        )
+        if best_section:
+            content = _smart_truncate(best_section.content, 250)
             elements.append(
                 {
-                    "tag": "markdown",
-                    "content": f"**{section.title}**\n{section.content[:300]}",
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**{best_section.title}**\n{content}",
+                    },
                 }
             )
+
         if result.action_items:
-            items_text = "\n".join(f"- {item}" for item in result.action_items[:5])
-            elements.append({"tag": "markdown", "content": f"**行动建议**\n{items_text}"})
-        elements.append({"tag": "hr"})
+            items_text = "\n".join(
+                f"{'⚠️ ' if ('风险' in item or '⚠️' in item) and not item.startswith('⚠️') else ''}"
+                f"{item if ('风险' in item or '⚠️' in item) else f'• {item}'}"
+                for item in result.action_items[:3]
+            )
+            elements.append(
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**行动建议**\n{items_text}",
+                    },
+                }
+            )
+
+        if index < len(results) - 1:
+            elements.append({"tag": "hr"})
 
     return {
         "schema": "2.0",
         "body": {"elements": elements},
         "header": {
             "title": {"tag": "plain_text", "content": title},
-            "template": "blue",
+            "template": header_template,
         },
     }
 

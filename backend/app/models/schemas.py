@@ -65,6 +65,7 @@ class AgentResultOut(BaseModel):
     agent_name: str
     sections: List[ResultSection]
     action_items: List[str]
+    chart_data: List[dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskResultsResponse(BaseModel):

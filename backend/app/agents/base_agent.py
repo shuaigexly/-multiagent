@@ -1,8 +1,10 @@
 """Agent 基类：所有分析模块继承此类"""
+import json as _json
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.data_parser import DataSummary
 from app.core.settings import settings
@@ -30,6 +32,7 @@ class AgentResult(BaseModel):
     sections: list[ResultSection]
     action_items: list[str]
     raw_output: str
+    chart_data: list[dict] = Field(default_factory=list)
 
 
 class BaseAgent(ABC):
@@ -145,6 +148,18 @@ class BaseAgent(ABC):
 
     def _parse_output(self, raw: str) -> AgentResult:
         """将 LLM 输出解析成结构化结果。子类可覆盖。"""
+        chart_data: list[dict] = []
+        chart_pattern = re.compile(r"```chart_data\s*\n([\s\S]*?)\n```", re.MULTILINE)
+        chart_match = chart_pattern.search(raw)
+        if chart_match:
+            try:
+                parsed = _json.loads(chart_match.group(1))
+                if isinstance(parsed, list):
+                    chart_data = [item for item in parsed if isinstance(item, dict)]
+                    raw = chart_pattern.sub("", raw).strip()
+            except Exception:
+                pass
+
         sections = []
         action_items = []
         current_title = ""
@@ -192,4 +207,5 @@ class BaseAgent(ABC):
             sections=sections,
             action_items=action_items,
             raw_output=raw,
+            chart_data=chart_data,
         )
