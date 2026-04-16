@@ -11,7 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret, get_feishu_region
-from app.feishu.user_token import get_user_access_token, set_user_access_token
+from app.feishu.token_crypto import encrypt_token
+from app.feishu.user_token import (
+    get_user_access_token,
+    refresh_user_token,
+    set_user_access_token,
+    set_user_refresh_token,
+)
 from app.models.database import UserConfig, get_db
 
 router = APIRouter(prefix="/api/v1/feishu", tags=["feishu-oauth"])
@@ -62,6 +68,16 @@ def _consume_oauth_state(state: str) -> str:
 async def get_oauth_status():
     """检查用户 OAuth 授权状态"""
     return {"authorized": bool(get_user_access_token())}
+
+
+@router.get("/oauth/refresh")
+async def refresh_oauth_token():
+    """使用服务端保存的 refresh_token 刷新用户 OAuth token"""
+    try:
+        await refresh_user_token()
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "message": str(exc)}
 
 
 @router.get("/oauth/url")
@@ -132,11 +148,13 @@ async def oauth_callback(
             return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg=未获取到用户token")
 
         open_id = user_data.get("open_id", "")
+        encrypted_access_token = encrypt_token(access_token)
+        encrypted_refresh_token = encrypt_token(refresh_token)
 
         # Step 3: 存入数据库
         for key, value in [
-            ("feishu_user_access_token", access_token),
-            ("feishu_user_refresh_token", refresh_token),
+            ("feishu_user_access_token", encrypted_access_token),
+            ("feishu_user_refresh_token", encrypted_refresh_token),
             ("feishu_user_open_id", open_id),
         ]:
             if not value:
@@ -151,6 +169,7 @@ async def oauth_callback(
 
         # Step 4: 更新内存缓存
         set_user_access_token(access_token)
+        set_user_refresh_token(refresh_token or None)
         if open_id:
             from app.feishu.user_token import set_user_open_id
             set_user_open_id(open_id)

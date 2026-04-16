@@ -1,6 +1,7 @@
 """飞书发布 API"""
 import logging
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,12 +12,17 @@ from app.models.database import Task, TaskResult, get_db
 from app.models.schemas import PublishRequest, PublishResponse
 from app.agents.base_agent import AgentResult, ResultSection
 
-router = APIRouter(prefix="/api/v1/tasks", tags=["feishu"])
+router = APIRouter(tags=["feishu"])
 logger = logging.getLogger(__name__)
 
 
+class CreateTaskRequest(BaseModel):
+    summary: str
+    source_task_id: str | None = None
+
+
 @router.post(
-    "/{task_id}/publish",
+    "/api/v1/tasks/{task_id}/publish",
     response_model=PublishResponse,
     dependencies=[Depends(require_api_key)],
 )
@@ -70,7 +76,38 @@ async def publish_task(
     return PublishResponse(published=published)
 
 
-@router.get("/agents", dependencies=[Depends(require_api_key)])
+@router.post("/api/v1/feishu/tasks", dependencies=[Depends(require_api_key)])
+async def create_feishu_task(
+    body: CreateTaskRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.feishu import task as feishu_task
+    from app.models.database import PublishedAsset
+
+    if not body.summary or not body.summary.strip():
+        raise HTTPException(400, "summary 不能为空")
+
+    result = await feishu_task.create_task(title=body.summary.strip())
+
+    if body.source_task_id:
+        asset = PublishedAsset(
+            task_id=body.source_task_id,
+            asset_type="task",
+            title=body.summary.strip(),
+            feishu_url=result.get("url"),
+            feishu_id=result.get("task_guid"),
+        )
+        db.add(asset)
+        await db.commit()
+
+    return {
+        "ok": True,
+        "task_guid": result.get("task_guid"),
+        "url": result.get("url"),
+    }
+
+
+@router.get("/api/v1/tasks/agents", dependencies=[Depends(require_api_key)])
 async def list_agents():
     """返回所有可用 Agent 模块信息"""
     from app.agents.registry import AGENT_INFO

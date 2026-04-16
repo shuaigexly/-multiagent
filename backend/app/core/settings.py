@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     feishu_region: str = "cn"
     feishu_bot_verification_token: str = ""  # 飞书事件订阅验证 Token
     feishu_bot_encrypt_key: str = ""         # 飞书事件加密 Key（可选）
+    token_encryption_key: str = ""           # OAuth token at-rest encryption key（可选）
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./data.db"

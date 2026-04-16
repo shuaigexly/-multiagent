@@ -13,11 +13,29 @@ from app.api import events, feishu, feishu_bot as feishu_bot_api, feishu_context
 from app.core.settings import apply_db_config, settings
 from app.feishu.client import reset_feishu_client
 from app.feishu import mcp_client
+from app.feishu.token_crypto import decrypt_token
 from app.models.database import AsyncSessionLocal, Task, UserConfig, init_db
 from app.core.event_emitter import EventEmitter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_sentry_dsn = os.getenv("SENTRY_DSN", "")
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+            traces_sample_rate=0.1,
+            send_default_pii=False,
+        )
+        logger.info("Sentry initialized")
+    except ImportError:
+        logger.warning("sentry-sdk not installed; skipping Sentry init")
 
 
 @asynccontextmanager
@@ -71,15 +89,18 @@ async def _recover_interrupted_tasks():
 
 
 async def _load_runtime_config():
-    from app.feishu.user_token import set_user_access_token, set_user_open_id
+    from app.feishu.user_token import set_user_access_token, set_user_open_id, set_user_refresh_token
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(UserConfig))
         rows = {row.key: row.value for row in result.scalars().all()}
         apply_db_config(rows)
         # 启动时恢复用户 OAuth token
         if user_token := rows.get("feishu_user_access_token"):
-            set_user_access_token(user_token)
+            set_user_access_token(decrypt_token(user_token))
             logger.info("已从数据库恢复飞书用户 OAuth token")
+        if refresh_token := rows.get("feishu_user_refresh_token"):
+            set_user_refresh_token(decrypt_token(refresh_token))
+            logger.info("已从数据库恢复飞书用户 refresh token")
         if open_id := rows.get("feishu_user_open_id"):
             set_user_open_id(open_id)
             logger.info(f"已从数据库恢复飞书用户 open_id: {open_id}")

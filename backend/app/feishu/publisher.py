@@ -78,11 +78,17 @@ async def publish_results(
                 feishu_id=result["doc_token"],
             )
             db.add(asset)
-            await db.commit()
-            published.append({"type": "doc", "title": title, "url": result["url"]})
-            logger.info(f"飞书文档发布成功: {result['url']}")
         except Exception as e:
             logger.error(f"飞书文档发布失败: {e}")
+        else:
+            try:
+                await db.commit()
+            except Exception as db_err:
+                await db.rollback()
+                logger.error(f"DB提交失败(doc): {db_err}")
+            else:
+                published.append({"type": "doc", "title": title, "url": result["url"]})
+                logger.info(f"飞书文档发布成功: {result['url']}")
 
     # 多维表格
     if "bitable" in asset_types:
@@ -101,10 +107,16 @@ async def publish_results(
                 feishu_id=bitable_result["app_token"],
             )
             db.add(asset)
-            await db.commit()
-            published.append({"type": "bitable", "title": bitable_title, "url": bitable_result["url"]})
         except Exception as e:
             logger.error(f"多维表格发布失败: {e}")
+        else:
+            try:
+                await db.commit()
+            except Exception as db_err:
+                await db.rollback()
+                logger.error(f"DB提交失败(bitable): {db_err}")
+            else:
+                published.append({"type": "bitable", "title": bitable_title, "url": bitable_result["url"]})
 
     # 演示文稿
     if "slides" in asset_types:
@@ -125,10 +137,16 @@ async def publish_results(
                 meta={"render_type": slides_result["type"]},
             )
             db.add(asset)
-            await db.commit()
-            published.append({"type": "slides", "title": slides_title, "url": slides_result["url"]})
         except Exception as e:
             logger.error(f"演示文稿发布失败: {e}")
+        else:
+            try:
+                await db.commit()
+            except Exception as db_err:
+                await db.rollback()
+                logger.error(f"DB提交失败(slides): {db_err}")
+            else:
+                published.append({"type": "slides", "title": slides_title, "url": slides_result["url"]})
 
     # 互动卡片
     if "card" in asset_types:
@@ -164,17 +182,23 @@ async def publish_results(
                 feishu_id=card_result["message_id"],
             )
             db.add(asset)
-            await db.commit()
-            published.append({
-                "type": "card",
-                "title": "互动卡片已发送",
-                "url": card_result.get("url"),
-                "message_id": card_result["message_id"],
-            })
         except ValueError:
             raise
         except Exception as e:
             logger.error(f"互动卡片发送失败: {e}")
+        else:
+            try:
+                await db.commit()
+            except Exception as db_err:
+                await db.rollback()
+                logger.error(f"DB提交失败(card): {db_err}")
+            else:
+                published.append({
+                    "type": "card",
+                    "title": "互动卡片已发送",
+                    "url": card_result.get("url"),
+                    "message_id": card_result["message_id"],
+                })
 
     # 群消息
     if "message" in asset_types:
@@ -218,13 +242,19 @@ async def publish_results(
                 feishu_id=msg_result["message_id"],
             )
             db.add(asset)
-            await db.commit()
-            published.append({"type": "message", "title": "群消息已发送",
-                               "message_id": msg_result["message_id"]})
         except ValueError:
             raise
         except Exception as e:
             logger.error(f"群消息发送失败: {e}")
+        else:
+            try:
+                await db.commit()
+            except Exception as db_err:
+                await db.rollback()
+                logger.error(f"DB提交失败(message): {db_err}")
+            else:
+                published.append({"type": "message", "title": "群消息已发送",
+                                   "message_id": msg_result["message_id"]})
 
     # 飞书任务
     if "task" in asset_types and action_items:
@@ -242,10 +272,16 @@ async def publish_results(
                     feishu_id=tr["task_guid"],
                 )
                 db.add(asset)
-            await db.commit()
-            published.append({"type": "task", "count": len(task_results),
-                               "title": f"创建了 {len(task_results)} 个飞书任务"})
         except Exception as e:
             logger.error(f"飞书任务创建失败: {e}")
+        else:
+            try:
+                await db.commit()
+            except Exception as db_err:
+                await db.rollback()
+                logger.error(f"DB提交失败(task): {db_err}")
+            else:
+                published.append({"type": "task", "count": len(task_results),
+                                   "title": f"创建了 {len(task_results)} 个飞书任务"})
 
     return published
