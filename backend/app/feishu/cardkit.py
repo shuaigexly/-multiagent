@@ -64,7 +64,10 @@ def _smart_truncate(text: str, max_len: int) -> str:
 def _build_card_content(title: str, results: list[AgentResult]) -> dict:
     """Build structured Feishu card with smart content selection."""
     elements = []
-    total_actions = sum(len(result.action_items) for result in results)
+    total_actions = sum(
+        len([item for item in result.action_items if not item.strip().startswith("[摘要]")])
+        for result in results
+    )
     elements.append(
         {
             "tag": "div",
@@ -76,7 +79,12 @@ def _build_card_content(title: str, results: list[AgentResult]) -> dict:
     )
     elements.append({"tag": "hr"})
 
-    all_actions = " ".join(item for result in results for item in result.action_items)
+    all_actions = " ".join(
+        item
+        for result in results
+        for item in result.action_items
+        if not item.strip().startswith("[摘要]")
+    )
     header_template = "blue"
     if "风险" in all_actions or "⚠️" in all_actions:
         header_template = "red"
@@ -114,11 +122,14 @@ def _build_card_content(title: str, results: list[AgentResult]) -> dict:
                 }
             )
 
-        if result.action_items:
+        display_items = [
+            item for item in result.action_items if not item.strip().startswith("[摘要]")
+        ]
+        if display_items:
             items_text = "\n".join(
                 f"{'⚠️ ' if ('风险' in item or '⚠️' in item) and not item.startswith('⚠️') else ''}"
                 f"{item if ('风险' in item or '⚠️' in item) else f'• {item}'}"
-                for item in result.action_items[:3]
+                for item in display_items[:3]
             )
             elements.append(
                 {

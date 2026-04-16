@@ -213,6 +213,8 @@ class BaseAgent(ABC):
 
     def _parse_output(self, raw: str) -> AgentResult:
         """将 LLM 输出解析成结构化结果。子类可覆盖。"""
+        raw = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', raw, flags=re.DOTALL).strip()
+
         chart_data: list[dict] = []
         chart_pattern = re.compile(r"```chart_data\s*\n([\s\S]*?)\n```", re.MULTILINE)
         chart_match = chart_pattern.search(raw)

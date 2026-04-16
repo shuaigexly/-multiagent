@@ -1,6 +1,8 @@
 """飞书任务：创建任务"""
 import asyncio
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Optional
 
 from lark_oapi.api.task.v2 import (
@@ -14,6 +16,38 @@ from app.feishu.client import get_applink_base_url, get_feishu_client
 from app.feishu.retry import with_retry
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_action_item(text: str) -> dict:
+    """Extract due date and assignee hint from action item text."""
+    result = {"summary": text, "due": None, "assignee_hint": None}
+
+    # Extract due date patterns: 截止 YYYY-MM-DD or 截止 MM/DD or 本周/本月
+    date_match = re.search(r'截止[：:]?\s*(\d{4}-\d{2}-\d{2})', text)
+    if date_match:
+        result["due"] = date_match.group(1)
+
+    # Extract assignee: 负责人[：:]\s*(\S+)
+    assignee_match = re.search(r'负责人[：:]?\s*([^\s，,）)]+)', text)
+    if assignee_match:
+        result["assignee_hint"] = assignee_match.group(1)
+
+    # Clean the summary: strip the parenthetical metadata
+    summary = re.sub(r'[（(][^）)]*[）)]', '', text).strip()
+    result["summary"] = summary or text
+
+    return result
+
+
+def _due_to_timestamp_ms(due: Optional[str]) -> Optional[int]:
+    if not due:
+        return None
+    try:
+        due_dt = datetime.strptime(due, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        logger.warning(f"无法解析任务截止日期: {due}")
+        return None
+    return int(due_dt.timestamp() * 1000)
 
 
 async def create_task(title: str, notes: Optional[str] = None, due_ms: Optional[int] = None) -> dict:
@@ -74,7 +108,17 @@ async def _batch_create_tasks_impl(items: list[str]) -> list[dict]:
     results = []
     for item in items[:20]:   # 最多 20 个
         try:
-            result = await create_task(title=item)
+            parsed = _parse_action_item(item)
+            notes = None
+            if parsed["assignee_hint"]:
+                notes = f"负责人：{parsed['assignee_hint']}"
+            result = await create_task(
+                title=parsed["summary"],
+                notes=notes,
+                due_ms=_due_to_timestamp_ms(parsed["due"]),
+            )
+            if parsed["assignee_hint"]:
+                result["assignee_hint"] = parsed["assignee_hint"]
             results.append(result)
         except Exception as e:
             logger.warning(f"创建任务失败: {item} - {e}")

@@ -56,12 +56,13 @@ async def publish_task(
             sections=[ResultSection(**s) for s in (r.sections or [])],
             action_items=r.action_items or [],
             raw_output=r.raw_output or "",
+            chart_data=r.chart_data or [],
         )
         for r in task_results
     ]
 
     emitter = EventEmitter(task_id=task_id, db=db)
-    published = await publish_results(
+    publish_result = await publish_results(
         task_id=task_id,
         task_description=task.input_text or "",
         task_type_label=task.task_type_label or "",
@@ -73,7 +74,7 @@ async def publish_task(
         chat_id=body.chat_id,
     )
 
-    return PublishResponse(published=published)
+    return PublishResponse(**publish_result)
 
 
 @router.post("/api/v1/feishu/tasks", dependencies=[Depends(require_api_key)])

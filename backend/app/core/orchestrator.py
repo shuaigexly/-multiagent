@@ -179,7 +179,29 @@ async def orchestrate(
             for aid in ready
         ]
         wave_raw = await asyncio.gather(*wave_tasks, return_exceptions=True)
-        wave_results = [r for r in wave_raw if isinstance(r, AgentResult)]
+        wave_results = []
+        for aid, res in zip(ready, wave_raw):
+            if isinstance(res, AgentResult):
+                wave_results.append(res)
+                continue
+            if isinstance(res, Exception):
+                agent = AGENT_REGISTRY.get(aid)
+                agent_name = agent.agent_name if agent else aid
+                logger.error(f"Agent task failed unexpectedly: {res}")
+                try:
+                    await emitter.emit_module_failed(aid, agent_name, str(res))
+                except Exception as emit_err:
+                    logger.error(f"Failed to emit module failure event for {aid}: {emit_err}")
+                wave_results.append(AgentResult(
+                    agent_id=aid,
+                    agent_name=agent_name,
+                    sections=[ResultSection(
+                        title="执行状态",
+                        content=f"[{agent_name}] 模块执行失败，已跳过。错误信息：{res}"
+                    )],
+                    action_items=[],
+                    raw_output=f"FAILED: {res}",
+                ))
         all_results.extend(wave_results)
         completed.update(ready)
         remaining = [aid for aid in remaining if aid not in completed]

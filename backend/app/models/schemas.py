@@ -103,6 +103,7 @@ class PublishRequest(BaseModel):
 
 class PublishResponse(BaseModel):
     published: List[dict]
+    errors: dict[str, str] = Field(default_factory=dict)
 
 
 class TaskListItem(BaseModel):
