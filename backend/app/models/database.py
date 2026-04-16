@@ -143,7 +143,12 @@ async def _ensure_task_user_instructions_column(conn):
         )
 
     if not await conn.run_sync(has_column):
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN user_instructions TEXT"))
+        from sqlalchemy.exc import OperationalError
+        try:
+            await conn.execute(text("ALTER TABLE tasks ADD COLUMN user_instructions TEXT"))
+        except OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
 
 
 async def init_db():
