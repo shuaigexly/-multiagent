@@ -9,6 +9,8 @@ _OVERRIDABLE_FIELDS = {
     "feishu_app_id",
     "feishu_app_secret",
     "feishu_region",
+    "feishu_bot_verification_token",
+    "feishu_bot_encrypt_key",
 }
 _db_overrides: dict[str, str | None] = {}
 
@@ -32,6 +34,8 @@ class Settings(BaseSettings):
     # region: cn = 飞书中国版（open.feishu.cn，SDK: lark_oapi）
     #         intl = Lark 国际版（open.larksuite.com，SDK: larksuite_oapi）
     feishu_region: str = "cn"
+    feishu_bot_verification_token: str = ""  # 飞书事件订阅验证 Token
+    feishu_bot_encrypt_key: str = ""         # 飞书事件加密 Key（可选）
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./data.db"
@@ -96,3 +100,11 @@ def get_feishu_app_secret() -> str:
 
 def get_feishu_region() -> str:
     return _db_overrides.get("feishu_region") or settings.feishu_region
+
+
+def get_feishu_bot_verification_token() -> str:
+    return _db_overrides.get("feishu_bot_verification_token") or settings.feishu_bot_verification_token
+
+
+def get_feishu_bot_encrypt_key() -> str:
+    return _db_overrides.get("feishu_bot_encrypt_key") or settings.feishu_bot_encrypt_key

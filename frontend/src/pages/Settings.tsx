@@ -34,6 +34,8 @@ export default function Settings() {
   const [feishuRegion, setFeishuRegion] = useState('cn');
   const [feishuAppId, setFeishuAppId] = useState('');
   const [feishuAppSecret, setFeishuAppSecret] = useState('');
+  const [feishuBotVerificationToken, setFeishuBotVerificationToken] = useState('');
+  const [feishuBotEncryptKey, setFeishuBotEncryptKey] = useState('');
   const [llmTest, setLlmTest] = useState<ConnectionTestResult | null>(null);
   const [feishuTest, setFeishuTest] = useState<ConnectionTestResult | null>(null);
   const [taskAuthorized, setTaskAuthorized] = useState(false);
@@ -79,7 +81,9 @@ export default function Settings() {
     try {
       const c: { key: string; value: string | null }[] = [{ key: 'feishu_region', value: feishuRegion.trim() }, { key: 'feishu_app_id', value: feishuAppId.trim() || null }];
       if (feishuAppSecret.trim()) c.push({ key: 'feishu_app_secret', value: feishuAppSecret.trim() });
-      await saveConfigs(c); setFeishuAppSecret(''); await load();
+      if (feishuBotVerificationToken.trim()) c.push({ key: 'feishu_bot_verification_token', value: feishuBotVerificationToken.trim() });
+      if (feishuBotEncryptKey.trim()) c.push({ key: 'feishu_bot_encrypt_key', value: feishuBotEncryptKey.trim() });
+      await saveConfigs(c); setFeishuAppSecret(''); setFeishuBotVerificationToken(''); setFeishuBotEncryptKey(''); await load();
       setFeishuTest({ ok: true, message: '已保存' });
     } catch (e) { setError(getErr(e, '保存失败')); } finally { setSaving(null); }
   };
@@ -214,6 +218,43 @@ export default function Settings() {
             <label className="mb-1 block text-xs font-medium text-foreground">App Secret</label>
             <Input className="h-9" type="password" value={feishuAppSecret} onChange={e => setFeishuAppSecret(e.target.value)} placeholder={config?.feishu_app_secret?.value || '输入 App Secret'} />
             <p className="text-[11px] text-muted-foreground mt-0.5">留空则保持不变</p>
+          </div>
+          <div className="mt-4 border-t border-border pt-4 space-y-3">
+            <div>
+              <div className="text-sm font-medium text-foreground">Bot 事件订阅（@机器人触发分析）</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">配置飞书开放平台事件订阅后，可在群聊或单聊中直接触发分析。</p>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-foreground">事件验证 Token</label>
+              <Input
+                className="h-9"
+                type="password"
+                value={feishuBotVerificationToken}
+                onChange={e => setFeishuBotVerificationToken(e.target.value)}
+                placeholder={config?.feishu_bot_verification_token?.value || '飞书开放平台 → 事件订阅 → 验证 Token'}
+              />
+              <p className="text-[11px] text-muted-foreground mt-0.5">留空则保持不变</p>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-foreground">事件加密 Key（可选）</label>
+              <Input
+                className="h-9"
+                type="password"
+                value={feishuBotEncryptKey}
+                onChange={e => setFeishuBotEncryptKey(e.target.value)}
+                placeholder={config?.feishu_bot_encrypt_key?.value || '留空则不加密'}
+              />
+              <p className="text-[11px] text-muted-foreground mt-0.5">留空则保持不变</p>
+            </div>
+            <div className="space-y-1 text-[11px] text-muted-foreground">
+              <p>
+                回调地址：
+                <code className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+                  {BASE_URL.replace(/\/$/, '')}/api/v1/feishu/bot/event
+                </code>
+              </p>
+              <p>订阅事件：<code className="font-mono">im.message.receive_v1</code></p>
+            </div>
           </div>
           <div className="flex items-center gap-2 pt-1">
             <Button variant="outline" size="sm" onClick={doTestFeishu} disabled={testingFeishu}>

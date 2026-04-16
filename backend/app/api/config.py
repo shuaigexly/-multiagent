@@ -14,6 +14,8 @@ from app.core.settings import (
     apply_db_config,
     get_feishu_app_id,
     get_feishu_app_secret,
+    get_feishu_bot_encrypt_key,
+    get_feishu_bot_verification_token,
     get_feishu_region,
     get_llm_api_key,
     get_llm_base_url,
@@ -33,8 +35,15 @@ CONFIG_KEYS = (
     "feishu_app_id",
     "feishu_app_secret",
     "feishu_region",
+    "feishu_bot_verification_token",
+    "feishu_bot_encrypt_key",
 )
-SECRET_KEYS = {"llm_api_key", "feishu_app_secret"}
+SECRET_KEYS = {
+    "llm_api_key",
+    "feishu_app_secret",
+    "feishu_bot_verification_token",
+    "feishu_bot_encrypt_key",
+}
 FEISHU_RUNTIME_KEYS = {"feishu_app_id", "feishu_app_secret", "feishu_region"}
 CONFIG_GETTERS = {
     "llm_api_key": get_llm_api_key,
@@ -44,6 +53,8 @@ CONFIG_GETTERS = {
     "feishu_app_id": get_feishu_app_id,
     "feishu_app_secret": get_feishu_app_secret,
     "feishu_region": get_feishu_region,
+    "feishu_bot_verification_token": get_feishu_bot_verification_token,
+    "feishu_bot_encrypt_key": get_feishu_bot_encrypt_key,
 }
 
 

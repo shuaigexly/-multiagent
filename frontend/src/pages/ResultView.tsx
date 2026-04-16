@@ -10,6 +10,7 @@ import type { FeishuChat } from '../services/feishu';
 import type { AgentResult, TaskResultsResponse } from '../services/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { toast } from '@/components/ui/use-toast';
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   done: { label: '已完成', cls: 'bg-success/10 text-success' },
@@ -42,6 +43,7 @@ export default function ResultView() {
   const [publishTypes, setPublishTypes] = useState<string[]>(['doc', 'task']);
   const [docTitle, setDocTitle] = useState('');
   const [chatId, setChatId] = useState('');
+  const [dmAvailable, setDmAvailable] = useState(false);
   const [chats, setChats] = useState<FeishuChat[]>([]);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +53,11 @@ export default function ResultView() {
   useEffect(() => {
     if (!taskId) { setLoading(false); return; }
     getChats().then(setChats).catch(() => {});
+    axios.get<{ authorized?: boolean }>(`${BASE_URL}/api/v1/feishu/oauth/status`)
+      .then(({ data: status }) => {
+        setDmAvailable(status?.authorized === true);
+      })
+      .catch(() => {});
     getTaskResults(taskId)
       .then((r) => { setData(r); setExpandedAgent(r.agent_results[0]?.agent_id ?? null); })
       .catch(() => setError('加载结果失败'))
@@ -86,8 +93,12 @@ export default function ResultView() {
 
   const handlePublish = async () => {
     if (!taskId) return;
-    if ((publishTypes.includes('message') || publishTypes.includes('card')) && !chatId) {
-      setError('发送群消息/卡片必须先选择目标群聊');
+    if ((publishTypes.includes('message') || publishTypes.includes('card')) && !chatId && !dmAvailable) {
+      toast({
+        title: '需要群 ID 或飞书授权',
+        description: '请填写目标群 ID，或在设置页完成飞书 OAuth 授权',
+        variant: 'destructive',
+      });
       return;
     }
     setPublishing(true); setError(null);
@@ -141,6 +152,9 @@ export default function ResultView() {
   );
 
   const status = STATUS_MAP[data.status] ?? { label: data.status, cls: 'bg-secondary text-secondary-foreground' };
+  const needsFeishuTarget = publishTypes.includes('message') || publishTypes.includes('card');
+  const missingFeishuTarget = needsFeishuTarget && !chatId && !dmAvailable;
+  const useDmFallback = needsFeishuTarget && !chatId && dmAvailable;
 
   return (
     <div className="max-w-4xl mx-auto px-5 py-6 space-y-5">
@@ -286,14 +300,14 @@ export default function ResultView() {
               <Input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="4 月经营分析周报" />
             </div>
             <div>
-              <label className={`text-[11px] mb-1 block ${publishTypes.includes('message') ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
-                群聊{publishTypes.includes('message') ? <span className="text-destructive ml-0.5">*</span> : '（可选）'}
+              <label className={`text-[11px] mb-1 block ${needsFeishuTarget ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                群聊{missingFeishuTarget ? <span className="text-destructive ml-0.5">*</span> : '（可选）'}
               </label>
               <select
                 value={chatId}
                 onChange={(e) => setChatId(e.target.value)}
                 className={`h-9 w-full rounded-md border bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring
-                  ${publishTypes.includes('message') && !chatId ? 'border-destructive focus:ring-destructive' : 'border-input'}`}
+                  ${missingFeishuTarget ? 'border-destructive focus:ring-destructive' : 'border-input'}`}
               >
                 <option value="">请选择群聊</option>
                 {chats.map((c) => (
@@ -302,17 +316,22 @@ export default function ResultView() {
                   </option>
                 ))}
               </select>
-              {publishTypes.includes('message') && !chatId && (
-                <p className="text-[11px] text-destructive mt-0.5">发送群消息必须选择目标群聊</p>
+              {useDmFallback && (
+                <p className="text-xs text-amber-600 mt-1">
+                  未填写群 ID，将通过私信发给已授权飞书用户
+                </p>
+              )}
+              {missingFeishuTarget && (
+                <p className="text-[11px] text-destructive mt-0.5">发送消息/卡片需填写群 ID，或先完成飞书 OAuth 授权</p>
               )}
             </div>
           </div>
           <div className="flex items-center justify-end gap-2">
-            {publishTypes.includes('message') && !chatId && (
-              <span className="text-xs text-destructive">请先选择群聊，否则无法发布</span>
+            {missingFeishuTarget && (
+              <span className="text-xs text-destructive">请先填写群 ID 或完成飞书授权，否则无法发布</span>
             )}
             <Button
-              disabled={publishing || publishTypes.length === 0 || (publishTypes.includes('message') && !chatId)}
+              disabled={publishing || publishTypes.length === 0 || missingFeishuTarget}
               onClick={handlePublish}
             >
               {publishing ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />发布中</> : '发布到飞书'}

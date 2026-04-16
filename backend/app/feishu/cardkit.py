@@ -67,6 +67,37 @@ async def send_card_to_chat(chat_id: str, title: str, results: list[AgentResult]
     return {"message_id": msg_id, "url": f"{user_base_url}/im/chat/{chat_id}/message/{msg_id}"}
 
 
+async def send_card_to_user(open_id: str, title: str, results: list[AgentResult]) -> dict:
+    """发卡片私信给用户（receive_id_type=open_id）"""
+    token = get_user_access_token() or await _get_tenant_access_token()
+    api_base_url = _get_feishu_api_base_url()
+    user_base_url = get_feishu_base_url()
+    card = _build_card_content(title, results)
+
+    payload = {
+        "receive_id": open_id,
+        "msg_type": "interactive",
+        "content": json.dumps(card, ensure_ascii=False),
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{api_base_url}/open-apis/im/v1/messages?receive_id_type=open_id",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+        )
+
+    data = _parse_json_response(resp, "CardKit DM send failed")
+    if data.get("code", 0) != 0:
+        raise RuntimeError(f"CardKit DM send failed: {data.get('msg')} (code={data.get('code')})")
+
+    resp_data = data.get("data", {})
+    msg_id = resp_data.get("message_id", "")
+    resp_chat_id = resp_data.get("chat_id", "")
+    url = f"{user_base_url}/im/chat/{resp_chat_id}/message/{msg_id}" if resp_chat_id else None
+    return {"message_id": msg_id, "url": url}
+
+
 async def _get_tenant_access_token() -> str:
     app_id = get_feishu_app_id()
     app_secret = get_feishu_app_secret()

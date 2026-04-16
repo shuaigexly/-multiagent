@@ -31,8 +31,12 @@ async def publish_task(
         raise HTTPException(404, "任务不存在")
     if task.status != "done":
         raise HTTPException(400, "任务尚未完成")
-    if ("message" in body.asset_types or "card" in body.asset_types) and not body.chat_id:
-        raise HTTPException(400, "发送群消息/卡片需要提供目标群 ID（chat_id）")
+    if "message" in body.asset_types or "card" in body.asset_types:
+        if not body.chat_id:
+            from app.feishu.user_token import get_user_open_id
+
+            if not get_user_open_id():
+                raise HTTPException(400, "发送消息/卡片需要提供目标群 ID（chat_id），或先在设置页完成飞书 OAuth 授权")
 
     results_q = await db.execute(
         select(TaskResult).where(TaskResult.task_id == task_id)

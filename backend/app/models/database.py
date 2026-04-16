@@ -1,10 +1,11 @@
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import (
     Column, String, Integer, Text, DateTime, JSON,
     create_engine, event, UniqueConstraint
 )
 from sqlalchemy import event as sa_event
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 import uuid
 
@@ -83,6 +84,19 @@ class UserConfig(Base):
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class FeishuBotEvent(Base):
+    __tablename__ = "feishu_bot_events"
+
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_message_id: Mapped[str] = mapped_column(String(128))
+    chat_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    open_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 # Async engine

@@ -132,15 +132,30 @@ async def publish_results(
 
     # 互动卡片
     if "card" in asset_types:
-        if not chat_id:
-            raise ValueError("发送互动卡片需要提供飞书群 ID（chat_id），请在发布面板中选择目标群聊")
+        from app.feishu.user_token import get_user_open_id
+
+        _target_chat_id = chat_id
+        _target_open_id = None
+        if not _target_chat_id:
+            _target_open_id = get_user_open_id()
+            if not _target_open_id:
+                raise ValueError("发送互动卡片需要提供飞书群 ID（chat_id），或先完成飞书 OAuth 授权")
         await emitter.emit_feishu_writing("互动卡片")
         try:
-            card_result = await send_card_to_chat(
-                chat_id=chat_id,
-                title=f"📊 {title}",
-                results=agent_results,
-            )
+            if _target_chat_id:
+                card_result = await send_card_to_chat(
+                    chat_id=_target_chat_id,
+                    title=f"📊 {title}",
+                    results=agent_results,
+                )
+            else:
+                from app.feishu.cardkit import send_card_to_user
+
+                card_result = await send_card_to_user(
+                    open_id=_target_open_id,
+                    title=f"📊 {title}",
+                    results=agent_results,
+                )
             asset = PublishedAsset(
                 task_id=task_id,
                 asset_type="card",
@@ -163,8 +178,14 @@ async def publish_results(
 
     # 群消息
     if "message" in asset_types:
-        if not chat_id:
-            raise ValueError("发送群消息需要提供飞书群 ID（chat_id），请在发布面板中选择目标群聊")
+        from app.feishu.user_token import get_user_open_id
+
+        _target_chat_id = chat_id
+        _target_open_id = None
+        if not _target_chat_id:
+            _target_open_id = get_user_open_id()
+            if not _target_open_id:
+                raise ValueError("发送群消息需要提供飞书群 ID（chat_id），或先完成飞书 OAuth 授权")
         await emitter.emit_feishu_writing("消息")
         try:
             # 找 CEO 助理的摘要
@@ -178,11 +199,18 @@ async def publish_results(
             if not summary_text:
                 summary_text = f"【{task_type_label}】分析完成，共 {len(agent_results)} 个模块参与分析。"
 
-            msg_result = await im.send_card_message(
-                title=f"📊 {title}",
-                content=summary_text,
-                chat_id=chat_id,
-            )
+            if _target_chat_id:
+                msg_result = await im.send_card_message(
+                    title=f"📊 {title}",
+                    content=summary_text,
+                    chat_id=_target_chat_id,
+                )
+            else:
+                msg_result = await im.send_dm_card(
+                    open_id=_target_open_id,
+                    title=f"📊 {title}",
+                    content=summary_text,
+                )
             asset = PublishedAsset(
                 task_id=task_id,
                 asset_type="message",
