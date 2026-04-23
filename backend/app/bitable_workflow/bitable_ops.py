@@ -6,6 +6,7 @@ import httpx
 
 from app.feishu.aily import get_feishu_open_base_url as _get_base_url
 from app.feishu.aily import get_tenant_access_token as _get_token
+from app.feishu.retry import with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,16 @@ async def list_records(
 
     filter_expr 示例：'CurrentValue.[状态]="待选题"'
     """
+    return await with_retry(_list_records_impl, app_token, table_id, filter_expr, page_size, max_records)
+
+
+async def _list_records_impl(
+    app_token: str,
+    table_id: str,
+    filter_expr: Optional[str],
+    page_size: int,
+    max_records: int,
+) -> list[dict]:
     base = _get_base_url()
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
     all_items: list[dict] = []
@@ -59,6 +70,10 @@ async def list_records(
 
 async def create_record(app_token: str, table_id: str, fields: dict) -> str:
     """新建单条记录，返回 record_id。"""
+    return await with_retry(_create_record_impl, app_token, table_id, fields)
+
+
+async def _create_record_impl(app_token: str, table_id: str, fields: dict) -> str:
     token = await _get_token()
     base = _get_base_url()
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
@@ -86,6 +101,15 @@ async def update_record(
     fields: dict,
 ) -> None:
     """更新已有记录的字段。"""
+    await with_retry(_update_record_impl, app_token, table_id, record_id, fields)
+
+
+async def _update_record_impl(
+    app_token: str,
+    table_id: str,
+    record_id: str,
+    fields: dict,
+) -> None:
     token = await _get_token()
     base = _get_base_url()
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}"
