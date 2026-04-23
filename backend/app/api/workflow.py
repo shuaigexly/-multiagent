@@ -107,14 +107,18 @@ async def workflow_seed(req: SeedRequest):
 @router.post("/analyze")
 async def workflow_analyze(req: AnalysisRequest):
     """手动触发运营分析师生成周报。"""
+    if runner.analyze_lock.locked():
+        raise HTTPException(status_code=409, detail="Analysis already in progress")
     period = req.period or datetime.now().strftime("%Y-%m-%d 手动触发")
-    report = await _analyst.analyze(
-        req.app_token,
-        req.content_table_id,
-        req.report_table_id,
-        period,
-    )
-    return {"status": "done", "period": period, "report_preview": report[:300]}
+    async with runner.analyze_lock:
+        report = await _analyst.analyze(
+            req.app_token,
+            req.content_table_id,
+            req.report_table_id,
+            period,
+        )
+    status = "skipped" if not report else "done"
+    return {"status": status, "period": period, "report_preview": report[:300]}
 
 
 @router.get("/records")

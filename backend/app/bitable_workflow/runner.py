@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _analyst = AnalystAgent()
 _running = False
+analyze_lock = asyncio.Lock()  # shared with api/workflow.py to prevent concurrent reports
 
 
 async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
@@ -88,12 +89,13 @@ async def run_workflow_loop(
 
             if cycle % analysis_every == 0:
                 period = datetime.now().strftime("%Y-%m-%d") + f" 第{cycle}轮"
-                await _analyst.analyze(
-                    app_token,
-                    table_ids["content"],
-                    table_ids["report"],
-                    period,
-                )
+                async with analyze_lock:
+                    await _analyst.analyze(
+                        app_token,
+                        table_ids["content"],
+                        table_ids["report"],
+                        period,
+                    )
         except Exception as exc:
             logger.error("Workflow cycle %d error: %s", cycle, exc)
 

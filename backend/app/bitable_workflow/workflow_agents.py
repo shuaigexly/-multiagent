@@ -216,12 +216,16 @@ async def update_agent_performance(
         prev_count = float(fields.get("处理任务数", 0) or 0)
         prev_avg = float(fields.get("平均质量分", 0.0) or 0.0)
         prev_pass_rate = float(fields.get("通过率", 0.0) or 0.0)
+        prev_scored = float(fields.get("已评分任务数", 0) or 0)
         new_count = prev_count + tasks_delta
 
-        # 滚动平均质量分（仅有评分时更新）
-        if score is not None and new_count > 0:
-            new_avg = round((prev_avg * prev_count + score) / new_count, 1)
+        # Rolling avg uses scored-task count as denominator, not total task count,
+        # so unscored tasks don't dilute the average.
+        if score is not None:
+            new_scored = prev_scored + 1
+            new_avg = round((prev_avg * prev_scored + score) / new_scored, 1)
         else:
+            new_scored = prev_scored
             new_avg = prev_avg
 
         # 滚动通过率（仅审核员有 passed 时更新）
@@ -237,6 +241,7 @@ async def update_agent_performance(
             {
                 "处理任务数": new_count,
                 "平均质量分": new_avg,
+                "已评分任务数": new_scored,
                 "通过率": new_pass_rate,
                 "更新时间": now_str,
             },
@@ -251,6 +256,7 @@ async def update_agent_performance(
                 "处理任务数": float(tasks_delta),
                 "通过率": initial_pass_rate,
                 "平均质量分": score if score is not None else 0.0,
+                "已评分任务数": 1.0 if score is not None else 0.0,
                 "更新时间": now_str,
             },
         )

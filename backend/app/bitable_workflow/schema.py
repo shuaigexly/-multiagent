@@ -48,6 +48,7 @@ PERFORMANCE_FIELDS = [
     {"field_name": "处理任务数", "type": NUMBER_FIELD_TYPE},
     {"field_name": "通过率", "type": NUMBER_FIELD_TYPE},
     {"field_name": "平均质量分", "type": NUMBER_FIELD_TYPE},
+    {"field_name": "已评分任务数", "type": NUMBER_FIELD_TYPE},
     {"field_name": "更新时间", "type": TEXT_FIELD_TYPE},
 ]
 
