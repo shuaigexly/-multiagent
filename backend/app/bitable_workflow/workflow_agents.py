@@ -42,7 +42,10 @@ class EditorAgent:
     agent_id = "editor"
     agent_name = "内容编辑"
 
-    async def process(self, app_token: str, table_id: str, record: dict) -> None:
+    async def process(
+        self, app_token: str, table_id: str, record: dict,
+        performance_table_id: Optional[str] = None,
+    ) -> None:
         record_id = record["record_id"]
         fields = record.get("fields", {})
         title = fields.get("标题", "未命名")
@@ -62,6 +65,8 @@ class EditorAgent:
                 "草稿内容": draft[:2000],
             },
         )
+        if performance_table_id:
+            await update_agent_performance(app_token, performance_table_id, self.agent_name, "内容编辑")
         logger.info("Editor: [%s] → 待审核", title)
 
 
@@ -69,7 +74,10 @@ class ReviewerAgent:
     agent_id = "reviewer"
     agent_name = "内容审核员"
 
-    async def process(self, app_token: str, table_id: str, record: dict) -> None:
+    async def process(
+        self, app_token: str, table_id: str, record: dict,
+        performance_table_id: Optional[str] = None,
+    ) -> None:
         record_id = record["record_id"]
         fields = record.get("fields", {})
         title = fields.get("标题", "未命名")
@@ -97,6 +105,10 @@ class ReviewerAgent:
             update_fields["发布时间"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         await bitable_ops.update_record(app_token, table_id, record_id, update_fields)
+        if performance_table_id:
+            await update_agent_performance(
+                app_token, performance_table_id, self.agent_name, "内容审核员", score=score
+            )
         logger.info("Reviewer: [%s] → %s (score=%s)", title, new_status, score)
 
 
@@ -169,7 +181,55 @@ def _extract_score(text: str) -> Optional[float]:
     m = re.search(r"评分[：:]\s*([0-9]+(?:\.[0-9]+)?)", text)
     if m:
         try:
-            return float(m.group(1))
+            score = float(m.group(1))
+            return max(1.0, min(10.0, score))
         except ValueError:
             pass
     return None
+
+
+async def update_agent_performance(
+    app_token: str,
+    performance_table_id: str,
+    agent_name: str,
+    role: str,
+    tasks_delta: int = 1,
+    score: Optional[float] = None,
+) -> None:
+    """在员工效能表中写入或更新本轮处理记录。"""
+    from app.bitable_workflow import bitable_ops
+
+    existing = await bitable_ops.list_records(
+        app_token,
+        performance_table_id,
+        filter_expr=f'CurrentValue.[员工姓名]="{agent_name}"',
+    )
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    if existing:
+        record = existing[0]
+        rid = record["record_id"]
+        fields = record.get("fields", {})
+        prev_count = fields.get("处理任务数", 0) or 0
+        prev_avg = fields.get("平均质量分", 0.0) or 0.0
+        new_count = prev_count + tasks_delta
+        if score is not None and new_count > 0:
+            new_avg = round((prev_avg * prev_count + score) / new_count, 1)
+        else:
+            new_avg = prev_avg
+        await bitable_ops.update_record(
+            app_token, performance_table_id, rid,
+            {"处理任务数": new_count, "平均质量分": new_avg, "更新时间": now_str},
+        )
+    else:
+        await bitable_ops.create_record(
+            app_token, performance_table_id,
+            {
+                "员工姓名": agent_name,
+                "角色": role,
+                "处理任务数": tasks_delta,
+                "通过率": 0.0,
+                "平均质量分": score or 0.0,
+                "更新时间": now_str,
+            },
+        )
