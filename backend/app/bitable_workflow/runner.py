@@ -81,25 +81,28 @@ async def run_workflow_loop(
 
     analysis_every = max(1, analysis_every)
 
-    while _running:
-        cycle += 1
-        try:
-            processed = await run_one_cycle(app_token, table_ids)
-            logger.info("Cycle %d: processed %d records", cycle, processed)
+    try:
+        while _running:
+            cycle += 1
+            try:
+                processed = await run_one_cycle(app_token, table_ids)
+                logger.info("Cycle %d: processed %d records", cycle, processed)
 
-            if cycle % analysis_every == 0:
-                period = datetime.now().strftime("%Y-%m-%d") + f" 第{cycle}轮"
-                async with analyze_lock:
-                    await _analyst.analyze(
-                        app_token,
-                        table_ids["content"],
-                        table_ids["report"],
-                        period,
-                    )
-        except Exception as exc:
-            logger.error("Workflow cycle %d error: %s", cycle, exc)
+                if cycle % analysis_every == 0:
+                    period = datetime.now().strftime("%Y-%m-%d") + f" 第{cycle}轮"
+                    async with analyze_lock:
+                        await _analyst.analyze(
+                            app_token,
+                            table_ids["content"],
+                            table_ids["report"],
+                            period,
+                        )
+            except Exception as exc:
+                logger.error("Workflow cycle %d error: %s", cycle, exc)
 
-        await asyncio.sleep(interval)
+            await asyncio.sleep(interval)
+    finally:
+        _running = False
 
     logger.info("Workflow loop stopped after %d cycles", cycle)
 

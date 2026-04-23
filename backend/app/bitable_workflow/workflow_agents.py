@@ -170,11 +170,23 @@ class AnalystAgent:
             },
         )
 
-        # Archive both published and rejected so they don't re-enter the next period's count
+        # Archive published + rejected; failures are logged but don't abort — the report
+        # was already written and returning an error here would cause the caller to retry,
+        # potentially creating a duplicate report on the next cycle.
+        archive_errors = 0
         for r in published + rejected:
-            await bitable_ops.update_record(
-                app_token, content_table_id, r["record_id"],
-                {"状态": Status.ANALYZED},
+            try:
+                await bitable_ops.update_record(
+                    app_token, content_table_id, r["record_id"],
+                    {"状态": Status.ANALYZED},
+                )
+            except Exception as exc:
+                archive_errors += 1
+                logger.error("Analyst: failed to archive record=%s: %s", r["record_id"], exc)
+        if archive_errors:
+            logger.warning(
+                "Analyst: %d/%d records failed to archive — they may appear in the next period",
+                archive_errors, total,
             )
 
         logger.info("Analyst: report created record_id=%s period=%s", record_id, period)
