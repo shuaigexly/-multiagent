@@ -18,7 +18,7 @@ class Status:
     ANALYZED = "已分析"
 
 
-_ALL_STATUSES = [
+ALL_STATUSES = [
     Status.PENDING_TOPIC,
     Status.WRITING,
     Status.PENDING_REVIEW,
@@ -34,7 +34,7 @@ CONTENT_TASK_FIELDS = [
         "type": SINGLE_SELECT_FIELD_TYPE,
         "options": ["行业洞察", "产品介绍", "用户故事", "数据分析"],
     },
-    {"field_name": "状态", "type": SINGLE_SELECT_FIELD_TYPE, "options": _ALL_STATUSES},
+    {"field_name": "状态", "type": SINGLE_SELECT_FIELD_TYPE, "options": ALL_STATUSES},
     {"field_name": "编辑备注", "type": TEXT_FIELD_TYPE},
     {"field_name": "草稿内容", "type": TEXT_FIELD_TYPE},
     {"field_name": "审核意见", "type": TEXT_FIELD_TYPE},

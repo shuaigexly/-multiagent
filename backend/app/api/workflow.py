@@ -7,12 +7,13 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.bitable_workflow import bitable_ops, runner
-from app.bitable_workflow.schema import CONTENT_TASK_FIELDS, Status
+from app.bitable_workflow.schema import ALL_STATUSES, CONTENT_TASK_FIELDS, Status
 from app.bitable_workflow.workflow_agents import AnalystAgent
 
 _VALID_CONTENT_TYPES: list[str] = next(
-    f["options"] for f in CONTENT_TASK_FIELDS if f["field_name"] == "内容类型"
+    (f["options"] for f in CONTENT_TASK_FIELDS if f["field_name"] == "内容类型"), []
 )
+_VALID_STATUSES: set[str] = set(ALL_STATUSES)
 
 router = APIRouter(prefix="/api/v1/workflow", tags=["workflow"])
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class StartRequest(BaseModel):
 class SeedRequest(BaseModel):
     app_token: str
     table_id: str
-    title: str
+    title: str = Field(min_length=1)
     content_type: str = "行业洞察"
 
     @field_validator("content_type")
@@ -135,6 +136,11 @@ async def workflow_analyze(req: AnalysisRequest):
 @router.get("/records")
 async def workflow_records(app_token: str, table_id: str, status: Optional[str] = None):
     """查看多维表格中的记录（可按状态过滤）。"""
+    if status is not None and status not in _VALID_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的状态值，有效值为: {sorted(_VALID_STATUSES)}",
+        )
     filter_expr = f'CurrentValue.[状态]="{status}"' if status else None
     records = await bitable_ops.list_records(app_token, table_id, filter_expr=filter_expr)
     return {"count": len(records), "records": records}
