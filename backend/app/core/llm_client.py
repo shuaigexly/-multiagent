@@ -83,7 +83,7 @@ async def _call_openai_compatible(
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            return resp.choices[0].message.content.strip()
+            return (resp.choices[0].message.content or "").strip()
         except Exception as e:
             last_err = e
             if attempt < 2:

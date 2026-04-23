@@ -67,6 +67,11 @@ class AnalysisRequest(BaseModel):
 @router.post("/setup")
 async def workflow_setup(req: SetupRequest):
     """创建飞书多维表格结构并写入初始任务。"""
+    if runner.is_running():
+        raise HTTPException(
+            status_code=409,
+            detail="Workflow loop is running; call /stop first before re-setup",
+        )
     result = await runner.setup_workflow(req.name)
     _state.update(result)
     return result
