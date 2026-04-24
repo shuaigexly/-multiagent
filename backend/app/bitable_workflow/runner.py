@@ -7,7 +7,6 @@ stop_workflow()      — 停止循环
 """
 import asyncio
 import logging
-from datetime import datetime
 from typing import Optional
 
 from app.bitable_workflow import bitable_ops, schema
@@ -39,7 +38,6 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     report_tid = await create_table(app_token, schema.TABLE_REPORT, report_fields(task_tid))
     performance_tid = await create_table(app_token, schema.TABLE_PERFORMANCE, schema.PERFORMANCE_FIELDS)
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     for title, dimension, background in schema.SEED_TASKS:
         await bitable_ops.create_record(
             app_token,
@@ -47,9 +45,10 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
             {
                 "任务标题": title,
                 "分析维度": dimension,
+                "优先级": "P1 高",
                 "状态": schema.Status.PENDING,
+                "进度": 0,
                 "背景说明": background,
-                "创建时间": now_str,
             },
         )
 

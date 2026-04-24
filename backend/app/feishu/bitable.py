@@ -206,53 +206,69 @@ async def _create_field(
     table_id: str,
     field: dict,
 ) -> str:
-    # Linked record fields (type=18) require table_id in the property object.
-    # The lark_oapi SDK builder does not expose this property, so we use HTTP directly.
-    if field.get("type") == LINKED_RECORD_FIELD_TYPE:
-        return await _create_linked_field_http(app_token, table_id, field)
+    """通过 HTTP API 创建字段，支持全部 28 种类型 + ui_type + property。
 
-    req_body = _build_field(field)
-    req = (
-        CreateAppTableFieldRequest.builder()
-        .app_token(app_token)
-        .table_id(table_id)
-        .request_body(req_body)
-        .build()
-    )
-    resp = await asyncio.wait_for(
-        asyncio.to_thread(client.bitable.v1.app_table_field.create, req),
-        timeout=30.0,
-    )
-    if not resp.success():
-        raise RuntimeError(f"创建字段失败: {field['field_name']} ({resp.msg})")
-    return resp.data.field.field_id
+    SDK builder 无法表达 rating/progress/currency/formula/datetime_created 等高级字段的
+    property 配置，因此统一走 HTTP 路径，传入完整 payload。
+    """
+    return await _create_field_http(app_token, table_id, field)
 
 
-async def _create_linked_field_http(app_token: str, table_id: str, field: dict) -> str:
-    """通过 HTTP API 创建关联记录字段（type=18）。"""
+async def _create_field_http(app_token: str, table_id: str, field: dict) -> str:
+    """直接通过 Bitable Field POST 接口创建任意类型字段。
+
+    field dict 支持：
+      - field_name (必填)
+      - type (必填, int) — 数据类型编号
+      - ui_type (可选, str) — 如 "Rating"/"Progress"/"CreatedTime" 等，精确控制 UI 呈现
+      - property (可选, dict) — 字段属性，如 {"rating": {"symbol": "star"}, "min": 0, "max": 5}
+      - options (可选, list[str]) — SingleSelect/MultiSelect 的快捷字段，自动转成 property.options
+      - table_id (可选, str) — 关联字段（type=18/21）的目标表 id
+    """
     token = await get_tenant_access_token()
     base = get_feishu_open_base_url()
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
+
+    payload: dict = {"field_name": field["field_name"], "type": field["type"]}
+
+    if "ui_type" in field:
+        payload["ui_type"] = field["ui_type"]
+
+    prop = dict(field.get("property") or {})
+
+    # options 快捷方式 — 支持纯字符串或 {"name": ..., "color": N} 对象
+    if field.get("options"):
+        opts = []
+        for item in field["options"]:
+            if isinstance(item, str):
+                opts.append({"name": item})
+            elif isinstance(item, dict):
+                opts.append(item)
+        prop["options"] = opts
+
+    # 关联字段（type=18/21）的 table_id 放入 property
+    if field.get("table_id") and field["type"] in (18, 21):
+        prop["table_id"] = field["table_id"]
+
+    if prop:
+        payload["property"] = prop
+
     async with httpx.AsyncClient(timeout=30) as http:
         r = await http.post(
             url,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={
-                "field_name": field["field_name"],
-                "type": LINKED_RECORD_FIELD_TYPE,
-                "property": {"table_id": field.get("table_id", "")},
-            },
+            json=payload,
         )
     r.raise_for_status()
     data = r.json()
     if data.get("code") != 0:
         raise RuntimeError(
-            f"创建关联字段失败: code={data.get('code')} msg={data.get('msg')}"
+            f"创建字段失败: {field['field_name']} code={data.get('code')} msg={data.get('msg')}"
         )
     try:
         return data["data"]["field"]["field_id"]
     except (KeyError, TypeError) as exc:
-        raise RuntimeError(f"创建关联字段响应结构异常: {data}") from exc
+        raise RuntimeError(f"创建字段响应结构异常: {data}") from exc
 
 
 async def _batch_add_records_impl(

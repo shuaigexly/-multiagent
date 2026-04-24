@@ -195,6 +195,71 @@ async def cleanup_prior_task_outputs(
         raise RuntimeError("清理历史输出失败: " + "；".join(cleanup_errors))
 
 
+_AGENT_ROLE_EMOJI_MAP = {
+    "数据分析师": "📊 数据分析师",
+    "内容负责人": "📝 内容负责人",
+    "SEO/增长顾问": "🔍 SEO/增长顾问",
+    "SEO 增长顾问": "🔍 SEO/增长顾问",
+    "产品经理": "📱 产品经理",
+    "运营负责人": "⚙️ 运营负责人",
+    "财务顾问": "💰 财务顾问",
+    "CEO 助理": "👔 CEO 助理",
+    "CEO助理": "👔 CEO 助理",
+}
+
+
+def _role_with_emoji(agent_name: str) -> str:
+    """Map bare agent name to the emoji-prefixed SingleSelect option label."""
+    return _AGENT_ROLE_EMOJI_MAP.get(agent_name, agent_name)
+
+
+def _extract_health(result: AgentResult) -> str:
+    """扫描 sections + raw_output 中的 🟢🟡🔴 emoji，返回 SingleSelect 选项名。"""
+    text_blobs = [s.content or "" for s in result.sections]
+    text_blobs.append(result.raw_output or "")
+    combined = "\n".join(text_blobs)[:5000]
+    if "🔴" in combined:
+        return "🔴 预警"
+    if "🟡" in combined:
+        return "🟡 关注"
+    if "🟢" in combined:
+        return "🟢 健康"
+    return "⚪ 数据不足"
+
+
+def _estimate_confidence(result: AgentResult) -> int:
+    """估算置信度（1-5 stars）。"""
+    raw = result.raw_output or ""
+    if not raw or "FAILED" in raw[:50]:
+        return 1
+    section_count = len(result.sections)
+    action_count = len(result.action_items)
+    has_chart = bool(result.chart_data)
+    has_thinking = bool(result.thinking_process)
+    score = 2
+    if section_count >= 4:
+        score += 1
+    if action_count >= 3:
+        score += 1
+    if has_chart:
+        score += 1
+    if has_thinking and len(raw) > 1500:
+        score += 1
+    return min(5, max(1, score))
+
+
+def _estimate_urgency(ceo_result: AgentResult) -> int:
+    """从 CEO 报告中估算决策紧急度（1-5）。"""
+    combined = (ceo_result.raw_output or "").lower()
+    if "🔴" in ceo_result.raw_output or "紧急" in combined or "p0" in combined:
+        return 5
+    if "🟡" in ceo_result.raw_output or "重要" in combined:
+        return 4
+    if "🟢" in ceo_result.raw_output:
+        return 2
+    return 3
+
+
 def _format_sections(result: AgentResult, max_chars: int = 2000) -> str:
     """Concatenate all sections into one markdown block, truncated to max_chars.
 
@@ -230,8 +295,9 @@ async def write_agent_outputs(
 
     task_record_id: 分析任务表中对应记录的 record_id，用于填写关联字段。
     返回成功写入的记录数。调用方必须校验是否等于结果数量。
+
+    生成时间字段为 CreatedTime 类型，由飞书自动填充，无需手动写入。
     """
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     written = 0
     for result in results:
         summary = _format_sections(result, max_chars=5000)
@@ -242,12 +308,14 @@ async def write_agent_outputs(
         )
         fields: dict = {
             "任务标题": task_title,
-            "岗位角色": result.agent_name,
+            "岗位角色": _role_with_emoji(result.agent_name),
+            "健康度评级": _extract_health(result),
             "分析摘要": summary,
             "行动项": action_text[:2000],
+            "行动项数": len(result.action_items),
+            "置信度": _estimate_confidence(result),
             "分析思路": result.thinking_process[:3000] if result.thinking_process else "",
             "图表数据": _json.dumps(result.chart_data, ensure_ascii=False)[:3000] if result.chart_data else "",
-            "生成时间": now_str,
         }
         if task_record_id:
             fields["关联任务"] = [{"record_id": task_record_id}]
@@ -282,9 +350,8 @@ async def write_ceo_report(
 
     task_record_id: 分析任务表中对应记录的 record_id，用于填写关联字段。
     CEO 报告是核心交付物；写入失败直接抛出，由调用方决定是否失败整条任务。
+    生成时间字段为 CreatedTime 类型，由飞书自动填充。
     """
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-
     def _find_section(keyword: str) -> str:
         for s in ceo_result.sections:
             if keyword in s.title:
@@ -293,13 +360,14 @@ async def write_ceo_report(
 
     record_fields: dict = {
         "报告标题": task_title,
+        "综合健康度": _extract_health(ceo_result),
         "核心结论": _find_section("核心结论"),
         "重要机会": _find_section("重要机会"),
         "重要风险": _find_section("重要风险"),
         "CEO决策事项": _find_section("CEO 需决策") or _find_section("决策"),
         "管理摘要": _find_section("管理摘要") or _find_section("一段话"),
         "参与岗位数": float(participant_count),
-        "生成时间": now_str,
+        "决策紧急度": _estimate_urgency(ceo_result),
     }
     if task_record_id:
         record_fields["关联任务"] = [{"record_id": task_record_id}]
@@ -322,8 +390,8 @@ async def update_performance(
     """更新数字员工效能表的处理任务数（滚动累计）。
 
     批量拉取全表现有记录（性能表最多 7 行），避免每个 Agent 各发一次 list_records。
+    最近更新字段为 ModifiedTime 类型，由飞书自动填充。
     """
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     try:
         all_rows = await bitable_ops.list_records(
             app_token, performance_table_id, max_records=50
@@ -343,11 +411,13 @@ async def update_performance(
             if existing:
                 rid = existing["record_id"]
                 prev = float(existing.get("fields", {}).get("处理任务数", 0) or 0)
+                new_count = prev + 1
+                activity = min(5, 1 + int(new_count // 2))  # 1,2,3,4,5 递进
                 await bitable_ops.update_record(
                     app_token,
                     performance_table_id,
                     rid,
-                    {"处理任务数": prev + 1, "更新时间": now_str},
+                    {"处理任务数": new_count, "活跃度": activity},
                 )
             else:
                 await bitable_ops.create_record(
@@ -355,9 +425,10 @@ async def update_performance(
                     performance_table_id,
                     {
                         "员工姓名": result.agent_name,
+                        "岗位": _role_with_emoji(result.agent_name),
                         "角色": result.agent_id,
                         "处理任务数": 1.0,
-                        "更新时间": now_str,
+                        "活跃度": 1,
                     },
                 )
         except Exception as exc:

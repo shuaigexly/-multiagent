@@ -70,7 +70,6 @@ async def _create_followup_tasks(
         logger.warning("Feishu task API failed for [%s]: %s", task_title, exc)
 
     # 2. 在「分析任务」表中生成后续待分析记录（再流转闭环）
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     for item in action_items:
         try:
             await bitable_ops.create_record(
@@ -79,9 +78,10 @@ async def _create_followup_tasks(
                 {
                     "任务标题": f"[跟进] {item[:50]}",
                     "分析维度": "综合分析",
+                    "优先级": "P2 中",
                     "状态": Status.PENDING,
+                    "进度": 0,
                     "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成",
-                    "创建时间": now_str,
                 },
             )
             logger.info("Follow-up task created from [%s]: %s", task_title, item[:50])
@@ -145,14 +145,17 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
             # 标记为「分析中」防止并发重复领取
             await bitable_ops.update_record(
                 app_token, task_tid, rid,
-                {"状态": Status.ANALYZING, "当前阶段": "▶ Wave1 启动：五岗并行分析中…"}
+                {"状态": Status.ANALYZING, "当前阶段": "▶ Wave1 启动：五岗并行分析中…", "进度": 0.1}
             )
 
-            # 每个 Wave 完成后更新「当前阶段」字段，让用户在多维表格实时看到进展
+            # 每个 Wave 完成后更新「当前阶段」+「进度」字段，让用户在多维表格实时看到进展
+            _wave_progress = iter([0.45, 0.75, 0.95])
+
             async def _on_wave(stage: str) -> None:
+                progress = next(_wave_progress, 0.95)
                 try:
                     await bitable_ops.update_record(
-                        app_token, task_tid, rid, {"当前阶段": stage}
+                        app_token, task_tid, rid, {"当前阶段": stage, "进度": progress}
                     )
                 except Exception as stage_exc:
                     logger.debug("当前阶段 update skipped: %s", stage_exc)
@@ -187,7 +190,7 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
                     app_token, performance_tid, all_results + [ceo_result]
                 )
 
-            # 标记为已完成，清空阶段进度
+            # 标记为已完成，进度置为 100%
             await bitable_ops.update_record(
                 app_token,
                 task_tid,
@@ -195,6 +198,7 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
                 {
                     "状态": Status.COMPLETED,
                     "当前阶段": "✅ 七岗分析全部完成",
+                    "进度": 1.0,
                     "完成时间": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 },
             )
