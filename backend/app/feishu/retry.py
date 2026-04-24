@@ -6,6 +6,14 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 _CLIENT_ERROR_PATTERN = re.compile(r"\b4(?:0[0-9]|1[0-7])\b")
 
+# Feishu Bitable error codes that are deterministic schema/field errors,
+# retrying is pure waste — every attempt will fail the same way.
+_FAST_FAIL_BITABLE_CODES = (
+    "1254067",  # LinkFieldConvFail — linked record field cannot be written via records API
+    "1254068",  # 字段类型不匹配
+    "1254043",  # 字段不存在
+)
+
 
 def _is_token_expired(exc: Exception) -> bool:
     message = str(exc).lower()
@@ -18,9 +26,17 @@ def _is_token_expired(exc: Exception) -> bool:
 
 
 def _is_client_error(exc: Exception) -> bool:
-    """Return True for 4xx client errors that should not be retried."""
+    """Return True for deterministic client errors that should not be retried.
+
+    Matches either an HTTP 4xx code or specific Feishu Bitable field-level error
+    codes where retrying will always fail the same way.
+    """
     message = str(exc)
-    return bool(_CLIENT_ERROR_PATTERN.search(message)) and not _is_token_expired(exc)
+    if _is_token_expired(exc):
+        return False
+    if any(code in message for code in _FAST_FAIL_BITABLE_CODES):
+        return True
+    return bool(_CLIENT_ERROR_PATTERN.search(message))
 
 
 async def with_retry(
