@@ -164,13 +164,13 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/api/v1/workflow/setup` | 一键创建多维表格结构，写入 4 条种子任务 |
+| `POST` | `/api/v1/workflow/setup` | 一键创建多维表格结构（4 张表 + 6 个附加视图）+ 4 条种子任务 |
 | `POST` | `/api/v1/workflow/start` | 启动后台调度循环 |
 | `POST` | `/api/v1/workflow/stop` | 停止调度循环（立即生效） |
 | `GET`  | `/api/v1/workflow/status` | 查看运行状态和表格信息 |
-| `POST` | `/api/v1/workflow/seed` | 向内容任务表写入一条新的待选题 |
-| `POST` | `/api/v1/workflow/analyze` | 手动触发运营分析师生成周报（已在生成中返回 409） |
+| `POST` | `/api/v1/workflow/seed` | 向分析任务表写入一条新的待处理任务 |
 | `GET`  | `/api/v1/workflow/records` | 查询多维表格记录，支持 `?status=` 过滤 |
+| `GET`  | `/api/v1/workflow/stream/{record_id}` | **SSE 实时进度流**（task.started / wave.completed / task.done / task.error） |
 
 **典型使用流程：**
 
@@ -208,6 +208,33 @@ curl -X POST http://localhost:8000/api/v1/workflow/stop
 curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A&status=已发布"
 ```
 
+### 注入真实数据源（让分析不再凭空估算）
+
+直接在飞书多维表格的「数据源」字段粘贴 CSV / markdown / 纯文本，系统会自动识别类型并注入每个 agent：
+
+```csv
+指标,一月,二月,三月
+MAU,85000,98000,112000
+DAU,32000,38000,45000
+付费转化率,2.1,2.4,2.8
+30日留存,28,31,34
+```
+
+流水线日志会打印 `Data source parsed: type=csv rows=4 cols=4`，agent 输出将基于真实数字而非行业估算。
+
+### 前端订阅实时进度流
+
+```javascript
+const es = new EventSource(`/api/v1/workflow/stream/${recordId}`);
+es.addEventListener('task.started', e => console.log('开始:', JSON.parse(e.data)));
+es.addEventListener('wave.completed', e => {
+  const { payload } = JSON.parse(e.data);
+  console.log(`Wave 进度 ${payload.progress * 100}%: ${payload.stage}`);
+});
+es.addEventListener('task.done', e => { console.log('完成!', JSON.parse(e.data)); es.close(); });
+es.addEventListener('task.error', e => { console.log('失败:', JSON.parse(e.data)); es.close(); });
+```
+
 ---
 
 ## 技术架构
@@ -235,11 +262,13 @@ backend/app/
 │   ├── registry.py       # 注册表 + AGENT_DEPENDENCIES DAG（拓扑排序决定执行波次）
 │   └── [7 个 Agent 文件] # 各角色专属系统提示词 + 用户提示模板
 ├── bitable_workflow/
-│   ├── schema.py         # 多维表格结构常量（字段定义、状态枚举、种子数据）
-│   ├── bitable_ops.py    # 多维表格记录 CRUD（直接 HTTP，with_retry 指数退避）
-│   ├── workflow_agents.py# EditorAgent / ReviewerAgent / AnalystAgent
-│   ├── scheduler.py      # 状态驱动调度（Phase 0 崩溃恢复 + Phase 1/2 处理，最多 5 条/轮）
-│   └── runner.py         # setup_workflow / run_workflow_loop / stop_workflow / mark_starting
+│   ├── schema.py           # 多维表格结构（28 种字段类型：SingleSelect/Rating/Progress/AutoNumber/CreatedTime/...）
+│   ├── bitable_ops.py      # 多维表格记录 CRUD（直接 HTTP，with_retry 指数退避）
+│   ├── workflow_agents.py  # 七岗 DAG 流水线（Wave1→Wave2→Wave3）+ 元数据/岗位/健康度/置信度映射
+│   ├── scheduler.py        # 状态驱动调度（Phase 0 崩溃恢复 + Wave 进度广播）
+│   ├── runner.py           # setup_workflow（创建表+视图+种子） / run_workflow_loop / stop_workflow
+│   ├── agent_cache.py      # Redis 持久化 agent 结果（崩溃重试时跳过已完成 agent，可选）
+│   └── progress_broker.py  # 进程内 SSE 事件 pub/sub（按 task_id 隔离订阅）
 ├── core/
 │   ├── orchestrator.py   # 多 Agent 波次执行调度 + 重试
 │   ├── task_planner.py   # LLM 任务路由（识别类型 + 推荐模块）
@@ -496,7 +525,52 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v5.0（当前）
+### v6.0（当前） — 视觉化字段 + 真实数据源 + 实时进度流
+
+本轮聚焦"让多维表格像仪表盘一样能一眼看懂"以及"让分析基于真数据"：
+
+**🎨 视觉化字段（告别纯文本）**
+- 重写 `schema.py`：利用飞书 28 种字段类型中的 9 种高级类型
+  - `SingleSelect` 有色标签：7 岗角色带 emoji（📊 数据分析师 / 📝 内容负责人 / 🔍 SEO顾问 / 📱 产品 / ⚙️ 运营 / 💰 财务 / 👔 CEO）
+  - `SingleSelect` 评级：🟢 健康 / 🟡 关注 / 🔴 预警 / ⚪ 数据不足
+  - `Rating` 星级：置信度 ⭐ 1-5、决策紧急度 🔥 1-5、员工活跃度 👍 1-5
+  - `Progress` 进度条：任务进度 0-100%（Wave 推进 10%→45%→75%→95%→100%）
+  - `AutoNumber` 自增任务编号
+  - `CreatedTime` / `ModifiedTime` 自动时间戳
+- 新增 `bitable.py::create_view()`：每张表自动创建看板 / 画册视图
+  - 分析任务表：📊 状态看板 + 📇 任务画册
+  - 岗位分析表：👥 岗位看板 + 🩺 健康度画册
+  - 综合报告表：🚦 健康度看板（快速定位 🔴 预警）
+
+**🧠 LLM 结构化输出（metadata 块）**
+- `base_agent.py` 在每次 LLM 调用的 `SAFETY_PREFIX` 中注入 metadata 要求
+- LLM 必须在输出末尾附带 ```metadata``` JSON 块，自报 `health / confidence / actions[]`
+- 根治"偷懒占位符"问题（之前 SEO/运营 常吐 `[任务1][具体动作]`）
+- `_parse_output` 提取 metadata，覆盖 text 解析的 `action_items`
+- text 解析加入占位符过滤（`[任务1]`、`[具体动作]` 等模板关键词直接丢弃）
+
+**📥 真实数据源接入**
+- 分析任务表新增「数据源」字段，用户可粘贴 CSV / markdown / 纯文本
+- `workflow_agents.run_task_pipeline` 自动识别并解析为 `DataSummary`
+- 注入每个 agent 的 `analyze(data_summary=)`，分析基于真数据而非"行业基准估算"
+
+**⚡ Redis agent 缓存（崩溃恢复秒级化）**
+- 新增 `agent_cache.py`：每个 agent 的 `AgentResult` 以 JSON 缓存 2 小时
+- key=`agent_cache:{task_id}:{agent_id}`；任务成功后自动清除，失败保留供重试复用
+- Redis 不可达时静默降级 —— 不影响主流程
+
+**📡 SSE 实时进度流**
+- 新增 `progress_broker.py`：进程内 `asyncio.Queue` pub/sub，按 task_id 隔离
+- 新增端点 `GET /api/v1/workflow/stream/{record_id}`（基于 `sse-starlette`）
+- 事件类型：`task.started` / `wave.completed` / `task.done` / `task.error`
+
+**🛡️ 健壮性**
+- `reflection_enabled` 默认改为 `False`：每次分析省一次 LLM 评审调用，端到端 -25% 耗时
+- `retry.py`：Bitable `LinkFieldConvFail` (1254067) 加入 fast-fail 集；`ValueError` 配置缺失立即失败（不再盲目重试 3 次）
+- `aiosqlite` 加入依赖，修 `batch_create_tasks` → `user_token` 初始化链断层
+- 飞书原生 Tasks API 集成：CEO 行动项自动同步到飞书待办中心
+
+### v5.0
 
 **七岗多智能体虚拟组织 + 业务完整闭环**
 

@@ -1,4 +1,4 @@
-import { LayoutDashboard, History, Settings, Building2 } from 'lucide-react';
+import { LayoutDashboard, History, Settings, Building2, Workflow } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useLocation } from 'react-router-dom';
 import {
@@ -16,6 +16,7 @@ import {
 const navItems = [
   { title: '工作台', url: '/', icon: LayoutDashboard },
   { title: '历史任务', url: '/history', icon: History },
+  { title: '七岗工作流', url: '/workflow', icon: Workflow },
   { title: '飞书工作区', url: '/workspace', icon: Building2 },
   { title: '设置', url: '/settings', icon: Settings },
 ];
