@@ -42,6 +42,7 @@ async def with_retry(
             last_exc = e
             if _is_token_expired(e) and not refresh_attempted:
                 refresh_attempted = True
+                attempt += 1  # 本次失败计入尝试次数，避免超出 max_attempts
                 logger.warning(
                     "Feishu token expired; clearing token caches before retry",
                     extra={"error": str(e)},
