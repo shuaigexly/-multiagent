@@ -1,24 +1,18 @@
-"""工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析"""
+"""工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析任务"""
 import logging
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.bitable_workflow import bitable_ops, runner
-from app.bitable_workflow.schema import ALL_STATUSES, CONTENT_TASK_FIELDS, Status
-from app.bitable_workflow.workflow_agents import AnalystAgent
+from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
 
-_VALID_CONTENT_TYPES: list[str] = next(
-    (f["options"] for f in CONTENT_TASK_FIELDS if f["field_name"] == "内容类型"), []
-)
+_VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
 _VALID_STATUSES: set[str] = set(ALL_STATUSES)
 
 router = APIRouter(prefix="/api/v1/workflow", tags=["workflow"])
 logger = logging.getLogger(__name__)
-
-_analyst = AnalystAgent()
 
 # 运行时状态（单进程内有效）
 _state: dict = {}
@@ -36,7 +30,7 @@ class StartRequest(BaseModel):
 
     @model_validator(mode="after")
     def check_table_ids(self) -> "StartRequest":
-        required = {"content", "performance", "report"}
+        required = {"task", "report", "performance"}
         missing = required - self.table_ids.keys()
         if missing:
             raise ValueError(f"table_ids 缺少必需键: {missing}")
@@ -47,26 +41,20 @@ class SeedRequest(BaseModel):
     app_token: str
     table_id: str
     title: str = Field(min_length=1)
-    content_type: str = "行业洞察"
+    dimension: str = "综合分析"
+    background: str = ""
 
-    @field_validator("content_type")
+    @field_validator("dimension")
     @classmethod
-    def check_content_type(cls, v: str) -> str:
-        if v not in _VALID_CONTENT_TYPES:
-            raise ValueError(f"content_type 必须是以下之一: {_VALID_CONTENT_TYPES}")
+    def check_dimension(cls, v: str) -> str:
+        if v not in _VALID_DIMENSIONS:
+            raise ValueError(f"dimension 必须是以下之一: {_VALID_DIMENSIONS}")
         return v
-
-
-class AnalysisRequest(BaseModel):
-    app_token: str
-    content_table_id: str
-    report_table_id: str
-    period: Optional[str] = None
 
 
 @router.post("/setup")
 async def workflow_setup(req: SetupRequest):
-    """创建飞书多维表格结构并写入初始任务。"""
+    """创建飞书多维表格结构（四张表）并写入初始分析任务。"""
     if runner.is_running():
         raise HTTPException(
             status_code=409,
@@ -79,7 +67,7 @@ async def workflow_setup(req: SetupRequest):
 
 @router.post("/start")
 async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
-    """启动持续调度循环（后台运行）。"""
+    """启动七岗多智能体持续调度循环（后台运行）。"""
     if not runner.mark_starting():
         raise HTTPException(status_code=400, detail="Workflow already running")
     _state.update({"app_token": req.app_token, "table_ids": req.table_ids})
@@ -90,7 +78,7 @@ async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
         req.interval,
         req.analysis_every,
     )
-    return {"status": "started", "interval": req.interval, "analysis_every": req.analysis_every}
+    return {"status": "started", "interval": req.interval}
 
 
 @router.post("/stop")
@@ -108,34 +96,18 @@ async def workflow_status():
 
 @router.post("/seed")
 async def workflow_seed(req: SeedRequest):
-    """向内容任务表写入一条新的待选题任务。"""
+    """向分析任务表写入一条新的待处理任务。"""
     record_id = await bitable_ops.create_record(
         req.app_token,
         req.table_id,
         {
-            "标题": req.title,
-            "内容类型": req.content_type,
-            "状态": Status.PENDING_TOPIC,
+            "任务标题": req.title,
+            "分析维度": req.dimension,
+            "背景说明": req.background,
+            "状态": Status.PENDING,
         },
     )
     return {"record_id": record_id}
-
-
-@router.post("/analyze")
-async def workflow_analyze(req: AnalysisRequest):
-    """手动触发运营分析师生成周报。"""
-    if runner.analyze_lock.locked():
-        raise HTTPException(status_code=409, detail="Analysis already in progress")
-    period = req.period or datetime.now().strftime("%Y-%m-%d 手动触发")
-    async with runner.analyze_lock:
-        report = await _analyst.analyze(
-            req.app_token,
-            req.content_table_id,
-            req.report_table_id,
-            period,
-        )
-    status = "skipped" if not report else "done"
-    return {"status": status, "period": period, "report_preview": report[:300]}
 
 
 @router.get("/records")

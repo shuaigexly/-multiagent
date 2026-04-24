@@ -1,94 +1,124 @@
 """
-状态驱动调度器
+状态驱动调度器（七岗多智能体版）
 
-轮询多维表格中的待处理记录，按状态分派给对应的 Agent。
-流转链路：待选题 → [EditorAgent] → 待审核 → [ReviewerAgent] → 已发布/审核拒绝
+轮询「分析任务」表中的待处理记录，对每条任务调用完整的七岗 DAG 分析流水线：
+  待分析 → [Wave1: 5个并行Agent] → [Wave2: 财务顾问] → [Wave3: CEO助理] → 已完成
 
-崩溃恢复：WRITING 状态为上次崩溃遗留，重置回待选题重新处理。
+崩溃恢复：ANALYZING 状态为上次崩溃遗留，重置回待分析重新处理。
 """
 import logging
+from datetime import datetime
 
 from app.bitable_workflow import bitable_ops
 from app.bitable_workflow.schema import Status
-from app.bitable_workflow.workflow_agents import EditorAgent, ReviewerAgent
+from app.bitable_workflow.workflow_agents import (
+    run_task_pipeline,
+    update_performance,
+    write_agent_outputs,
+    write_ceo_report,
+)
 
 logger = logging.getLogger(__name__)
 
-_editor = EditorAgent()
-_reviewer = ReviewerAgent()
-
-# 单轮最多处理条数，防止单次 LLM 调用堆积过多
-_MAX_PER_PHASE = 5
+# 单轮最多处理任务数（每条任务触发 7 次 LLM 调用）
+_MAX_PER_CYCLE = 3
 
 
 async def run_one_cycle(app_token: str, table_ids: dict) -> int:
     """
-    执行一轮完整的状态处理：
-    0. 恢复崩溃遗留的 WRITING 记录 → 重置为待选题
-    1. 编辑处理「待选题」→ 写草稿 → 更新为「待审核」
-    2. 审核员处理「待审核」→ 评审 → 更新为「已发布」或「审核拒绝」
+    执行一轮完整的多智能体分析处理：
+      0. 恢复崩溃遗留的 ANALYZING 记录 → 重置为待分析
+      1. 领取「待分析」任务，逐条执行七岗 DAG 流水线
+      2. 将各岗分析输出写入「岗位分析」表
+      3. 将 CEO 助理综合报告写入「综合报告」表
+      4. 更新「数字员工效能」表
 
-    返回本轮处理的记录总数。
+    返回本轮成功完成的任务数。
     """
-    content_tid = table_ids["content"]
+    task_tid = table_ids["task"]
+    output_tid = table_ids.get("output")
+    report_tid = table_ids["report"]
     performance_tid = table_ids.get("performance")
     processed = 0
 
-    # Phase 0: 恢复 WRITING 状态的悬挂记录
-    stuck_writing = await bitable_ops.list_records(
+    # Phase 0: 恢复 ANALYZING 悬挂记录（上次崩溃遗留）
+    stuck = await bitable_ops.list_records(
         app_token,
-        content_tid,
-        filter_expr=f'CurrentValue.[状态]="{Status.WRITING}"',
+        task_tid,
+        filter_expr=f'CurrentValue.[状态]="{Status.ANALYZING}"',
     )
-    for record in stuck_writing:
+    for record in stuck:
         rid = record.get("record_id", "?")
         try:
             await bitable_ops.update_record(
-                app_token, content_tid, rid, {"状态": Status.PENDING_TOPIC}
+                app_token, task_tid, rid, {"状态": Status.PENDING}
             )
-            logger.warning("Recovered stuck WRITING record=%s → 待选题", rid)
+            logger.warning("Recovered stuck ANALYZING record=%s → 待分析", rid)
         except Exception as exc:
-            logger.error("Failed to recover WRITING record=%s: %s", rid, exc)
+            logger.error("Failed to recover ANALYZING record=%s: %s", rid, exc)
 
-    # Phase 1: 编辑领取「待选题」任务
-    pending_topics = await bitable_ops.list_records(
+    # Phase 1: 领取待分析任务，逐条执行七岗流水线
+    pending = await bitable_ops.list_records(
         app_token,
-        content_tid,
-        filter_expr=f'CurrentValue.[状态]="{Status.PENDING_TOPIC}"',
-        page_size=_MAX_PER_PHASE,
-        max_records=_MAX_PER_PHASE,
+        task_tid,
+        filter_expr=f'CurrentValue.[状态]="{Status.PENDING}"',
+        page_size=_MAX_PER_CYCLE,
+        max_records=_MAX_PER_CYCLE,
     )
-    for record in pending_topics:
+
+    for record in pending:
         rid = record.get("record_id", "?")
+        fields = record.get("fields", {})
+        task_title = fields.get("任务标题", f"任务_{rid[:8]}")
+
         try:
+            # 标记为「分析中」防止并发重复领取
             await bitable_ops.update_record(
-                app_token, content_tid, rid, {"状态": Status.WRITING}
+                app_token, task_tid, rid, {"状态": Status.ANALYZING}
             )
-            await _editor.process(app_token, content_tid, record, performance_table_id=performance_tid)
+
+            # 执行七岗 DAG 分析流水线（Wave1→Wave2→Wave3）
+            all_results, ceo_result = await run_task_pipeline(fields)
+
+            # 写入各岗分析输出（可选表）
+            if output_tid:
+                await write_agent_outputs(app_token, output_tid, task_title, all_results)
+
+            # 写入 CEO 综合报告（必须表）
+            await write_ceo_report(
+                app_token,
+                report_tid,
+                task_title,
+                ceo_result,
+                participant_count=len(all_results) + 1,  # +1 for ceo_assistant
+            )
+
+            # 更新员工效能（含 CEO 助理本身）
+            if performance_tid:
+                await update_performance(
+                    app_token, performance_tid, all_results + [ceo_result]
+                )
+
+            # 标记为已完成
+            await bitable_ops.update_record(
+                app_token,
+                task_tid,
+                rid,
+                {
+                    "状态": Status.COMPLETED,
+                    "完成时间": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                },
+            )
             processed += 1
+            logger.info("Task [%s] completed by 7-agent pipeline", task_title)
+
         except Exception as exc:
-            logger.error("Editor failed record=%s: %s", rid, exc)
+            logger.error("Pipeline failed for task=%s record=%s: %s", task_title, rid, exc)
             try:
                 await bitable_ops.update_record(
-                    app_token, content_tid, rid, {"状态": Status.PENDING_TOPIC}
+                    app_token, task_tid, rid, {"状态": Status.PENDING}
                 )
             except Exception:
                 pass
-
-    # Phase 2: 审核员领取「待审核」任务
-    pending_reviews = await bitable_ops.list_records(
-        app_token,
-        content_tid,
-        filter_expr=f'CurrentValue.[状态]="{Status.PENDING_REVIEW}"',
-        page_size=_MAX_PER_PHASE,
-        max_records=_MAX_PER_PHASE,
-    )
-    for record in pending_reviews:
-        rid = record.get("record_id", "?")
-        try:
-            await _reviewer.process(app_token, content_tid, record, performance_table_id=performance_tid)
-            processed += 1
-        except Exception as exc:
-            logger.error("Reviewer failed record=%s: %s", rid, exc)
 
     return processed
