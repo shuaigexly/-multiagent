@@ -17,6 +17,7 @@
     CEOAssistantAgent     CEO 助理    — 综合管理决策摘要
 """
 import asyncio
+import json as _json
 import logging
 from datetime import datetime
 from typing import Optional
@@ -90,12 +91,18 @@ async def _safe_analyze(
         return _error_result(agent.agent_id, agent.agent_name, exc)
 
 
-async def run_task_pipeline(task_fields: dict) -> tuple[list[AgentResult], AgentResult]:
+async def run_task_pipeline(
+    task_fields: dict,
+    progress_callback=None,
+) -> tuple[list[AgentResult], AgentResult]:
     """
     对单条任务执行完整的七岗多智能体分析流水线。
 
     波次执行顺序遵循 AGENT_DEPENDENCIES DAG：
       Wave 1 → Wave 2（财务顾问，需要数据分析师输出）→ Wave 3（CEO 助理，汇总全部）
+
+    progress_callback: 可选的异步函数 async(stage: str)，在每个 Wave 完成后调用，
+                       用于向主任务表写入「当前阶段」进度。
 
     返回：(wave1+wave2 共六个 AgentResult, CEO 助理综合 AgentResult)
     """
@@ -106,6 +113,11 @@ async def run_task_pipeline(task_fields: dict) -> tuple[list[AgentResult], Agent
     wave1_coros = [_safe_analyze(agent, task_description) for agent in _WAVE1_AGENTS]
     wave1_results: list[AgentResult] = list(await asyncio.gather(*wave1_coros))
     logger.info("Wave 1 complete: %d agents", len(wave1_results))
+    if progress_callback:
+        try:
+            await progress_callback("Wave1 完成：数据分析 / 内容 / SEO / 产品 / 运营 五岗并行分析就绪")
+        except Exception as cb_exc:
+            logger.debug("progress_callback Wave1 failed: %s", cb_exc)
 
     # Wave 2: finance_advisor uses data_analyst output as upstream.
     # Look up by agent_id, not by list index, so reordering _WAVE1_AGENTS never silently
@@ -115,6 +127,11 @@ async def run_task_pipeline(task_fields: dict) -> tuple[list[AgentResult], Agent
     fa_result = await _safe_analyze(finance_advisor_agent, task_description, upstream=[da_result])
     wave2_results = [fa_result]
     logger.info("Wave 2 complete: finance_advisor")
+    if progress_callback:
+        try:
+            await progress_callback("Wave2 完成：财务顾问分析就绪，正在生成 CEO 综合报告…")
+        except Exception as cb_exc:
+            logger.debug("progress_callback Wave2 failed: %s", cb_exc)
 
     # Wave 3: ceo_assistant synthesizes all upstream conclusions
     all_upstream = wave1_results + wave2_results
@@ -125,6 +142,11 @@ async def run_task_pipeline(task_fields: dict) -> tuple[list[AgentResult], Agent
     if _is_failed_result(ceo_result):
         raise RuntimeError(f"CEO 助理汇总失败: {ceo_result.raw_output}")
     logger.info("Wave 3 complete: ceo_assistant")
+    if progress_callback:
+        try:
+            await progress_callback("Wave3 完成：CEO 助理综合报告生成完毕")
+        except Exception as cb_exc:
+            logger.debug("progress_callback Wave3 failed: %s", cb_exc)
 
     return all_upstream, ceo_result
 
@@ -212,9 +234,9 @@ async def write_agent_outputs(
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     written = 0
     for result in results:
-        summary = _format_sections(result, max_chars=2000)
+        summary = _format_sections(result, max_chars=5000)
         action_text = (
-            "\n".join(f"- {a}" for a in result.action_items[:10])
+            "\n".join(f"- {a}" for a in result.action_items[:15])
             if result.action_items
             else ""
         )
@@ -222,7 +244,9 @@ async def write_agent_outputs(
             "任务标题": task_title,
             "岗位角色": result.agent_name,
             "分析摘要": summary,
-            "行动项": action_text[:1000],
+            "行动项": action_text[:2000],
+            "分析思路": result.thinking_process[:3000] if result.thinking_process else "",
+            "图表数据": _json.dumps(result.chart_data, ensure_ascii=False)[:3000] if result.chart_data else "",
             "生成时间": now_str,
         }
         if task_record_id:

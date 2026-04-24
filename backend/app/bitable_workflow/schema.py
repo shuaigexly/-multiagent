@@ -31,6 +31,7 @@ TASK_FIELDS = [
         "options": ANALYSIS_DIMENSIONS,
     },
     {"field_name": "状态", "type": SINGLE_SELECT_FIELD_TYPE, "options": ALL_STATUSES},
+    {"field_name": "当前阶段", "type": TEXT_FIELD_TYPE},
     {"field_name": "背景说明", "type": TEXT_FIELD_TYPE},
     {"field_name": "创建时间", "type": TEXT_FIELD_TYPE},
     {"field_name": "完成时间", "type": TEXT_FIELD_TYPE},
@@ -52,6 +53,8 @@ def agent_output_fields(task_table_id: str) -> list[dict]:
         {"field_name": "岗位角色", "type": TEXT_FIELD_TYPE},
         {"field_name": "分析摘要", "type": TEXT_FIELD_TYPE},
         {"field_name": "行动项", "type": TEXT_FIELD_TYPE},
+        {"field_name": "分析思路", "type": TEXT_FIELD_TYPE},
+        {"field_name": "图表数据", "type": TEXT_FIELD_TYPE},
         {"field_name": "生成时间", "type": TEXT_FIELD_TYPE},
     ]
 

@@ -50,6 +50,7 @@ async def _create_followup_tasks(
 ) -> None:
     """将 CEO 助理行动项转化为新的「待分析」任务，实现业务闭环（再流转）。
 
+    同时尝试通过飞书任务 API 创建待办事项，方便在飞书中直接跟进。
     只取前 3 条非空行动项；跟进任务本身不再生成二级跟进，避免无限循环。
     """
     if task_title.startswith("[跟进]"):
@@ -60,6 +61,15 @@ async def _create_followup_tasks(
         logger.debug("No action items for follow-up from task [%s]", task_title)
         return
 
+    # 1. 写入飞书任务 API（待办事项），便于在飞书客户端直接追踪
+    try:
+        from app.feishu.task import batch_create_tasks
+        await batch_create_tasks(action_items)
+        logger.info("Created %d Feishu tasks for [%s]", len(action_items), task_title)
+    except Exception as exc:
+        logger.warning("Feishu task API failed for [%s]: %s", task_title, exc)
+
+    # 2. 在「分析任务」表中生成后续待分析记录（再流转闭环）
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     for item in action_items:
         try:
@@ -134,11 +144,21 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
         try:
             # 标记为「分析中」防止并发重复领取
             await bitable_ops.update_record(
-                app_token, task_tid, rid, {"状态": Status.ANALYZING}
+                app_token, task_tid, rid,
+                {"状态": Status.ANALYZING, "当前阶段": "▶ Wave1 启动：五岗并行分析中…"}
             )
 
+            # 每个 Wave 完成后更新「当前阶段」字段，让用户在多维表格实时看到进展
+            async def _on_wave(stage: str) -> None:
+                try:
+                    await bitable_ops.update_record(
+                        app_token, task_tid, rid, {"当前阶段": stage}
+                    )
+                except Exception as stage_exc:
+                    logger.debug("当前阶段 update skipped: %s", stage_exc)
+
             # 执行七岗 DAG 分析流水线（Wave1→Wave2→Wave3）
-            all_results, ceo_result = await run_task_pipeline(fields)
+            all_results, ceo_result = await run_task_pipeline(fields, progress_callback=_on_wave)
 
             # 清理此任务可能遗留的历史输出（重试或崩溃恢复场景）
             await cleanup_prior_task_outputs(app_token, task_title, output_tid, report_tid)
@@ -167,13 +187,14 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
                     app_token, performance_tid, all_results + [ceo_result]
                 )
 
-            # 标记为已完成
+            # 标记为已完成，清空阶段进度
             await bitable_ops.update_record(
                 app_token,
                 task_tid,
                 rid,
                 {
                     "状态": Status.COMPLETED,
+                    "当前阶段": "✅ 七岗分析全部完成",
                     "完成时间": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 },
             )
@@ -190,7 +211,8 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
             logger.error("Pipeline failed for task=%s record=%s: %s", task_title, rid, exc)
             try:
                 await bitable_ops.update_record(
-                    app_token, task_tid, rid, {"状态": Status.PENDING}
+                    app_token, task_tid, rid,
+                    {"状态": Status.PENDING, "当前阶段": f"❌ 执行失败，将重试：{str(exc)[:100]}"}
                 )
             except Exception as reset_exc:
                 logger.error(

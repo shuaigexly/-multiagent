@@ -78,6 +78,7 @@ class AgentResult(BaseModel):
     action_items: list[str]
     raw_output: str
     chart_data: list[dict] = Field(default_factory=list)
+    thinking_process: str = ""
 
 
 class BaseAgent(ABC):
@@ -233,6 +234,8 @@ class BaseAgent(ABC):
 
     def _parse_output(self, raw: str) -> AgentResult:
         """将 LLM 输出解析成结构化结果。子类可覆盖。"""
+        think_match = re.search(r'<think(?:ing)?>(.*?)</think(?:ing)?>', raw, flags=re.DOTALL)
+        thinking_process = think_match.group(1).strip() if think_match else ""
         raw = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', raw, flags=re.DOTALL).strip()
         if not raw:
             raise ValueError(f"{self.agent_id} returned empty output")
@@ -297,4 +300,5 @@ class BaseAgent(ABC):
             action_items=action_items,
             raw_output=raw,
             chart_data=chart_data,
+            thinking_process=thinking_process,
         )
