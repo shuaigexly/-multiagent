@@ -42,6 +42,50 @@ async def create_table(app_token: str, table_name: str, fields: list[dict]) -> s
     return await with_retry(_create_table_impl, app_token, table_name, fields)
 
 
+async def create_view(
+    app_token: str,
+    table_id: str,
+    view_name: str,
+    view_type: str,
+) -> str:
+    """创建额外视图（看板/画册/甘特/表单/网格）。返回 view_id。
+
+    view_type: "grid" | "kanban" | "gallery" | "gantt" | "form"
+    首个看板视图会自动按第一个 SingleSelect 字段分组；画册视图按第一个附件/单选字段分组。
+    """
+    return await with_retry(_create_view_impl, app_token, table_id, view_name, view_type)
+
+
+async def _create_view_impl(
+    app_token: str,
+    table_id: str,
+    view_name: str,
+    view_type: str,
+) -> str:
+    token = await get_tenant_access_token()
+    base = get_feishu_open_base_url()
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/views"
+    async with httpx.AsyncClient(timeout=30) as http:
+        r = await http.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={"view_name": view_name, "view_type": view_type},
+        )
+    r.raise_for_status()
+    data = r.json()
+    if data.get("code") != 0:
+        raise RuntimeError(
+            f"创建视图失败: {view_name} code={data.get('code')} msg={data.get('msg')}"
+        )
+    try:
+        return data["data"]["view"]["view_id"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError(f"创建视图响应结构异常: {data}") from exc
+
+
 async def batch_add_records(app_token: str, table_id: str, records: list[dict]) -> int:
     return await with_retry(_batch_add_records_impl, app_token, table_id, records)
 

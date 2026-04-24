@@ -54,6 +54,10 @@ async def with_retry(
     while attempt < max_attempts:
         try:
             return await func(*args, **kwargs)
+        except ValueError as e:
+            # 配置缺失类错误（如"未配置飞书群 ID"）重试永远失败，立即 fast-fail
+            logger.debug("Configuration error, not retrying: %s", e)
+            raise
         except Exception as e:
             last_exc = e
             if _is_token_expired(e) and not refresh_attempted:

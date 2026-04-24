@@ -12,7 +12,7 @@ from typing import Optional
 from app.bitable_workflow import bitable_ops, schema
 from app.bitable_workflow.schema import agent_output_fields, report_fields
 from app.bitable_workflow.scheduler import run_one_cycle
-from app.feishu.bitable import create_bitable, create_table
+from app.feishu.bitable import create_bitable, create_table, create_view
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,10 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     output_tid = await create_table(app_token, schema.TABLE_AGENT_OUTPUT, agent_output_fields(task_tid))
     report_tid = await create_table(app_token, schema.TABLE_REPORT, report_fields(task_tid))
     performance_tid = await create_table(app_token, schema.TABLE_PERFORMANCE, schema.PERFORMANCE_FIELDS)
+
+    # 为每张表创建附加视图（看板/画册）以提升可视化效果
+    # 每张表的第一个视图是默认网格视图（创建表时自动生成），这里追加额外视图
+    await _create_extra_views(app_token, task_tid, output_tid, report_tid, performance_tid)
 
     for title, dimension, background in schema.SEED_TASKS:
         await bitable_ops.create_record(
@@ -63,6 +67,38 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
             "performance": performance_tid,
         },
     }
+
+
+async def _create_extra_views(
+    app_token: str,
+    task_tid: str,
+    output_tid: str,
+    report_tid: str,
+    performance_tid: str,
+) -> None:
+    """为四张业务表创建看板/画册视图，提升多维表格视觉可读性。
+
+    飞书在创建看板视图时会自动选中第一个 SingleSelect 字段作为分组，
+    因此 schema.py 中 SingleSelect 字段的排列顺序决定默认看板分组。
+    单次视图创建失败不应阻塞整体 setup — 静默降级即可。
+    """
+    view_plan = [
+        # 分析任务表：按 状态 看板 + 任务画册
+        (task_tid, "📊 状态看板", "kanban"),
+        (task_tid, "📇 任务画册", "gallery"),
+        # 岗位分析表：按 岗位角色 看板 + 健康度画册
+        (output_tid, "👥 岗位看板", "kanban"),
+        (output_tid, "🩺 健康度画册", "gallery"),
+        # 综合报告表：按 综合健康度 看板
+        (report_tid, "🚦 健康度看板", "kanban"),
+        # 效能表：画册浏览
+        (performance_tid, "🏆 效能画册", "gallery"),
+    ]
+    for table_id, name, vtype in view_plan:
+        try:
+            await create_view(app_token, table_id, name, vtype)
+        except Exception as exc:
+            logger.warning("创建视图失败 table=%s name=%s: %s", table_id, name, exc)
 
 
 def mark_starting() -> bool:
