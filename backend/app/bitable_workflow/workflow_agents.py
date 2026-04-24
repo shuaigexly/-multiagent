@@ -202,9 +202,11 @@ async def write_agent_outputs(
     output_table_id: str,
     task_title: str,
     results: list[AgentResult],
+    task_record_id: Optional[str] = None,
 ) -> int:
     """将各岗 AgentResult 写入「岗位分析」表。每个 Agent 写一条记录。
 
+    task_record_id: 分析任务表中对应记录的 record_id，用于填写关联字段。
     返回成功写入的记录数。调用方必须校验是否等于结果数量。
     """
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -216,18 +218,17 @@ async def write_agent_outputs(
             if result.action_items
             else ""
         )
+        fields: dict = {
+            "任务标题": task_title,
+            "岗位角色": result.agent_name,
+            "分析摘要": summary,
+            "行动项": action_text[:1000],
+            "生成时间": now_str,
+        }
+        if task_record_id:
+            fields["关联任务"] = [{"record_id": task_record_id}]
         try:
-            await bitable_ops.create_record(
-                app_token,
-                output_table_id,
-                {
-                    "任务标题": task_title,
-                    "岗位角色": result.agent_name,
-                    "分析摘要": summary,
-                    "行动项": action_text[:1000],
-                    "生成时间": now_str,
-                },
-            )
+            await bitable_ops.create_record(app_token, output_table_id, fields)
             written += 1
         except Exception as exc:
             logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc)
@@ -240,9 +241,11 @@ async def write_ceo_report(
     task_title: str,
     ceo_result: AgentResult,
     participant_count: int,
+    task_record_id: Optional[str] = None,
 ) -> str:
     """将 CEO 助理综合报告写入「综合报告」表，返回 record_id。
 
+    task_record_id: 分析任务表中对应记录的 record_id，用于填写关联字段。
     CEO 报告是核心交付物；写入失败直接抛出，由调用方决定是否失败整条任务。
     """
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -253,20 +256,20 @@ async def write_ceo_report(
                 return (s.content or "")[:1000]
         return ""
 
-    return await bitable_ops.create_record(
-        app_token,
-        report_table_id,
-        {
-            "报告标题": task_title,
-            "核心结论": _find_section("核心结论"),
-            "重要机会": _find_section("重要机会"),
-            "重要风险": _find_section("重要风险"),
-            "CEO决策事项": _find_section("CEO 需决策") or _find_section("决策"),
-            "管理摘要": _find_section("管理摘要") or _find_section("一段话"),
-            "参与岗位数": float(participant_count),
-            "生成时间": now_str,
-        },
-    )
+    record_fields: dict = {
+        "报告标题": task_title,
+        "核心结论": _find_section("核心结论"),
+        "重要机会": _find_section("重要机会"),
+        "重要风险": _find_section("重要风险"),
+        "CEO决策事项": _find_section("CEO 需决策") or _find_section("决策"),
+        "管理摘要": _find_section("管理摘要") or _find_section("一段话"),
+        "参与岗位数": float(participant_count),
+        "生成时间": now_str,
+    }
+    if task_record_id:
+        record_fields["关联任务"] = [{"record_id": task_record_id}]
+
+    return await bitable_ops.create_record(app_token, report_table_id, record_fields)
 
 
 async def update_performance(

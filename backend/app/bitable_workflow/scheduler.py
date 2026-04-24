@@ -5,6 +5,8 @@
   待分析 → [Wave1: 5个并行Agent] → [Wave2: 财务顾问] → [Wave3: CEO助理] → 已完成
 
 崩溃恢复：ANALYZING 状态为上次崩溃遗留，重置回待分析重新处理。
+反馈闭环：任务完成后，CEO 助理行动项自动写回「分析任务」表形成新的待分析任务。
+飞书通知：任务完成后向配置的飞书群推送摘要卡片消息。
 """
 import logging
 from datetime import datetime
@@ -18,6 +20,7 @@ from app.bitable_workflow.workflow_agents import (
     write_agent_outputs,
     write_ceo_report,
 )
+from app.agents.base_agent import AgentResult
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +28,67 @@ logger = logging.getLogger(__name__)
 _MAX_PER_CYCLE = 3
 
 
+async def _send_completion_message(task_title: str, ceo_result: AgentResult) -> None:
+    """任务完成后向飞书群推送摘要卡片。未配置 chat_id 时静默跳过。"""
+    try:
+        from app.feishu.im import send_card_message
+        summary = (ceo_result.raw_output or "七岗多智能体分析已完成")[:2000]
+        await send_card_message(title=f"分析完成：{task_title}", content=summary)
+        logger.info("Feishu notification sent for task [%s]", task_title)
+    except ValueError:
+        # feishu_chat_id 未配置，静默跳过
+        logger.debug("feishu_chat_id not configured, skipping notification for task [%s]", task_title)
+    except Exception as exc:
+        logger.warning("Feishu notification failed for task [%s]: %s", task_title, exc)
+
+
+async def _create_followup_tasks(
+    app_token: str,
+    task_tid: str,
+    task_title: str,
+    ceo_result: AgentResult,
+) -> None:
+    """将 CEO 助理行动项转化为新的「待分析」任务，实现业务闭环（再流转）。
+
+    只取前 3 条非空行动项；跟进任务本身不再生成二级跟进，避免无限循环。
+    """
+    if task_title.startswith("[跟进]"):
+        return
+
+    action_items = [item.strip() for item in (ceo_result.action_items or []) if item.strip()][:3]
+    if not action_items:
+        logger.debug("No action items for follow-up from task [%s]", task_title)
+        return
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    for item in action_items:
+        try:
+            await bitable_ops.create_record(
+                app_token,
+                task_tid,
+                {
+                    "任务标题": f"[跟进] {item[:50]}",
+                    "分析维度": "综合分析",
+                    "状态": Status.PENDING,
+                    "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成",
+                    "创建时间": now_str,
+                },
+            )
+            logger.info("Follow-up task created from [%s]: %s", task_title, item[:50])
+        except Exception as exc:
+            logger.warning("Failed to create follow-up task from [%s]: %s", task_title, exc)
+
+
 async def run_one_cycle(app_token: str, table_ids: dict) -> int:
     """
     执行一轮完整的多智能体分析处理：
       0. 恢复崩溃遗留的 ANALYZING 记录 → 重置为待分析
       1. 领取「待分析」任务，逐条执行七岗 DAG 流水线
-      2. 将各岗分析输出写入「岗位分析」表
-      3. 将 CEO 助理综合报告写入「综合报告」表
+      2. 将各岗分析输出写入「岗位分析」表（含关联字段）
+      3. 将 CEO 助理综合报告写入「综合报告」表（含关联字段）
       4. 更新「数字员工效能」表
+      5. 发送飞书消息通知
+      6. CEO 行动项生成新的「待分析」任务（再流转闭环）
 
     返回本轮成功完成的任务数。
     """
@@ -87,19 +143,22 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
             # 清理此任务可能遗留的历史输出（重试或崩溃恢复场景）
             await cleanup_prior_task_outputs(app_token, task_title, output_tid, report_tid)
 
-            # 写入各岗分析输出（可选表；写入不完整会使整条任务重试）
+            # 写入各岗分析输出（含关联字段；写入不完整会使整条任务重试）
             if output_tid:
-                output_written = await write_agent_outputs(app_token, output_tid, task_title, all_results)
+                output_written = await write_agent_outputs(
+                    app_token, output_tid, task_title, all_results, task_record_id=rid
+                )
                 if output_written != len(all_results):
                     raise RuntimeError(f"岗位分析写入不完整: {output_written}/{len(all_results)}")
 
-            # 写入 CEO 综合报告（核心交付物；失败直接抛出使整条任务回到待分析）
+            # 写入 CEO 综合报告（含关联字段；核心交付物，失败直接抛出）
             await write_ceo_report(
                 app_token,
                 report_tid,
                 task_title,
                 ceo_result,
                 participant_count=len(all_results) + 1,  # +1 for ceo_assistant
+                task_record_id=rid,
             )
 
             # 更新员工效能（含 CEO 助理本身）
@@ -120,6 +179,12 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
             )
             processed += 1
             logger.info("Task [%s] completed by 7-agent pipeline", task_title)
+
+            # 飞书消息通知（非阻塞，失败不影响任务状态）
+            await _send_completion_message(task_title, ceo_result)
+
+            # 反馈再流转：CEO 行动项 → 新的待分析任务
+            await _create_followup_tasks(app_token, task_tid, task_title, ceo_result)
 
         except Exception as exc:
             logger.error("Pipeline failed for task=%s record=%s: %s", task_title, rid, exc)

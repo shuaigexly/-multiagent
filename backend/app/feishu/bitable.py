@@ -3,6 +3,8 @@ import asyncio
 import logging
 from typing import Optional, Sequence
 
+import httpx
+
 from lark_oapi.api.bitable.v1 import (
     AppTable,
     AppTableField,
@@ -20,6 +22,7 @@ from lark_oapi.api.bitable.v1 import (
 )
 
 from app.agents.base_agent import AgentResult
+from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 from app.feishu.client import get_feishu_base_url, get_feishu_client
 from app.feishu.retry import with_retry
 
@@ -27,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 TEXT_FIELD_TYPE = 1
 SINGLE_SELECT_FIELD_TYPE = 3
+LINKED_RECORD_FIELD_TYPE = 18
 MAX_RECORDS_PER_REQUEST = 500
 
 
@@ -202,6 +206,11 @@ async def _create_field(
     table_id: str,
     field: dict,
 ) -> str:
+    # Linked record fields (type=18) require table_id in the property object.
+    # The lark_oapi SDK builder does not expose this property, so we use HTTP directly.
+    if field.get("type") == LINKED_RECORD_FIELD_TYPE:
+        return await _create_linked_field_http(app_token, table_id, field)
+
     req_body = _build_field(field)
     req = (
         CreateAppTableFieldRequest.builder()
@@ -217,6 +226,33 @@ async def _create_field(
     if not resp.success():
         raise RuntimeError(f"创建字段失败: {field['field_name']} ({resp.msg})")
     return resp.data.field.field_id
+
+
+async def _create_linked_field_http(app_token: str, table_id: str, field: dict) -> str:
+    """通过 HTTP API 创建关联记录字段（type=18）。"""
+    token = await get_tenant_access_token()
+    base = get_feishu_open_base_url()
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
+    async with httpx.AsyncClient(timeout=30) as http:
+        r = await http.post(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "field_name": field["field_name"],
+                "type": LINKED_RECORD_FIELD_TYPE,
+                "property": {"table_id": field.get("table_id", "")},
+            },
+        )
+    r.raise_for_status()
+    data = r.json()
+    if data.get("code") != 0:
+        raise RuntimeError(
+            f"创建关联字段失败: code={data.get('code')} msg={data.get('msg')}"
+        )
+    try:
+        return data["data"]["field"]["field_id"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError(f"创建关联字段响应结构异常: {data}") from exc
 
 
 async def _batch_add_records_impl(

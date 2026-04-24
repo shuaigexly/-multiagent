@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.bitable_workflow import bitable_ops, schema
+from app.bitable_workflow.schema import agent_output_fields, report_fields
 from app.bitable_workflow.scheduler import run_one_cycle
 from app.feishu.bitable import create_bitable, create_table
 
@@ -33,8 +34,9 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     app_token = result["app_token"]
 
     task_tid = await create_table(app_token, schema.TABLE_TASK, schema.TASK_FIELDS)
-    output_tid = await create_table(app_token, schema.TABLE_AGENT_OUTPUT, schema.AGENT_OUTPUT_FIELDS)
-    report_tid = await create_table(app_token, schema.TABLE_REPORT, schema.REPORT_FIELDS)
+    # 岗位分析表和综合报告表通过关联字段（type=18）与分析任务表建立表间关系
+    output_tid = await create_table(app_token, schema.TABLE_AGENT_OUTPUT, agent_output_fields(task_tid))
+    report_tid = await create_table(app_token, schema.TABLE_REPORT, report_fields(task_tid))
     performance_tid = await create_table(app_token, schema.TABLE_PERFORMANCE, schema.PERFORMANCE_FIELDS)
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")

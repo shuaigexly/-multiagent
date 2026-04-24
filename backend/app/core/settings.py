@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     # LLM
     llm_api_key: str = ""
-    llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o-mini"
+    llm_base_url: str = "https://api.deepseek.com/v1"
+    llm_model: str = "deepseek-chat"
     # provider: openai_compatible | feishu_aily
     # openai_compatible = 任何兼容 OpenAI /chat/completions 接口的服务商
     # feishu_aily = 通过飞书 Aily 会话 API 调用（需企业开通飞书 AI）
