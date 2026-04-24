@@ -79,21 +79,48 @@ async def _safe_analyze(
     agent,
     task_description: str,
     upstream: Optional[list[AgentResult]] = None,
+    data_summary=None,
+    task_id: Optional[str] = None,
 ) -> AgentResult:
-    """Run one agent with error isolation so a single failure cannot abort the pipeline."""
+    """Run one agent with error isolation + optional Redis cache by (task_id, agent_id)."""
+    # Cache hit path — skip LLM call if we've already run this agent for this task
+    if task_id:
+        try:
+            from app.bitable_workflow.agent_cache import get_cached_result, set_cached_result
+
+            cached = await get_cached_result(task_id, agent.agent_id)
+            if cached:
+                logger.info("[cache-hit] %s/%s — skipping LLM call", task_id, agent.agent_id)
+                return cached
+        except Exception as cache_exc:
+            logger.debug("agent cache read skipped: %s", cache_exc)
+
     try:
-        return await agent.analyze(
+        result = await agent.analyze(
             task_description=task_description,
+            data_summary=data_summary,
             upstream_results=upstream or [],
         )
     except Exception as exc:
         logger.error("[%s] analyze failed: %s", agent.agent_id, exc)
         return _error_result(agent.agent_id, agent.agent_name, exc)
 
+    # Cache the successful result for crash recovery
+    if task_id and not _is_failed_result(result):
+        try:
+            from app.bitable_workflow.agent_cache import set_cached_result
+
+            await set_cached_result(task_id, agent.agent_id, result)
+        except Exception as cache_exc:
+            logger.debug("agent cache write skipped: %s", cache_exc)
+
+    return result
+
 
 async def run_task_pipeline(
     task_fields: dict,
     progress_callback=None,
+    task_id: Optional[str] = None,
 ) -> tuple[list[AgentResult], AgentResult]:
     """
     对单条任务执行完整的七岗多智能体分析流水线。
@@ -103,14 +130,34 @@ async def run_task_pipeline(
 
     progress_callback: 可选的异步函数 async(stage: str)，在每个 Wave 完成后调用，
                        用于向主任务表写入「当前阶段」进度。
+    task_id: 任务唯一 ID（通常传 Bitable record_id），用于 Redis 缓存 agent 输出；
+             崩溃恢复时已完成的 agent 会直接从缓存读取，避免重跑昂贵的 LLM 调用。
 
     返回：(wave1+wave2 共六个 AgentResult, CEO 助理综合 AgentResult)
     """
     task_description = _build_task_description(task_fields)
     logger.info("Pipeline started for task: %s", task_fields.get("任务标题", "?"))
 
+    # 解析用户粘贴的数据源（CSV / markdown / 文本），注入到每个 agent 的 data_summary
+    data_summary = None
+    data_source_text = (task_fields.get("数据源") or "").strip()
+    if data_source_text:
+        try:
+            from app.core.data_parser import parse_content
+
+            data_summary = parse_content(data_source_text)
+            logger.info(
+                "Data source parsed: type=%s rows=%d cols=%d",
+                data_summary.content_type, data_summary.row_count, len(data_summary.columns),
+            )
+        except Exception as exc:
+            logger.warning("Data source parse failed, falling back to no data: %s", exc)
+
     # Wave 1: parallel execution of 5 independent agents
-    wave1_coros = [_safe_analyze(agent, task_description) for agent in _WAVE1_AGENTS]
+    wave1_coros = [
+        _safe_analyze(agent, task_description, data_summary=data_summary, task_id=task_id)
+        for agent in _WAVE1_AGENTS
+    ]
     wave1_results: list[AgentResult] = list(await asyncio.gather(*wave1_coros))
     logger.info("Wave 1 complete: %d agents", len(wave1_results))
     if progress_callback:
@@ -124,7 +171,10 @@ async def run_task_pipeline(
     # passes the wrong result to finance_advisor.
     wave1_by_id = {r.agent_id: r for r in wave1_results}
     da_result = wave1_by_id.get("data_analyst") or wave1_results[0]
-    fa_result = await _safe_analyze(finance_advisor_agent, task_description, upstream=[da_result])
+    fa_result = await _safe_analyze(
+        finance_advisor_agent, task_description,
+        upstream=[da_result], data_summary=data_summary, task_id=task_id,
+    )
     wave2_results = [fa_result]
     logger.info("Wave 2 complete: finance_advisor")
     if progress_callback:
@@ -138,7 +188,10 @@ async def run_task_pipeline(
     if all(_is_failed_result(result) for result in all_upstream):
         raise RuntimeError("所有上游 Agent 均执行失败，任务无可用结果")
 
-    ceo_result = await _safe_analyze(_WAVE3_AGENT, task_description, upstream=all_upstream)
+    ceo_result = await _safe_analyze(
+        _WAVE3_AGENT, task_description,
+        upstream=all_upstream, data_summary=data_summary, task_id=task_id,
+    )
     if _is_failed_result(ceo_result):
         raise RuntimeError(f"CEO 助理汇总失败: {ceo_result.raw_output}")
     logger.info("Wave 3 complete: ceo_assistant")

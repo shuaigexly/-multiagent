@@ -54,7 +54,9 @@ class Settings(BaseSettings):
     # Security
     api_key: str = ""
     allowed_origins: str = "http://localhost:5173"
-    reflection_enabled: bool = True
+    # Reflection（AutoGen 风格）默认关闭：每个 agent 分析会额外追加一次 LLM 评审调用，
+    # 对 GLM-4-flash 等免费额度较紧的模型成本翻倍。生产环境默认关闭，必要时手动打开。
+    reflection_enabled: bool = False
 
     def __getattribute__(self, name: str):
         if name in _OVERRIDABLE_FIELDS:

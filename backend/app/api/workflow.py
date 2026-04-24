@@ -1,12 +1,14 @@
-"""工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析任务"""
+"""工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析任务 + SSE 进度流"""
+import json
 import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
+from sse_starlette.sse import EventSourceResponse
 
-from app.bitable_workflow import bitable_ops, runner
+from app.bitable_workflow import bitable_ops, progress_broker, runner
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
 from app.core.auth import require_api_key
 
@@ -118,6 +120,22 @@ async def workflow_seed(req: SeedRequest):
         },
     )
     return {"record_id": record_id}
+
+
+@router.get("/stream/{task_record_id}", dependencies=[])
+async def workflow_stream(task_record_id: str, request: Request):
+    """SSE 流：实时推送 Bitable 工作流的 Wave 进度事件。
+
+    订阅后立即接收 task.started / wave.completed / task.done / task.error 等事件。
+    前端使用 EventSource 即可订阅；连接保持到 task.done/task.error 或客户端断开。
+    """
+    async def _gen():
+        async for msg in progress_broker.subscribe(task_record_id):
+            if await request.is_disconnected():
+                break
+            yield {"event": msg["event_type"], "data": json.dumps(msg, ensure_ascii=False)}
+
+    return EventSourceResponse(_gen(), media_type="text/event-stream")
 
 
 @router.get("/records")

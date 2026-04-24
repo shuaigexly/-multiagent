@@ -148,6 +148,12 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
                 {"状态": Status.ANALYZING, "当前阶段": "▶ Wave1 启动：五岗并行分析中…", "进度": 0.1}
             )
 
+            from app.bitable_workflow import progress_broker
+            await progress_broker.publish(
+                rid, "task.started",
+                {"title": task_title, "stage": "Wave1 启动：五岗并行分析中…", "progress": 0.1},
+            )
+
             # 每个 Wave 完成后更新「当前阶段」+「进度」字段，让用户在多维表格实时看到进展
             _wave_progress = iter([0.45, 0.75, 0.95])
 
@@ -159,9 +165,15 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
                     )
                 except Exception as stage_exc:
                     logger.debug("当前阶段 update skipped: %s", stage_exc)
+                await progress_broker.publish(
+                    rid, "wave.completed", {"stage": stage, "progress": progress},
+                )
 
             # 执行七岗 DAG 分析流水线（Wave1→Wave2→Wave3）
-            all_results, ceo_result = await run_task_pipeline(fields, progress_callback=_on_wave)
+            # 传入 rid 作为 task_id，启用 Redis 缓存：崩溃重试会跳过已完成的 agent
+            all_results, ceo_result = await run_task_pipeline(
+                fields, progress_callback=_on_wave, task_id=rid
+            )
 
             # 清理此任务可能遗留的历史输出（重试或崩溃恢复场景）
             await cleanup_prior_task_outputs(app_token, task_title, output_tid, report_tid)
@@ -205,6 +217,17 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
             processed += 1
             logger.info("Task [%s] completed by 7-agent pipeline", task_title)
 
+            # 任务成功完成 → 清除 Redis 缓存 + 广播 SSE task.done
+            try:
+                from app.bitable_workflow.agent_cache import invalidate_task_cache
+                await invalidate_task_cache(rid)
+            except Exception as cache_exc:
+                logger.debug("cache invalidate failed: %s", cache_exc)
+            await progress_broker.publish(
+                rid, "task.done",
+                {"title": task_title, "progress": 1.0, "participant_count": len(all_results) + 1},
+            )
+
             # 飞书消息通知（非阻塞，失败不影响任务状态）
             await _send_completion_message(task_title, ceo_result)
 
@@ -223,5 +246,13 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
                     "Failed to reset task=%s back to PENDING: %s — task may remain stuck in ANALYZING",
                     task_title, reset_exc,
                 )
+            # 不清除缓存 — 下次重试可复用已完成的 agent 结果
+            try:
+                from app.bitable_workflow import progress_broker
+                await progress_broker.publish(
+                    rid, "task.error", {"reason": str(exc)[:200]},
+                )
+            except Exception:
+                pass
 
     return processed

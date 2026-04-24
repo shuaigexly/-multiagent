@@ -117,6 +117,7 @@ TASK_FIELDS = [
         "property": {"formatter": "0%", "min": 0, "max": 1, "range_customize": True},
     },
     {"field_name": "背景说明", "type": TEXT_FIELD_TYPE},
+    {"field_name": "数据源", "type": TEXT_FIELD_TYPE},  # 用户粘贴 CSV / markdown / 纯文本作为分析输入
     {
         "field_name": "创建时间",
         "type": CREATED_TIME_FIELD_TYPE,
