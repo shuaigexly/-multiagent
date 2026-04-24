@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   CheckCircle2,
@@ -53,6 +53,7 @@ export default function BitableWorkflow() {
   const [liveEvents, setLiveEvents] = useState<Record<string, LiveEvent>>({});
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskBackground, setNewTaskBackground] = useState('');
+  const progressSubscriptionsRef = useRef<Map<string, () => void>>(new Map());
 
   // 初次加载：拉取 workflow 状态
   useEffect(() => {
@@ -93,12 +94,27 @@ export default function BitableWorkflow() {
 
   // 为所有「分析中」任务订阅 SSE 进度
   useEffect(() => {
-    if (!setup) return;
-    const analyzing = tasks.filter(
-      (t) => (t.fields?.状态 as string) === '分析中',
+    if (!setup) {
+      progressSubscriptionsRef.current.forEach((unsubscribe) => unsubscribe());
+      progressSubscriptionsRef.current.clear();
+      return;
+    }
+    const analyzingIds = new Set(
+      tasks
+        .filter((t) => (t.fields?.状态 as string) === '分析中')
+        .map((t) => t.record_id),
     );
-    const unsubs = analyzing.map((t) =>
-      subscribeTaskProgress(t.record_id, (e: ProgressEvent) => {
+
+    for (const [recordId, unsubscribe] of progressSubscriptionsRef.current) {
+      if (!analyzingIds.has(recordId)) {
+        unsubscribe();
+        progressSubscriptionsRef.current.delete(recordId);
+      }
+    }
+
+    analyzingIds.forEach((recordId) => {
+      if (progressSubscriptionsRef.current.has(recordId)) return;
+      const unsubscribe = subscribeTaskProgress(recordId, (e: ProgressEvent) => {
         setLiveEvents((prev) => ({
           ...prev,
           [e.task_id]: {
@@ -114,10 +130,15 @@ export default function BitableWorkflow() {
             updatedAt: e.ts,
           },
         }));
-      }),
-    );
-    return () => unsubs.forEach((u) => u());
+      });
+      progressSubscriptionsRef.current.set(recordId, unsubscribe);
+    });
   }, [setup, tasks]);
+
+  useEffect(() => () => {
+    progressSubscriptionsRef.current.forEach((unsubscribe) => unsubscribe());
+    progressSubscriptionsRef.current.clear();
+  }, []);
 
   const handleSetup = async () => {
     setLoading(true);

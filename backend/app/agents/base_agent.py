@@ -21,6 +21,10 @@ def _escape_xml(text: str) -> str:
     )
 
 
+def _safe_prompt_text(value: object, max_chars: int = 1500) -> str:
+    return _escape_xml(str(value or "")[:max_chars])
+
+
 def _format_feishu_context(ctx: Optional[dict]) -> str:
     """Format feishu_context dict as structured markdown for LLM reading."""
     if not ctx:
@@ -32,10 +36,10 @@ def _format_feishu_context(ctx: Optional[dict]) -> str:
     if drive:
         parts.append(f"\n📄 飞书云文档（{len(drive)} 个）：")
         for f in drive[:10]:
-            modified = f.get("modified_time", "")
-            name = f.get("name", "未命名")
-            ftype = f.get("type", "?")
-            url = f.get("url", "")
+            modified = _safe_prompt_text(f.get("modified_time", ""), 80)
+            name = _safe_prompt_text(f.get("name", "未命名"), 200)
+            ftype = _safe_prompt_text(f.get("type", "?"), 40)
+            url = _safe_prompt_text(f.get("url", ""), 500)
             line = f"  - [{ftype}] {name}（最近修改：{modified}）"
             if url:
                 line += f"  链接：{url}"
@@ -46,18 +50,18 @@ def _format_feishu_context(ctx: Optional[dict]) -> str:
     if pending:
         parts.append(f"\n✅ 待办任务（{len(pending)} 项未完成）：")
         for t in pending[:15]:
-            due = f"，截止：{t['due']}" if t.get("due") else ""
-            assigned = f"，负责人：{t['assigned_to']}" if t.get("assigned_to") else ""
-            parts.append(f"  - {t.get('summary', '无标题')}{due}{assigned}")
+            due = f"，截止：{_safe_prompt_text(t['due'], 80)}" if t.get("due") else ""
+            assigned = f"，负责人：{_safe_prompt_text(t['assigned_to'], 120)}" if t.get("assigned_to") else ""
+            parts.append(f"  - {_safe_prompt_text(t.get('summary', '无标题'), 300)}{due}{assigned}")
 
     calendar = ctx.get("calendar") or []
     if calendar:
         parts.append(f"\n📅 近期日历事项（{len(calendar)} 项）：")
         for e in calendar[:15]:
-            start = e.get("start_time", "")
-            end = e.get("end_time", "")
+            start = _safe_prompt_text(e.get("start_time", ""), 80)
+            end = _safe_prompt_text(e.get("end_time", ""), 80)
             time_str = f"{start}" + (f" → {end}" if end else "")
-            parts.append(f"  - {e.get('summary', '无标题')}（{time_str}）")
+            parts.append(f"  - {_safe_prompt_text(e.get('summary', '无标题'), 300)}（{time_str}）")
 
     if len(parts) == 1:
         parts.append("\n（飞书上下文已提供但各类数据均为空）")
@@ -152,15 +156,17 @@ class BaseAgent(ABC):
         if upstream_results:
             parts = []
             for r in upstream_results:
+                agent_name = _safe_prompt_text(r.agent_name, 120)
                 section_text = "\n".join(
-                    f"  [{s.title}]\n  {(s.content or '')[:1500]}" for s in r.sections
+                    f"  [{_safe_prompt_text(s.title, 120)}]\n  {_safe_prompt_text(s.content, 1500)}"
+                    for s in r.sections
                 )
                 action_text = ""
                 if r.action_items:
                     action_text = "\n  [行动项]\n" + "\n".join(
-                        f"  - {a}" for a in r.action_items[:10]
+                        f"  - {_safe_prompt_text(a, 300)}" for a in r.action_items[:10]
                     )
-                parts.append(f"【{r.agent_name}的分析】\n{section_text}{action_text}")
+                parts.append(f"【{agent_name}的分析】\n{section_text}{action_text}")
             upstream_content = "\n\n".join(parts)
             if len(upstream_content) > 8000:
                 upstream_content = upstream_content[:8000] + "\n...[上游分析内容已截断，仅显示前8000字]"
@@ -222,6 +228,27 @@ class BaseAgent(ABC):
             "  ]\n"
             "}\n"
             "=== 元数据块硬性要求：health 必填，actions 至少 3 条，不要省略不要写占位符 ===\n"
+        )
+        METADATA_REQUIREMENT = (
+            "\n\n=== 输出末尾必须附带 metadata JSON 代码块 ===\n"
+            "在完整分析文本之后追加一个独立的 ```metadata 代码块，内容必须是严格合法 JSON；"
+            "不要写注释、不要写枚举表达式、不要省略逗号。示例：\n"
+            "```metadata\n"
+            "{\n"
+            '  "health": "🟢",\n'
+            '  "confidence": 4,\n'
+            '  "actions": [\n'
+            "    {\n"
+            '      "summary": "本周启动用户引导流程重构",\n'
+            '      "priority": "P1",\n'
+            '      "owner": "产品",\n'
+            '      "due": "本周",\n'
+            '      "success_metric": "用户激活率提升 5%"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "```\n"
+            "硬性要求：health 必填；actions 至少 3 条；不要写 [任务1] 这类占位符。\n"
         )
         return await call_llm(
             system_prompt=SAFETY_PREFIX + self.SYSTEM_PROMPT + METADATA_REQUIREMENT,
@@ -346,23 +373,23 @@ class BaseAgent(ABC):
 
         # 若 metadata.actions 存在且比文本解析更完整，优先采用
         # 拼接格式："<summary> | 负责方向：<owner> | 交付物：<success_metric> | 截止：<due>"
-        if structured_actions and len(structured_actions) >= max(1, len(action_items)):
+        if structured_actions and len(structured_actions) > len(action_items):
             rebuilt = []
             for a in structured_actions:
-                summary = (a.get("summary") or "").strip()
+                summary = str(a.get("summary") or "").strip()
                 if not summary:
                     continue
                 parts = [summary]
-                prio = (a.get("priority") or "").strip()
+                prio = str(a.get("priority") or "").strip()
                 if prio:
                     parts.insert(0, f"[{prio}]")
-                owner = (a.get("owner") or "").strip()
+                owner = str(a.get("owner") or "").strip()
                 if owner:
                     parts.append(f"负责方向：{owner}")
-                metric = (a.get("success_metric") or "").strip()
+                metric = str(a.get("success_metric") or "").strip()
                 if metric:
                     parts.append(f"验证指标：{metric}")
-                due = (a.get("due") or "").strip()
+                due = str(a.get("due") or "").strip()
                 if due:
                     parts.append(f"截止：{due}")
                 rebuilt.append(" | ".join(parts))

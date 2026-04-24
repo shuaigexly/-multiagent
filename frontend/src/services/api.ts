@@ -1,19 +1,10 @@
-import axios from 'axios';
 import type {
   TaskPlanResponse,
   TaskResultsResponse,
   TaskListItem,
   AgentInfo,
 } from './types';
-
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-const api = axios.create({
-  baseURL: BASE_URL,
-  headers: {
-    ...(import.meta.env.VITE_API_KEY ? { 'X-API-Key': import.meta.env.VITE_API_KEY } : {}),
-  },
-});
+import { api, BASE_URL } from './http';
 
 export async function submitTask(
   inputText: string,
@@ -101,10 +92,8 @@ export async function createFeishuTask(
   await api.post('/api/v1/feishu/tasks', { summary, source_task_id: sourceTaskId });
 }
 
-export function createSSEConnection(taskId: string): EventSource {
-  const apiKey = import.meta.env.VITE_API_KEY || '';
-  const url = `${BASE_URL}/api/v1/tasks/${taskId}/events${
-    apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : ''
-  }`;
+export async function createSSEConnection(taskId: string): Promise<EventSource> {
+  const resp = await api.post<{ token: string }>(`/api/v1/tasks/${taskId}/events-token`);
+  const url = `${BASE_URL}/api/v1/tasks/${taskId}/events?token=${encodeURIComponent(resp.data.token)}`;
   return new EventSource(url);
 }

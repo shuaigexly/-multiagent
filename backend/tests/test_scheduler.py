@@ -103,7 +103,11 @@ class TestRunOneCycle:
     async def test_stuck_analyzing_records_reset(self):
         stuck_record = {
             "record_id": "rec_stuck",
-            "fields": {"任务标题": "卡住的任务", "状态": Status.ANALYZING},
+            "fields": {
+                "任务标题": "卡住的任务",
+                "状态": Status.ANALYZING,
+                "最近更新": "2000-01-01 00:00",
+            },
         }
 
         async def mock_list_records(app_token, table_id, filter_expr=None, **kwargs):

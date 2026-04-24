@@ -17,6 +17,7 @@
     CEOAssistantAgent     CEO 助理    — 综合管理决策摘要
 """
 import asyncio
+import hashlib
 import json as _json
 import logging
 from datetime import datetime
@@ -75,6 +76,32 @@ def _is_failed_result(result: AgentResult) -> bool:
     return (result.raw_output or "").startswith("FAILED:")
 
 
+def _raise_if_failed(results: list[AgentResult], stage: str) -> None:
+    failed = [r for r in results if _is_failed_result(r)]
+    if failed:
+        names = ", ".join(r.agent_name for r in failed)
+        raise RuntimeError(f"{stage} failed agents: {names}")
+
+
+def _cache_input_hash(task_description: str, data_summary, upstream: Optional[list[AgentResult]]) -> str:
+    data_payload = data_summary.model_dump() if hasattr(data_summary, "model_dump") else None
+    upstream_payload = [
+        {
+            "agent_id": r.agent_id,
+            "raw_output": r.raw_output,
+            "actions": r.action_items,
+        }
+        for r in (upstream or [])
+    ]
+    payload = {
+        "task_description": task_description,
+        "data_summary": data_payload,
+        "upstream": upstream_payload,
+    }
+    encoded = _json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
 async def _safe_analyze(
     agent,
     task_description: str,
@@ -82,13 +109,14 @@ async def _safe_analyze(
     data_summary=None,
     task_id: Optional[str] = None,
 ) -> AgentResult:
-    """Run one agent with error isolation + optional Redis cache by (task_id, agent_id)."""
+    """Run one agent with error isolation + optional Redis cache by input hash."""
+    input_hash = _cache_input_hash(task_description, data_summary, upstream)
     # Cache hit path — skip LLM call if we've already run this agent for this task
     if task_id:
         try:
             from app.bitable_workflow.agent_cache import get_cached_result, set_cached_result
 
-            cached = await get_cached_result(task_id, agent.agent_id)
+            cached = await get_cached_result(task_id, agent.agent_id, input_hash)
             if cached:
                 logger.info("[cache-hit] %s/%s — skipping LLM call", task_id, agent.agent_id)
                 return cached
@@ -110,7 +138,7 @@ async def _safe_analyze(
         try:
             from app.bitable_workflow.agent_cache import set_cached_result
 
-            await set_cached_result(task_id, agent.agent_id, result)
+            await set_cached_result(task_id, agent.agent_id, input_hash, result)
         except Exception as cache_exc:
             logger.debug("agent cache write skipped: %s", cache_exc)
 
@@ -159,6 +187,7 @@ async def run_task_pipeline(
         for agent in _WAVE1_AGENTS
     ]
     wave1_results: list[AgentResult] = list(await asyncio.gather(*wave1_coros))
+    _raise_if_failed(wave1_results, "Wave1")
     logger.info("Wave 1 complete: %d agents", len(wave1_results))
     if progress_callback:
         try:
@@ -176,6 +205,7 @@ async def run_task_pipeline(
         upstream=[da_result], data_summary=data_summary, task_id=task_id,
     )
     wave2_results = [fa_result]
+    _raise_if_failed(wave2_results, "Wave2")
     logger.info("Wave 2 complete: finance_advisor")
     if progress_callback:
         try:
@@ -216,9 +246,9 @@ async def cleanup_prior_task_outputs(
     (e.g., after a crash or manual re-run) does not leave duplicate records
     with mismatched timestamps in the output tables.
     """
-    safe_title = bitable_ops.escape_filter_value(task_title)
-    filter_expr = f'CurrentValue.[任务标题]="{safe_title}"'
-    report_filter = f'CurrentValue.[报告标题]="{safe_title}"'
+    safe_title = bitable_ops.quote_filter_value(task_title)
+    filter_expr = f"CurrentValue.[任务标题]={safe_title}"
+    report_filter = f"CurrentValue.[报告标题]={safe_title}"
 
     cleanup_errors = []
 
@@ -400,15 +430,7 @@ async def write_agent_outputs(
             written += 1
         except Exception as exc:
             if "LinkFieldConvFail" in str(exc) and task_record_id and "关联任务" in fields:
-                # Feishu API cannot write to linked record fields via records endpoint;
-                # retry without the linked field so the analysis data is not lost.
-                try:
-                    fields.pop("关联任务")
-                    await bitable_ops.create_record(app_token, output_table_id, fields)
-                    written += 1
-                    logger.warning("Wrote output for agent=%s without linked field (LinkFieldConvFail)", result.agent_name)
-                except Exception as exc2:
-                    logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc2)
+                raise RuntimeError("关联任务字段写入失败，请修复字段类型或权限后重试") from exc
             else:
                 logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc)
     return written
@@ -452,9 +474,7 @@ async def write_ceo_report(
         return await bitable_ops.create_record(app_token, report_table_id, record_fields)
     except Exception as exc:
         if "LinkFieldConvFail" in str(exc) and task_record_id and "关联任务" in record_fields:
-            record_fields.pop("关联任务")
-            logger.warning("Writing CEO report without linked field (LinkFieldConvFail)")
-            return await bitable_ops.create_record(app_token, report_table_id, record_fields)
+            raise RuntimeError("关联任务字段写入失败，请修复字段类型或权限后重试") from exc
         raise
 
 

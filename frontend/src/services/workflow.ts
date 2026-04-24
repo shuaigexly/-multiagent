@@ -1,17 +1,4 @@
-/**
- * Bitable 工作流 API 客户端
- *
- * 对应后端 /api/v1/workflow/* 路由 + SSE /stream/{record_id} 端点。
- */
-import axios from 'axios';
-
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
-
-const api = axios.create({
-  baseURL: BASE_URL,
-  headers: API_KEY ? { 'X-API-Key': API_KEY } : {},
-});
+import { api, BASE_URL } from './http';
 
 export interface WorkflowSetup {
   app_token: string;
@@ -96,33 +83,45 @@ export interface ProgressEvent {
   ts: string;
 }
 
-/**
- * 订阅单条任务的 SSE 进度流。返回一个 close 函数用于主动断开。
- * 任务结束（done/error）后自动关闭。
- */
 export function subscribeTaskProgress(
   recordId: string,
   onEvent: (e: ProgressEvent) => void,
 ): () => void {
-  const params = API_KEY ? `?api_key=${encodeURIComponent(API_KEY)}` : '';
-  const es = new EventSource(`${BASE_URL}/api/v1/workflow/stream/${recordId}${params}`);
+  let es: EventSource | null = null;
+  let closed = false;
+
   const handler = (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data) as ProgressEvent;
       onEvent(data);
       if (data.event_type === 'task.done' || data.event_type === 'task.error') {
-        es.close();
+        es?.close();
       }
     } catch (err) {
       console.error('[SSE] parse error:', err);
     }
   };
-  ['task.started', 'wave.completed', 'task.done', 'task.error'].forEach((evt) =>
-    es.addEventListener(evt, handler as EventListener),
-  );
-  es.onerror = () => {
-    // 静默失败 —— 后端不可达或任务不存在
-    es.close();
+
+  void api
+    .post<{ token: string }>(`/api/v1/workflow/stream-token/${recordId}`)
+    .then((resp) => {
+      if (closed) return;
+      es = new EventSource(
+        `${BASE_URL}/api/v1/workflow/stream/${recordId}?token=${encodeURIComponent(resp.data.token)}`,
+      );
+      ['task.started', 'wave.completed', 'task.done', 'task.error'].forEach((evt) =>
+        es?.addEventListener(evt, handler as EventListener),
+      );
+      es.onerror = () => {
+        es?.close();
+      };
+    })
+    .catch((err) => {
+      console.error('[SSE] token error:', err);
+    });
+
+  return () => {
+    closed = true;
+    es?.close();
   };
-  return () => es.close();
 }

@@ -101,7 +101,8 @@ class TestStatusMachine:
 
     def test_status_field_includes_all_statuses(self):
         status_field = next(f for f in TASK_FIELDS if f["field_name"] == "状态")
-        options = status_field.get("options", [])
+        raw_options = status_field.get("options") or status_field.get("property", {}).get("options", [])
+        options = [item["name"] if isinstance(item, dict) else item for item in raw_options]
         assert Status.PENDING in options
         assert Status.ANALYZING in options
         assert Status.COMPLETED in options

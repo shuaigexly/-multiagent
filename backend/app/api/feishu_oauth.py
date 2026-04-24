@@ -58,6 +58,18 @@ def _is_allowed_origin(origin: str) -> bool:
     return origin.rstrip("/") in [a.rstrip("/") for a in allowed if a]
 
 
+def _is_allowed_backend_origin(origin: str) -> bool:
+    allowed = [
+        o.strip()
+        for o in (
+            _settings.allowed_backend_origins
+            or _settings.public_backend_origin
+            or "http://localhost:8000"
+        ).split(",")
+    ]
+    return origin.rstrip("/") in [a.rstrip("/") for a in allowed if a]
+
+
 def _create_oauth_state(frontend_origin: str) -> str:
     _cleanup_pending_states()
     token = secrets.token_urlsafe(16)
@@ -97,7 +109,7 @@ async def refresh_oauth_token():
 
 @router.get("/oauth/url", dependencies=[Depends(require_api_key)])
 async def get_oauth_url(
-    backend_origin: str = Query("http://localhost:8000"),
+    backend_origin: str | None = Query(None),
     frontend_origin: str = Query("http://localhost:8080"),
 ):
     """生成飞书 OAuth 授权 URL"""
@@ -108,7 +120,11 @@ async def get_oauth_url(
     if not app_id:
         return {"ok": False, "message": "飞书 App ID 未配置"}
 
-    callback = f"{backend_origin}{CALLBACK_PATH}"
+    safe_backend_origin = (backend_origin or _settings.public_backend_origin).rstrip("/")
+    if not _is_allowed_backend_origin(safe_backend_origin):
+        return {"ok": False, "message": f"不允许的 backend_origin: {safe_backend_origin}"}
+
+    callback = f"{safe_backend_origin}{CALLBACK_PATH}"
     base = _feishu_base()
     state = _create_oauth_state(frontend_origin)
     url = (

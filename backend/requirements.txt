@@ -8,7 +8,7 @@ greenlet>=3.0.0
 redis==5.2.1
 lark-oapi==1.4.3
 openai==1.58.1
-python-multipart==0.0.12
+python-multipart>=0.0.26
 aiofiles==24.1.0
 pandas>=2.0.0
 python-dotenv==1.0.1

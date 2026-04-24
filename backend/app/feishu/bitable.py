@@ -32,6 +32,21 @@ TEXT_FIELD_TYPE = 1
 SINGLE_SELECT_FIELD_TYPE = 3
 LINKED_RECORD_FIELD_TYPE = 18
 MAX_RECORDS_PER_REQUEST = 500
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=30)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+    _http_client = None
 
 
 async def create_bitable(name: str) -> dict:
@@ -65,15 +80,14 @@ async def _create_view_impl(
     token = await get_tenant_access_token()
     base = get_feishu_open_base_url()
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/views"
-    async with httpx.AsyncClient(timeout=30) as http:
-        r = await http.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json; charset=utf-8",
-            },
-            json={"view_name": view_name, "view_type": view_type},
-        )
+    r = await _get_http_client().post(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        json={"view_name": view_name, "view_type": view_type},
+    )
     r.raise_for_status()
     data = r.json()
     if data.get("code") != 0:
@@ -102,7 +116,7 @@ async def create_analysis_bitable(
 
     action_table_id = await _create_table_impl(
         app_token=bitable_result["app_token"],
-        table_name="行动清单",
+        table_name="岗位分析行动项",
         fields=[
             {"field_name": "序号", "type": TEXT_FIELD_TYPE},
             {"field_name": "行动项", "type": TEXT_FIELD_TYPE},
@@ -115,7 +129,7 @@ async def create_analysis_bitable(
 
     summary_table_id = await _create_table_impl(
         app_token=bitable_result["app_token"],
-        table_name="分析摘要",
+        table_name="岗位分析摘要",
         fields=[
             {"field_name": "模块名称", "type": TEXT_FIELD_TYPE},
             {"field_name": "摘要", "type": TEXT_FIELD_TYPE},
@@ -297,12 +311,11 @@ async def _create_field_http(app_token: str, table_id: str, field: dict) -> str:
     if prop:
         payload["property"] = prop
 
-    async with httpx.AsyncClient(timeout=30) as http:
-        r = await http.post(
-            url,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json=payload,
-        )
+    r = await _get_http_client().post(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=payload,
+    )
     r.raise_for_status()
     data = r.json()
     if data.get("code") != 0:

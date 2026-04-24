@@ -4,36 +4,43 @@ import json
 import logging
 import os
 import time
-from hmac import compare_digest
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.settings import settings
+from app.core.auth import issue_stream_token, require_api_key, verify_stream_token
 from app.models.database import AsyncSessionLocal, Task, TaskEvent
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["events"])
 logger = logging.getLogger(__name__)
 MAX_SSE_SECONDS = int(os.getenv("MAX_SSE_SECONDS", "600"))
+STREAM_TOKEN_TTL_SECONDS = int(os.getenv("STREAM_TOKEN_TTL_SECONDS", "60"))
+
+
+@router.post("/{task_id}/events-token", dependencies=[Depends(require_api_key)])
+async def task_events_token(task_id: str):
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Task.id).where(Task.id == task_id))
+        if not result.scalar_one_or_none():
+            raise HTTPException(404, "任务不存在")
+    return {
+        "token": issue_stream_token(
+            subject=task_id,
+            purpose="task-events",
+            ttl_seconds=STREAM_TOKEN_TTL_SECONDS,
+        )
+    }
 
 
 @router.get("/{task_id}/events")
 async def task_events(
     task_id: str,
     request: Request,
-    x_api_key: str = Header("", alias="X-API-Key"),
-    api_key: str = Query(""),
+    token: str = Query(""),
 ):
     """SSE 流：推送任务执行进度事件（业务语言，非技术日志）"""
-    expected = settings.api_key
-    env = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
-    if not expected and env in {"prod", "production"}:
-        raise HTTPException(503, "API key is not configured")
-    if expected:
-        token = x_api_key or api_key
-        if not compare_digest(token, expected):
-            raise HTTPException(401, "Invalid API key")
+    verify_stream_token(token, subject=task_id, purpose="task-events")
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Task.id).where(Task.id == task_id))

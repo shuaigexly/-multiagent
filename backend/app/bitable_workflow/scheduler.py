@@ -8,8 +8,12 @@
 反馈闭环：任务完成后，CEO 助理行动项自动写回「分析任务」表形成新的待分析任务。
 飞书通知：任务完成后向配置的飞书群推送摘要卡片消息。
 """
+import asyncio
 import logging
-from datetime import datetime
+import os
+import socket
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from app.bitable_workflow import bitable_ops
 from app.bitable_workflow.schema import Status
@@ -26,6 +30,82 @@ logger = logging.getLogger(__name__)
 
 # 单轮最多处理任务数（每条任务触发 7 次 LLM 调用）
 _MAX_PER_CYCLE = 3
+_LOCAL_CYCLE_LOCK: asyncio.Lock | None = None
+_LOCK_TTL_SECONDS = int(os.getenv("WORKFLOW_CYCLE_LOCK_TTL_SECONDS", "900"))
+_RECOVER_STALE_MINUTES = int(os.getenv("WORKFLOW_RECOVER_STALE_MINUTES", "30"))
+
+
+def _owner_id() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+
+
+async def _acquire_cycle_lock(app_token: str, task_tid: str) -> tuple[object | None, str | None]:
+    global _LOCAL_CYCLE_LOCK
+    if _LOCAL_CYCLE_LOCK is None:
+        _LOCAL_CYCLE_LOCK = asyncio.Lock()
+    await _LOCAL_CYCLE_LOCK.acquire()
+    owner = _owner_id()
+    try:
+        import redis.asyncio as aioredis
+        from app.core.settings import settings
+
+        client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        ok = await client.set(
+            f"workflow:cycle-lock:{app_token}:{task_tid}",
+            owner,
+            nx=True,
+            ex=_LOCK_TTL_SECONDS,
+        )
+        if not ok:
+            _LOCAL_CYCLE_LOCK.release()
+            await client.aclose()
+            return None, None
+        return client, owner
+    except Exception as exc:
+        logger.warning("Redis workflow lock unavailable; using in-process lock only: %s", exc)
+        return None, owner
+
+
+async def _release_cycle_lock(lock_client: object | None, owner: str | None, app_token: str, task_tid: str) -> None:
+    try:
+        if lock_client is not None and owner:
+            key = f"workflow:cycle-lock:{app_token}:{task_tid}"
+            current = await lock_client.get(key)
+            if current == owner:
+                await lock_client.delete(key)
+            await lock_client.aclose()
+    finally:
+        if _LOCAL_CYCLE_LOCK is not None and _LOCAL_CYCLE_LOCK.locked():
+            _LOCAL_CYCLE_LOCK.release()
+
+
+def _parse_feishu_time(value) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts > 10_000_000_000:
+            ts = ts / 1000
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _is_stale_analyzing(fields: dict) -> bool:
+    updated_at = _parse_feishu_time(fields.get("最近更新"))
+    if updated_at is None:
+        return False
+    return datetime.now(timezone.utc) - updated_at > timedelta(minutes=_RECOVER_STALE_MINUTES)
 
 
 async def _send_completion_message(task_title: str, ceo_result: AgentResult) -> None:
@@ -90,6 +170,18 @@ async def _create_followup_tasks(
 
 
 async def run_one_cycle(app_token: str, table_ids: dict) -> int:
+    task_tid = table_ids["task"]
+    lock_client, lock_owner = await _acquire_cycle_lock(app_token, task_tid)
+    if lock_owner is None:
+        logger.info("Workflow cycle skipped because another instance holds the lock")
+        return 0
+    try:
+        return await _run_one_cycle_locked(app_token, table_ids)
+    finally:
+        await _release_cycle_lock(lock_client, lock_owner, app_token, task_tid)
+
+
+async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
     """
     执行一轮完整的多智能体分析处理：
       0. 恢复崩溃遗留的 ANALYZING 记录 → 重置为待分析
@@ -118,6 +210,10 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
         rid = record.get("record_id")
         if not rid:
             logger.warning("Stuck record missing record_id, skipping: %s", record)
+            continue
+        fields = record.get("fields", {})
+        if not _is_stale_analyzing(fields):
+            logger.info("Skipping active ANALYZING record=%s; not stale enough for recovery", rid)
             continue
         try:
             await bitable_ops.update_record(

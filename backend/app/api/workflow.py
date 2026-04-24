@@ -4,13 +4,13 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
 from app.bitable_workflow import bitable_ops, progress_broker, runner
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
-from app.core.auth import require_api_key
+from app.core.auth import issue_stream_token, require_api_key, verify_stream_token
 
 _VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
 _VALID_STATUSES: set[str] = set(ALL_STATUSES)
@@ -18,7 +18,6 @@ _VALID_STATUSES: set[str] = set(ALL_STATUSES)
 router = APIRouter(
     prefix="/api/v1/workflow",
     tags=["workflow"],
-    dependencies=[Depends(require_api_key)],
 )
 logger = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ class SeedRequest(BaseModel):
         return v
 
 
-@router.post("/setup")
+@router.post("/setup", dependencies=[Depends(require_api_key)])
 async def workflow_setup(req: SetupRequest):
     """创建飞书多维表格结构（四张表）并写入初始分析任务。"""
     if runner.is_running():
@@ -76,7 +75,7 @@ async def workflow_setup(req: SetupRequest):
     return result
 
 
-@router.post("/start")
+@router.post("/start", dependencies=[Depends(require_api_key)])
 async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
     """启动七岗多智能体持续调度循环（后台运行）。"""
     if not runner.mark_starting():
@@ -92,20 +91,20 @@ async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
     return {"status": "started", "interval": req.interval}
 
 
-@router.post("/stop")
+@router.post("/stop", dependencies=[Depends(require_api_key)])
 async def workflow_stop():
     """停止调度循环。"""
     runner.stop_workflow()
     return {"status": "stopped"}
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_api_key)])
 async def workflow_status():
     """返回当前运行状态和多维表格信息。"""
     return {"running": runner.is_running(), "state": _state}
 
 
-@router.post("/seed")
+@router.post("/seed", dependencies=[Depends(require_api_key)])
 async def workflow_seed(req: SeedRequest):
     """向分析任务表写入一条新的待处理任务。"""
     record_id = await bitable_ops.create_record(
@@ -122,13 +121,30 @@ async def workflow_seed(req: SeedRequest):
     return {"record_id": record_id}
 
 
-@router.get("/stream/{task_record_id}", dependencies=[])
-async def workflow_stream(task_record_id: str, request: Request):
+@router.post("/stream-token/{task_record_id}", dependencies=[Depends(require_api_key)])
+async def workflow_stream_token(task_record_id: str):
+    return {
+        "token": issue_stream_token(
+            subject=task_record_id,
+            purpose="workflow-stream",
+            ttl_seconds=60,
+        )
+    }
+
+
+@router.get("/stream/{task_record_id}")
+async def workflow_stream(
+    task_record_id: str,
+    request: Request,
+    token: str = Query(""),
+):
     """SSE 流：实时推送 Bitable 工作流的 Wave 进度事件。
 
     订阅后立即接收 task.started / wave.completed / task.done / task.error 等事件。
     前端使用 EventSource 即可订阅；连接保持到 task.done/task.error 或客户端断开。
     """
+    verify_stream_token(token, subject=task_record_id, purpose="workflow-stream")
+
     async def _gen():
         async for msg in progress_broker.subscribe(task_record_id):
             if await request.is_disconnected():
@@ -138,7 +154,7 @@ async def workflow_stream(task_record_id: str, request: Request):
     return EventSourceResponse(_gen(), media_type="text/event-stream")
 
 
-@router.get("/records")
+@router.get("/records", dependencies=[Depends(require_api_key)])
 async def workflow_records(app_token: str, table_id: str, status: Optional[str] = None):
     """查看多维表格中的记录（可按状态过滤）。"""
     if status is not None and status not in _VALID_STATUSES:
@@ -146,6 +162,6 @@ async def workflow_records(app_token: str, table_id: str, status: Optional[str] 
             status_code=400,
             detail=f"无效的状态值，有效值为: {sorted(_VALID_STATUSES)}",
         )
-    filter_expr = f'CurrentValue.[状态]="{status}"' if status else None
+    filter_expr = f"CurrentValue.[状态]={bitable_ops.quote_filter_value(status)}" if status else None
     records = await bitable_ops.list_records(app_token, table_id, filter_expr=filter_expr)
     return {"count": len(records), "records": records}

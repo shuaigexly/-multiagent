@@ -5,6 +5,7 @@ import os
 import time
 import uuid
 from collections import defaultdict
+from pathlib import Path
 from typing import Optional
 
 import aiofiles
@@ -46,6 +47,12 @@ def _get_claim_lock() -> asyncio.Lock:
 def _check_rate_limit(client_ip: str) -> None:
     now = time.time()
     window_start = now - _RATE_LIMIT_WINDOW
+    for ip, timestamps in list(_rate_limit_store.items()):
+        fresh = [t for t in timestamps if t > window_start]
+        if fresh:
+            _rate_limit_store[ip] = fresh
+        else:
+            _rate_limit_store.pop(ip, None)
     requests = _rate_limit_store[client_ip]
     # Evict expired entries
     _rate_limit_store[client_ip] = [t for t in requests if t > window_start]
@@ -57,6 +64,15 @@ def _check_rate_limit(client_ip: str) -> None:
 def _escape_like(value: str) -> str:
     """Escape SQLite LIKE metacharacters."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def _remove_upload_file(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        await asyncio.to_thread(Path(path).unlink, missing_ok=True)
+    except OSError as exc:
+        logger.warning("uploaded file cleanup failed for path=%s: %s", path, exc)
 
 
 @router.post("", response_model=TaskPlanResponse, dependencies=[Depends(require_api_key)])
@@ -131,7 +147,11 @@ async def create_task(
             ctx = _json.loads(feishu_context)
         except _json.JSONDecodeError as exc:
             raise HTTPException(422, f"feishu_context JSON 格式错误: {exc}")
-    plan = await plan_task(planning_text, ctx)
+    try:
+        plan = await plan_task(planning_text, ctx)
+    except Exception:
+        await _remove_upload_file(input_file_path)
+        raise
 
     # 创建任务记录（status=planning，等待用户确认）
     task = Task(
@@ -144,8 +164,12 @@ async def create_task(
         selected_modules=plan.selected_modules,
         feishu_context=ctx,
     )
-    db.add(task)
-    await db.commit()
+    try:
+        db.add(task)
+        await db.commit()
+    except Exception:
+        await _remove_upload_file(input_file_path)
+        raise
     logger.info(
         "Task created",
         extra={"task_id": str(task.id), "task_type": task.task_type},
@@ -270,15 +294,19 @@ async def delete_task(
             raise HTTPException(400, f"任务状态 {current_status} 无法取消")
         return {"status": "cancelled"}
 
-    task_exists = await db.scalar(select(Task.id).where(Task.id == task_id))
-    if task_exists is None:
+    task_row = await db.execute(select(Task.id, Task.input_file).where(Task.id == task_id))
+    task_data = task_row.first()
+    if task_data is None:
         raise HTTPException(404, "任务不存在")
+
+    input_file_path = task_data.input_file
 
     await db.execute(delete(TaskResult).where(TaskResult.task_id == task_id))
     await db.execute(delete(TaskEvent).where(TaskEvent.task_id == task_id))
     await db.execute(delete(PublishedAsset).where(PublishedAsset.task_id == task_id))
     await db.execute(delete(Task).where(Task.id == task_id))
     await db.commit()
+    await _remove_upload_file(input_file_path)
     return {"ok": True}
 
 
@@ -307,6 +335,7 @@ async def _execute_task(
     from app.models.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         emitter = None
+        input_file_path = None
         try:
             result = await db.execute(select(Task).where(Task.id == task_id))
             task = result.scalar_one_or_none()
@@ -417,6 +446,7 @@ async def _execute_task(
                     status="failed",
                     error_message=error_message,
                 )
+                await _remove_upload_file(input_file_path)
                 return
 
             if await _is_task_cancelled(db, task_id):
@@ -455,11 +485,7 @@ async def _execute_task(
                 await emitter.emit_task_done(summary)
             except Exception as emit_exc:
                 logger.warning("task.done event emission failed: %s", emit_exc)
-            if input_file_path:
-                try:
-                    os.unlink(input_file_path)
-                except OSError as cleanup_exc:
-                    logger.warning("uploaded file cleanup failed for task=%s: %s", task_id, cleanup_exc)
+            await _remove_upload_file(input_file_path)
 
         except Exception as e:
             logger.error(
@@ -478,6 +504,7 @@ async def _execute_task(
                     await emitter2.emit_task_error(str(e))
             except Exception as exc:
                 logger.warning("任务失败状态更新或错误事件发送失败: %s", exc)
+            await _remove_upload_file(input_file_path)
 
 
 async def _enrich_from_feishu_context(

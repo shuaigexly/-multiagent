@@ -7,6 +7,7 @@ stop_workflow()      — 停止循环
 """
 import asyncio
 import logging
+import threading
 from typing import Optional
 
 from app.bitable_workflow import bitable_ops, schema
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _running = False
 _stop_event: Optional[asyncio.Event] = None
+_state_lock = threading.Lock()
 
 
 async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
@@ -109,10 +111,11 @@ def mark_starting() -> bool:
     so that a second concurrent /start request sees is_running()=True and is rejected.
     """
     global _running
-    if _running:
-        return False
-    _running = True
-    return True
+    with _state_lock:
+        if _running:
+            return False
+        _running = True
+        return True
 
 
 async def run_workflow_loop(
@@ -128,7 +131,8 @@ async def run_workflow_loop(
     Wave1（5个并行Agent）→ Wave2（财务顾问）→ Wave3（CEO助理综合）
     """
     global _running, _stop_event
-    _running = True  # belt-and-suspenders; mark_starting() already set this
+    with _state_lock:
+        _running = True  # belt-and-suspenders; mark_starting() already set this
     _stop_event = asyncio.Event()
     cycle = 0
     logger.info("Workflow loop started (interval=%ds)", interval)
@@ -149,18 +153,21 @@ async def run_workflow_loop(
             except asyncio.TimeoutError:
                 pass  # normal interval elapsed, continue
     finally:
-        _running = False
-        _stop_event = None
+        with _state_lock:
+            _running = False
+            _stop_event = None
 
     logger.info("Workflow loop stopped after %d cycles", cycle)
 
 
 def stop_workflow() -> None:
     global _running
-    _running = False
+    with _state_lock:
+        _running = False
     if _stop_event is not None:
         _stop_event.set()
 
 
 def is_running() -> bool:
-    return _running
+    with _state_lock:
+        return _running

@@ -20,7 +20,14 @@ logger = logging.getLogger(__name__)
 
 # task_id → list of subscriber Queues（允许多个前端同时订阅同一任务）
 _subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
-_lock = asyncio.Lock()
+_lock: asyncio.Lock | None = None
+
+
+def _get_lock() -> asyncio.Lock:
+    global _lock
+    if _lock is None:
+        _lock = asyncio.Lock()
+    return _lock
 
 
 async def publish(task_id: str, event_type: str, payload: dict) -> None:
@@ -33,7 +40,7 @@ async def publish(task_id: str, event_type: str, payload: dict) -> None:
         "payload": payload,
         "ts": datetime.utcnow().isoformat() + "Z",
     }
-    async with _lock:
+    async with _get_lock():
         queues = list(_subscribers.get(task_id, []))
     for q in queues:
         try:
@@ -45,7 +52,7 @@ async def publish(task_id: str, event_type: str, payload: dict) -> None:
 async def subscribe(task_id: str) -> AsyncIterator[dict]:
     """SSE 端点调用此迭代器逐条推送事件。断开时自动注销。"""
     q: asyncio.Queue = asyncio.Queue(maxsize=100)
-    async with _lock:
+    async with _get_lock():
         _subscribers[task_id].append(q)
     try:
         while True:
@@ -54,7 +61,7 @@ async def subscribe(task_id: str) -> AsyncIterator[dict]:
             if msg.get("event_type") in {"task.done", "task.error"}:
                 break
     finally:
-        async with _lock:
+        async with _get_lock():
             if q in _subscribers.get(task_id, []):
                 _subscribers[task_id].remove(q)
             if not _subscribers.get(task_id):

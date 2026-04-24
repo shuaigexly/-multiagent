@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { getConfig, saveConfigs, setStoredLLMConfigured, testFeishu, testLLM, type ConfigMap, type ConnectionTestResult } from '../services/config';
+import { api, API_KEY_STORAGE_KEY, BASE_URL } from '../services/http';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -43,9 +44,8 @@ export default function Settings() {
   const [botTest, setBotTest] = useState<ConnectionTestResult | null>(null);
   const [taskAuthorized, setTaskAuthorized] = useState(false);
   const [authorizingTask, setAuthorizingTask] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
   const [searchParams] = useSearchParams();
-
-  const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   const load = async () => {
     const d = await getConfig(); setConfig(d);
@@ -56,11 +56,12 @@ export default function Settings() {
     setFeishuRegion(d.feishu_region?.value || 'cn');
     setFeishuAppId(d.feishu_app_id?.value || '');
     // 检查任务 OAuth 状态
-    fetch(`${BASE_URL}/api/v1/feishu/oauth/status`)
-      .then(r => r.json()).then(d => setTaskAuthorized(Boolean(d.authorized))).catch(() => {});
+    api.get('/api/v1/feishu/oauth/status')
+      .then(r => setTaskAuthorized(Boolean(r.data.authorized))).catch(() => {});
   };
 
   useEffect(() => {
+    setApiKeyInput(window.localStorage.getItem(API_KEY_STORAGE_KEY) || '');
     load().catch(e => setError(getErr(e, '加载失败'))).finally(() => setLoading(false));
     // 处理 OAuth 回调结果
     const oauthResult = searchParams.get('oauth');
@@ -77,6 +78,13 @@ export default function Settings() {
       await saveConfigs(c); setLlmApiKey(''); await load();
       setLlmTest({ ok: true, message: '已保存' });
     } catch (e) { setError(getErr(e, '保存失败')); } finally { setSaving(null); }
+  };
+
+  const saveRuntimeApiKey = () => {
+    const value = apiKeyInput.trim();
+    if (value) window.localStorage.setItem(API_KEY_STORAGE_KEY, value);
+    else window.localStorage.removeItem(API_KEY_STORAGE_KEY);
+    toast({ title: value ? '访问密钥已保存到本机' : '访问密钥已清除' });
   };
 
   const saveFeishu = async () => {
@@ -103,8 +111,10 @@ export default function Settings() {
     try {
       const backendOrigin = BASE_URL;
       const frontendOrigin = window.location.origin;
-      const r = await fetch(`${BASE_URL}/api/v1/feishu/oauth/url?backend_origin=${encodeURIComponent(backendOrigin)}&frontend_origin=${encodeURIComponent(frontendOrigin)}`);
-      const data = await r.json();
+      const r = await api.get('/api/v1/feishu/oauth/url', {
+        params: { backend_origin: backendOrigin, frontend_origin: frontendOrigin },
+      });
+      const data = r.data;
       if (data.ok && data.url) {
         window.location.href = data.url;
       } else {
@@ -127,8 +137,8 @@ export default function Settings() {
   const doTestBot = async () => {
     setTestingBot(true); setBotTest(null);
     try {
-      const response = await fetch(`${BASE_URL}/api/v1/config/test-bot`, { method: 'POST' });
-      const result = await response.json() as ConnectionTestResult;
+      const response = await api.post('/api/v1/config/test-bot');
+      const result = response.data as ConnectionTestResult;
       setBotTest(result);
       toast({
         title: result.ok ? 'Bot 测试成功' : 'Bot 测试失败',
@@ -181,6 +191,25 @@ export default function Settings() {
       )}
 
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+
+      <div className="space-y-3 rounded-xl border border-border bg-card p-5 shadow-sm">
+        <div>
+          <div className="text-sm font-semibold text-foreground">后端访问密钥</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            仅保存在当前浏览器，用于发送 X-API-Key；不要把长期密钥写入 VITE_* 环境变量。
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input
+            className="h-9"
+            type="password"
+            value={apiKeyInput}
+            onChange={(event) => setApiKeyInput(event.target.value)}
+            placeholder="生产环境 API_KEY"
+          />
+          <Button size="sm" onClick={saveRuntimeApiKey}>保存访问密钥</Button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* LLM */}

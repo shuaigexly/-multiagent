@@ -170,9 +170,9 @@ export default function Workbench() {
     setSelectedSuggestion(s.id);
   };
 
-  const startSSE = (tid: string, recover: 'input' | 'confirm') => {
+  const startSSE = async (tid: string, recover: 'input' | 'confirm') => {
     eventSourceRef.current?.close();
-    const es = createSSEConnection(tid);
+    const es = await createSSEConnection(tid);
     eventSourceRef.current = es;
     es.onmessage = (e) => {
       const d = JSON.parse(e.data) as SSEEvent;
@@ -197,7 +197,7 @@ export default function Workbench() {
     setError(null); setEvents([]);
     if (selectedModules.length > 0) {
       setPlan(null); setLoading(true); setStep('running');
-      try { const r = await submitTask(inputText, file ?? undefined, feishuCtx ?? undefined); setTaskId(r.task_id); await confirmTask(r.task_id, selectedModules); startSSE(r.task_id, 'input'); }
+      try { const r = await submitTask(inputText, file ?? undefined, feishuCtx ?? undefined); setTaskId(r.task_id); await confirmTask(r.task_id, selectedModules); await startSSE(r.task_id, 'input'); }
       catch { setStep('input'); setError('执行失败'); setLoading(false); }
       return;
     }
@@ -231,7 +231,7 @@ export default function Workbench() {
   const handleConfirm = async () => {
     if (!taskId || selectedModules.length === 0) { setError('请至少选择一名团队成员'); return; }
     setError(null); setLoading(true); setEvents([]); setStep('running');
-    try { await confirmTask(taskId, selectedModules, userInstructions); startSSE(taskId, 'confirm'); }
+    try { await confirmTask(taskId, selectedModules, userInstructions); await startSSE(taskId, 'confirm'); }
     catch { setLoading(false); setStep('confirm'); setError('执行失败'); }
   };
 

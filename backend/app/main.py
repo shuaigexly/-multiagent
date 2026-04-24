@@ -57,6 +57,18 @@ async def lifespan(app: FastAPI):
     yield
     if app.state.redis_client:
         await app.state.redis_client.aclose()
+    try:
+        from app.bitable_workflow.bitable_ops import close_http_client
+
+        await close_http_client()
+    except Exception as exc:
+        logger.warning("Bitable HTTP client shutdown failed: %s", exc)
+    try:
+        from app.feishu.bitable import close_http_client as close_feishu_bitable_http_client
+
+        await close_feishu_bitable_http_client()
+    except Exception as exc:
+        logger.warning("Feishu Bitable HTTP client shutdown failed: %s", exc)
     await mcp_client.shutdown()
     logger.info("飞书 AI 工作台关闭")
 
