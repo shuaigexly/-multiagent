@@ -18,6 +18,9 @@ from app.core.settings import (
 
 logger = logging.getLogger(__name__)
 
+# Limit concurrent LLM calls to avoid rate-limiting (e.g. GLM-4-flash: ~5 RPM free tier)
+_LLM_SEMAPHORE = asyncio.Semaphore(2)
+
 
 async def call_llm(
     system_prompt: str,
@@ -43,16 +46,17 @@ async def call_llm(
     """
     provider = get_llm_provider().strip().lower()
 
-    if provider == "feishu_aily":
-        return await _call_feishu_aily(system_prompt, user_prompt)
-    else:
-        if provider != "openai_compatible":
-            logger.warning(
-                "未知 LLM_PROVIDER=%r，降级使用 openai_compatible 模式", provider
+    async with _LLM_SEMAPHORE:
+        if provider == "feishu_aily":
+            return await _call_feishu_aily(system_prompt, user_prompt)
+        else:
+            if provider != "openai_compatible":
+                logger.warning(
+                    "未知 LLM_PROVIDER=%r，降级使用 openai_compatible 模式", provider
+                )
+            return await _call_openai_compatible(
+                system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens
             )
-        return await _call_openai_compatible(
-            system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens
-        )
 
 
 async def _call_openai_compatible(

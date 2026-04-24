@@ -171,11 +171,15 @@ class BaseAgent(ABC):
         skill_section = format_skills_for_prompt(skills)
 
         feishu_section = _format_feishu_context(feishu_context)
-        base_prompt = self.USER_PROMPT_TEMPLATE.format(
-            task_description=f"<user_task>\n{_escape_xml(task_description)}\n</user_task>",
-            data_section=data_section,
-            upstream_section=upstream_section,
-            feishu_context=feishu_section,
+        # Use manual replace instead of str.format() to avoid KeyError on JSON
+        # examples like {"name": ...} inside prompt templates being mistaken for
+        # format placeholders.
+        base_prompt = (
+            self.USER_PROMPT_TEMPLATE
+            .replace("{task_description}", f"<user_task>\n{_escape_xml(task_description)}\n</user_task>")
+            .replace("{data_section}", data_section)
+            .replace("{upstream_section}", upstream_section)
+            .replace("{feishu_context}", feishu_section)
         )
         if user_instructions and user_instructions.strip():
             base_prompt += (

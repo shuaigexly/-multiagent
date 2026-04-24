@@ -231,7 +231,18 @@ async def write_agent_outputs(
             await bitable_ops.create_record(app_token, output_table_id, fields)
             written += 1
         except Exception as exc:
-            logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc)
+            if "LinkFieldConvFail" in str(exc) and task_record_id and "关联任务" in fields:
+                # Feishu API cannot write to linked record fields via records endpoint;
+                # retry without the linked field so the analysis data is not lost.
+                try:
+                    fields.pop("关联任务")
+                    await bitable_ops.create_record(app_token, output_table_id, fields)
+                    written += 1
+                    logger.warning("Wrote output for agent=%s without linked field (LinkFieldConvFail)", result.agent_name)
+                except Exception as exc2:
+                    logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc2)
+            else:
+                logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc)
     return written
 
 
@@ -269,7 +280,14 @@ async def write_ceo_report(
     if task_record_id:
         record_fields["关联任务"] = [{"record_id": task_record_id}]
 
-    return await bitable_ops.create_record(app_token, report_table_id, record_fields)
+    try:
+        return await bitable_ops.create_record(app_token, report_table_id, record_fields)
+    except Exception as exc:
+        if "LinkFieldConvFail" in str(exc) and task_record_id and "关联任务" in record_fields:
+            record_fields.pop("关联任务")
+            logger.warning("Writing CEO report without linked field (LinkFieldConvFail)")
+            return await bitable_ops.create_record(app_token, report_table_id, record_fields)
+        raise
 
 
 async def update_performance(
