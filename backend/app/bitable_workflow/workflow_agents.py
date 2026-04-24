@@ -117,18 +117,68 @@ async def run_task_pipeline(task_fields: dict) -> tuple[list[AgentResult], Agent
     return all_upstream, ceo_result
 
 
+async def cleanup_prior_task_outputs(
+    app_token: str,
+    task_title: str,
+    output_table_id: Optional[str],
+    report_table_id: Optional[str],
+) -> None:
+    """Remove any 岗位分析 / 综合报告 rows already present for this task title.
+
+    Called before writing new outputs so that a task recovered from ANALYZING
+    (e.g., after a crash or manual re-run) does not leave duplicate records
+    with mismatched timestamps in the output tables.
+    """
+    safe_title = bitable_ops.escape_filter_value(task_title)
+    filter_expr = f'CurrentValue.[任务标题]="{safe_title}"'
+    report_filter = f'CurrentValue.[报告标题]="{safe_title}"'
+
+    if output_table_id:
+        try:
+            n = await bitable_ops.delete_records_by_filter(
+                app_token, output_table_id, filter_expr
+            )
+            if n:
+                logger.info("Cleaned up %d prior 岗位分析 rows for task [%s]", n, task_title)
+        except Exception as exc:
+            logger.warning("Cleanup 岗位分析 failed for task [%s]: %s", task_title, exc)
+
+    if report_table_id:
+        try:
+            n = await bitable_ops.delete_records_by_filter(
+                app_token, report_table_id, report_filter
+            )
+            if n:
+                logger.info("Cleaned up %d prior 综合报告 rows for task [%s]", n, task_title)
+        except Exception as exc:
+            logger.warning("Cleanup 综合报告 failed for task [%s]: %s", task_title, exc)
+
+
+def _format_sections(result: AgentResult, max_chars: int = 2000) -> str:
+    """Concatenate all sections into one markdown block, truncated to max_chars."""
+    if not result.sections:
+        return result.raw_output[:max_chars]
+    parts = [f"## {s.title}\n{s.content}" for s in result.sections]
+    text = "\n\n".join(parts)
+    if len(text) > max_chars:
+        text = text[: max_chars - 20] + "\n...[已截断]"
+    return text
+
+
 async def write_agent_outputs(
     app_token: str,
     output_table_id: str,
     task_title: str,
     results: list[AgentResult],
-) -> None:
-    """将各岗 AgentResult 写入「岗位分析」表。每个 Agent 写一条记录。"""
+) -> int:
+    """将各岗 AgentResult 写入「岗位分析」表。每个 Agent 写一条记录。
+
+    返回成功写入的记录数。部分失败仅记录日志，不中断整体写入。
+    """
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    written = 0
     for result in results:
-        # Use first non-error section as summary
-        summary_parts = [s.content[:600] for s in result.sections if "错误" not in s.title]
-        summary = summary_parts[0] if summary_parts else result.raw_output[:600]
+        summary = _format_sections(result, max_chars=2000)
         action_text = (
             "\n".join(f"- {a}" for a in result.action_items[:10])
             if result.action_items
@@ -141,13 +191,15 @@ async def write_agent_outputs(
                 {
                     "任务标题": task_title,
                     "岗位角色": result.agent_name,
-                    "分析摘要": summary[:2000],
+                    "分析摘要": summary,
                     "行动项": action_text[:1000],
                     "生成时间": now_str,
                 },
             )
+            written += 1
         except Exception as exc:
             logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc)
+    return written
 
 
 async def write_ceo_report(
@@ -156,8 +208,11 @@ async def write_ceo_report(
     task_title: str,
     ceo_result: AgentResult,
     participant_count: int,
-) -> Optional[str]:
-    """将 CEO 助理综合报告写入「综合报告」表，返回 record_id。"""
+) -> str:
+    """将 CEO 助理综合报告写入「综合报告」表，返回 record_id。
+
+    CEO 报告是核心交付物；写入失败直接抛出，由调用方决定是否失败整条任务。
+    """
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     def _find_section(keyword: str) -> str:
@@ -166,25 +221,20 @@ async def write_ceo_report(
                 return s.content[:1000]
         return ""
 
-    try:
-        record_id = await bitable_ops.create_record(
-            app_token,
-            report_table_id,
-            {
-                "报告标题": task_title,
-                "核心结论": _find_section("核心结论"),
-                "重要机会": _find_section("重要机会"),
-                "重要风险": _find_section("重要风险"),
-                "CEO决策事项": _find_section("CEO 需决策") or _find_section("决策"),
-                "管理摘要": _find_section("管理摘要") or _find_section("一段话"),
-                "参与岗位数": float(participant_count),
-                "生成时间": now_str,
-            },
-        )
-        return record_id
-    except Exception as exc:
-        logger.error("Failed to write CEO report for task=%s: %s", task_title, exc)
-        return None
+    return await bitable_ops.create_record(
+        app_token,
+        report_table_id,
+        {
+            "报告标题": task_title,
+            "核心结论": _find_section("核心结论"),
+            "重要机会": _find_section("重要机会"),
+            "重要风险": _find_section("重要风险"),
+            "CEO决策事项": _find_section("CEO 需决策") or _find_section("决策"),
+            "管理摘要": _find_section("管理摘要") or _find_section("一段话"),
+            "参与岗位数": float(participant_count),
+            "生成时间": now_str,
+        },
+    )
 
 
 async def update_performance(

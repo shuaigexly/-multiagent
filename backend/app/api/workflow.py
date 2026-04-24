@@ -1,5 +1,6 @@
 """工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析任务"""
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -105,6 +106,7 @@ async def workflow_seed(req: SeedRequest):
             "分析维度": req.dimension,
             "背景说明": req.background,
             "状态": Status.PENDING,
+            "创建时间": datetime.now().strftime("%Y-%m-%d %H:%M"),
         },
     )
     return {"record_id": record_id}

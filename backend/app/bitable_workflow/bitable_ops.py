@@ -20,7 +20,7 @@ async def list_records(
 ) -> list[dict]:
     """返回表中记录列表，自动翻页直到无更多数据或达到 max_records 上限。
 
-    filter_expr 示例：'CurrentValue.[状态]="待选题"'
+    filter_expr 示例：'CurrentValue.[状态]="待分析"'
     """
     return await with_retry(_list_records_impl, app_token, table_id, filter_expr, page_size, max_records)
 
@@ -124,3 +124,57 @@ async def _update_record_impl(
     data = r.json()
     if data.get("code") != 0:
         raise RuntimeError(f"更新记录失败: code={data.get('code')} msg={data.get('msg')}")
+
+
+async def delete_record(app_token: str, table_id: str, record_id: str) -> None:
+    """删除单条记录。用于清理重试场景下的历史残留输出。"""
+    await with_retry(_delete_record_impl, app_token, table_id, record_id)
+
+
+async def _delete_record_impl(app_token: str, table_id: str, record_id: str) -> None:
+    token = await _get_token()
+    base = _get_base_url()
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}"
+
+    async with httpx.AsyncClient(timeout=30) as http:
+        r = await http.delete(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    r.raise_for_status()
+    data = r.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"删除记录失败: code={data.get('code')} msg={data.get('msg')}")
+
+
+async def delete_records_by_filter(
+    app_token: str,
+    table_id: str,
+    filter_expr: str,
+    max_records: int = 500,
+) -> int:
+    """按筛选条件批量删除记录，返回实际删除数量。"""
+    records = await list_records(
+        app_token, table_id, filter_expr=filter_expr, max_records=max_records
+    )
+    deleted = 0
+    for r in records:
+        rid = r.get("record_id")
+        if not rid:
+            continue
+        try:
+            await delete_record(app_token, table_id, rid)
+            deleted += 1
+        except Exception as exc:
+            logger.error("Failed to delete record=%s: %s", rid, exc)
+    return deleted
+
+
+def escape_filter_value(value: str) -> str:
+    """Escape a string for use as a Feishu filter value.
+
+    Feishu formula filter values are wrapped in double-quotes; embedded double-quotes
+    would break the filter. Replace them with single-quotes as a best-effort escape
+    (Feishu does not document an explicit escape sequence).
+    """
+    return (value or "").replace('"', "'")
