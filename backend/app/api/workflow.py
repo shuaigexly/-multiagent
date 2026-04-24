@@ -35,6 +35,9 @@ class StartRequest(BaseModel):
         missing = required - self.table_ids.keys()
         if missing:
             raise ValueError(f"table_ids 缺少必需键: {missing}")
+        for key, val in self.table_ids.items():
+            if not isinstance(val, str) or not val.strip():
+                raise ValueError(f"table_ids['{key}'] 不能为空字符串")
         return self
 
 

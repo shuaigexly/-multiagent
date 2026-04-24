@@ -103,8 +103,11 @@ async def run_task_pipeline(task_fields: dict) -> tuple[list[AgentResult], Agent
     wave1_results: list[AgentResult] = list(await asyncio.gather(*wave1_coros))
     logger.info("Wave 1 complete: %d agents", len(wave1_results))
 
-    # Wave 2: finance_advisor uses data_analyst (index 0) as upstream
-    da_result = wave1_results[0]  # data_analyst_agent is first in _WAVE1_AGENTS
+    # Wave 2: finance_advisor uses data_analyst output as upstream.
+    # Look up by agent_id, not by list index, so reordering _WAVE1_AGENTS never silently
+    # passes the wrong result to finance_advisor.
+    wave1_by_id = {r.agent_id: r for r in wave1_results}
+    da_result = wave1_by_id.get("data_analyst") or wave1_results[0]
     fa_result = await _safe_analyze(finance_advisor_agent, task_description, upstream=[da_result])
     wave2_results = [fa_result]
     logger.info("Wave 2 complete: finance_advisor")
@@ -155,14 +158,27 @@ async def cleanup_prior_task_outputs(
 
 
 def _format_sections(result: AgentResult, max_chars: int = 2000) -> str:
-    """Concatenate all sections into one markdown block, truncated to max_chars."""
+    """Concatenate all sections into one markdown block, truncated to max_chars.
+
+    Builds incrementally and stops as soon as the limit is reached, avoiding
+    serialising the full output when only the first few sections fit.
+    """
     if not result.sections:
         return result.raw_output[:max_chars]
-    parts = [f"## {s.title}\n{s.content}" for s in result.sections]
-    text = "\n\n".join(parts)
-    if len(text) > max_chars:
-        text = text[: max_chars - 20] + "\n...[已截断]"
-    return text
+    parts: list[str] = []
+    total = 0
+    for s in result.sections:
+        chunk = f"## {s.title}\n{s.content or ''}"
+        if total + len(chunk) + 2 > max_chars:
+            remaining = max_chars - total - 20
+            if remaining > 0 and parts:
+                parts.append(chunk[:remaining] + "\n...[已截断]")
+            elif remaining > 0:
+                parts.append(chunk[:remaining] + "\n...[已截断]")
+            break
+        parts.append(chunk)
+        total += len(chunk) + 2  # +2 for "\n\n" separator
+    return "\n\n".join(parts)
 
 
 async def write_agent_outputs(
@@ -218,7 +234,7 @@ async def write_ceo_report(
     def _find_section(keyword: str) -> str:
         for s in ceo_result.sections:
             if keyword in s.title:
-                return s.content[:1000]
+                return (s.content or "")[:1000]
         return ""
 
     return await bitable_ops.create_record(
@@ -242,18 +258,30 @@ async def update_performance(
     performance_table_id: str,
     results: list[AgentResult],
 ) -> None:
-    """更新数字员工效能表的处理任务数（滚动累计）。"""
+    """更新数字员工效能表的处理任务数（滚动累计）。
+
+    批量拉取全表现有记录（性能表最多 7 行），避免每个 Agent 各发一次 list_records。
+    """
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    try:
+        all_rows = await bitable_ops.list_records(
+            app_token, performance_table_id, max_records=50
+        )
+    except Exception as exc:
+        logger.warning("Performance: failed to fetch existing rows: %s", exc)
+        all_rows = []
+
+    perf_by_name: dict[str, dict] = {
+        row.get("fields", {}).get("员工姓名", ""): row
+        for row in all_rows
+    }
+
     for result in results:
         try:
-            existing = await bitable_ops.list_records(
-                app_token,
-                performance_table_id,
-                filter_expr=f'CurrentValue.[员工姓名]="{result.agent_name}"',
-            )
+            existing = perf_by_name.get(result.agent_name)
             if existing:
-                rid = existing[0]["record_id"]
-                prev = float(existing[0].get("fields", {}).get("处理任务数", 0) or 0)
+                rid = existing["record_id"]
+                prev = float(existing.get("fields", {}).get("处理任务数", 0) or 0)
                 await bitable_ops.update_record(
                     app_token,
                     performance_table_id,

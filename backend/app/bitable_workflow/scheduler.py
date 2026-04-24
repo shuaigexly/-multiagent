@@ -49,7 +49,10 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
         filter_expr=f'CurrentValue.[状态]="{Status.ANALYZING}"',
     )
     for record in stuck:
-        rid = record.get("record_id", "?")
+        rid = record.get("record_id")
+        if not rid:
+            logger.warning("Stuck record missing record_id, skipping: %s", record)
+            continue
         try:
             await bitable_ops.update_record(
                 app_token, task_tid, rid, {"状态": Status.PENDING}
@@ -122,7 +125,10 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
                 await bitable_ops.update_record(
                     app_token, task_tid, rid, {"状态": Status.PENDING}
                 )
-            except Exception:
-                pass
+            except Exception as reset_exc:
+                logger.error(
+                    "Failed to reset task=%s back to PENDING: %s — task may remain stuck in ANALYZING",
+                    task_title, reset_exc,
+                )
 
     return processed
