@@ -252,9 +252,11 @@ def _get_feishu_api_base_url() -> str:
 
 def _parse_json_response(resp: httpx.Response, context: str) -> dict:
     try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"{context}: HTTP {resp.status_code}: {resp.text[:500]}") from exc
+    try:
         data = resp.json()
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"{context}: non-JSON response status={resp.status_code}") from exc
-    if resp.status_code >= 400:
-        raise RuntimeError(f"{context}: HTTP {resp.status_code}: {data}")
     return data

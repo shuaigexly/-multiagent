@@ -244,9 +244,13 @@ async def _batch_add_records_impl(
             timeout=30.0,
         )
         if not resp.success():
-            logger.warning("批量添加记录失败: %s", resp.msg)
-            continue
-        success_count += len(resp.data.records or [])
+            raise RuntimeError(f"批量添加记录失败: {resp.msg}")
+        created_count = len(resp.data.records or []) if resp.data else 0
+        if created_count != len(chunk):
+            raise RuntimeError(
+                f"批量添加记录数量不一致: expected={len(chunk)} actual={created_count}"
+            )
+        success_count += created_count
 
     return success_count
 

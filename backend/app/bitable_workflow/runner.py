@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 _running = False
 _stop_event: Optional[asyncio.Event] = None
-analyze_lock = asyncio.Lock()  # shared with api/workflow.py to prevent concurrent manual triggers
 
 
 async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:

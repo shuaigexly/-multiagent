@@ -23,6 +23,7 @@ class EventEmitter:
         self.task_id = task_id
         self.db = db
         self.redis = redis_client
+        self._db_lock = asyncio.Lock()
 
     async def emit(
         self,
@@ -32,20 +33,22 @@ class EventEmitter:
         payload: Optional[dict] = None,
     ) -> int:
         """Allocate sequence with CAS retry, persist event, commit, then publish."""
-        new_seq = await self._next_sequence()
+        event_payload = payload or {}
+        async with self._db_lock:
+            new_seq = await self._next_sequence()
 
-        event = TaskEvent(
-            task_id=self.task_id,
-            sequence=new_seq,
-            event_type=event_type,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            payload=payload or {},
-            created_at=datetime.now(timezone.utc),
-        )
-        self.db.add(event)
-        # Commit before Redis publish so consumers never see uncommitted events
-        await self.db.commit()
+            event = TaskEvent(
+                task_id=self.task_id,
+                sequence=new_seq,
+                event_type=event_type,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                payload=event_payload,
+                created_at=datetime.now(timezone.utc),
+            )
+            self.db.add(event)
+            # Commit before Redis publish so consumers never see uncommitted events
+            await self.db.commit()
 
         if self.redis:
             try:
@@ -56,7 +59,7 @@ class EventEmitter:
                         "event_type": event_type,
                         "agent_id": agent_id,
                         "agent_name": agent_name,
-                        "payload": payload or {},
+                        "payload": event_payload,
                     },
                     ensure_ascii=False,
                 )

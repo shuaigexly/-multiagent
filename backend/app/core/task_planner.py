@@ -136,20 +136,22 @@ async def _llm_plan(user_input: str, feishu_context: Optional[dict] = None) -> T
     )
     raw = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', raw, flags=re.DOTALL).strip()
     # 清理 markdown 代码块
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    fence_match = re.search(r"```(?:json)?\s*(.*?)```", raw, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        raw = fence_match.group(1).strip()
     data = json.loads(raw)
     # 校验 modules 是否合法
     valid_modules = {"data_analyst", "finance_advisor", "seo_advisor",
                      "content_manager", "product_manager", "operations_manager", "ceo_assistant"}
     modules = [m for m in data.get("selected_modules", []) if m in valid_modules]
+    task_type = data.get("task_type", "general")
+    if task_type not in TASK_TYPES:
+        task_type = "general"
     if not modules:
-        modules = TASK_TYPES.get(data.get("task_type", "general"), TASK_TYPES["general"])["modules"]
+        modules = TASK_TYPES[task_type]["modules"]
     return TaskPlan(
-        task_type=data.get("task_type", "general"),
-        task_type_label=data.get("task_type_label", "综合分析"),
+        task_type=task_type,
+        task_type_label=data.get("task_type_label") or TASK_TYPES[task_type]["label"],
         selected_modules=modules,
         reasoning=data.get("reasoning", ""),
     )

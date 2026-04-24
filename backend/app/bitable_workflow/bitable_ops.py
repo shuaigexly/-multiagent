@@ -36,6 +36,8 @@ async def _list_records_impl(
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
     all_items: list[dict] = []
     page_token: Optional[str] = None
+    if max_records <= 0:
+        return []
 
     # Reuse one client for the entire pagination loop — creating a new AsyncClient
     # per page incurs TCP handshake overhead for each request.
@@ -160,6 +162,7 @@ async def delete_records_by_filter(
         app_token, table_id, filter_expr=filter_expr, max_records=max_records
     )
     deleted = 0
+    delete_errors = []
     for r in records:
         rid = r.get("record_id")
         if not rid:
@@ -169,6 +172,9 @@ async def delete_records_by_filter(
             deleted += 1
         except Exception as exc:
             logger.error("Failed to delete record=%s: %s", rid, exc)
+            delete_errors.append(f"{rid}: {exc}")
+    if delete_errors:
+        raise RuntimeError("部分记录删除失败: " + "；".join(delete_errors[:3]))
     return deleted
 
 

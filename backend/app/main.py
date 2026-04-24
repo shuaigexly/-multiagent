@@ -114,7 +114,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8080").split(",")]
+
+def _load_allowed_origins() -> list[str]:
+    raw = os.getenv("ALLOWED_ORIGINS", "")
+    env = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
+    if not raw and env in {"prod", "production"}:
+        raise RuntimeError("ALLOWED_ORIGINS must be configured in production")
+    raw = raw or "http://localhost:5173,http://localhost:8080"
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if not origins:
+        raise RuntimeError("ALLOWED_ORIGINS cannot be empty")
+    return origins
+
+
+allowed_origins = _load_allowed_origins()
 
 app.add_middleware(
     CORSMiddleware,

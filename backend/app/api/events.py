@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import time
+from hmac import compare_digest
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from sqlalchemy import select
@@ -26,9 +27,12 @@ async def task_events(
 ):
     """SSE 流：推送任务执行进度事件（业务语言，非技术日志）"""
     expected = settings.api_key
+    env = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
+    if not expected and env in {"prod", "production"}:
+        raise HTTPException(503, "API key is not configured")
     if expected:
         token = x_api_key or api_key
-        if token != expected:
+        if not compare_digest(token, expected):
             raise HTTPException(401, "Invalid API key")
 
     async with AsyncSessionLocal() as db:

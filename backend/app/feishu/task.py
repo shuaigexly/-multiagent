@@ -106,6 +106,7 @@ async def batch_create_tasks(items: list[str]) -> list[dict]:
 async def _batch_create_tasks_impl(items: list[str]) -> list[dict]:
     """批量创建任务列表"""
     results = []
+    errors = []
     for item in items[:20]:   # 最多 20 个
         try:
             parsed = _parse_action_item(item)
@@ -122,4 +123,7 @@ async def _batch_create_tasks_impl(items: list[str]) -> list[dict]:
             results.append(result)
         except Exception as e:
             logger.warning(f"创建任务失败: {item} - {e}")
+            errors.append(f"{item}: {e}")
+    if errors:
+        raise RuntimeError("部分飞书任务创建失败: " + "；".join(errors[:3]))
     return results

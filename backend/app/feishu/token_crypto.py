@@ -1,5 +1,6 @@
 """飞书 OAuth token 的静态加密/解密。"""
 import logging
+import os
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -9,6 +10,11 @@ logger = logging.getLogger(__name__)
 _fernet_cache: Fernet | None | bool = False
 
 
+def _requires_token_encryption() -> bool:
+    env = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
+    return env in {"prod", "production"}
+
+
 def _get_fernet() -> Fernet | None:
     global _fernet_cache
     if _fernet_cache is not False:
@@ -16,12 +22,16 @@ def _get_fernet() -> Fernet | None:
 
     key = settings.token_encryption_key.strip()
     if not key:
+        if _requires_token_encryption():
+            raise RuntimeError("TOKEN_ENCRYPTION_KEY is required in production")
         _fernet_cache = None
         return None
     try:
         _fernet_cache = Fernet(key.encode())
         return _fernet_cache
-    except Exception:
+    except Exception as exc:
+        if _requires_token_encryption():
+            raise RuntimeError("TOKEN_ENCRYPTION_KEY is invalid") from exc
         logger.warning("TOKEN_ENCRYPTION_KEY 无效，已禁用 token 加密")
         _fernet_cache = None
         return None
@@ -41,7 +51,9 @@ def encrypt_token(plaintext: str) -> str:
         return plaintext
     try:
         return fernet.encrypt(plaintext.encode()).decode()
-    except Exception:
+    except Exception as exc:
+        if _requires_token_encryption():
+            raise RuntimeError("Token encryption failed") from exc
         logger.warning("Token 加密失败，已回退为原样存储")
         return plaintext
 
@@ -54,9 +66,13 @@ def decrypt_token(stored: str) -> str:
         return stored
     try:
         return fernet.decrypt(stored.encode()).decode()
-    except (InvalidToken, ValueError, TypeError):
+    except (InvalidToken, ValueError, TypeError) as exc:
+        if _requires_token_encryption():
+            raise RuntimeError("Token decryption failed") from exc
         logger.warning("Token 解密失败，已回退为原样使用")
         return stored
-    except Exception:
+    except Exception as exc:
+        if _requires_token_encryption():
+            raise RuntimeError("Token decryption failed") from exc
         logger.warning("Token 解密异常，已回退为原样使用")
         return stored

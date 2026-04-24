@@ -34,27 +34,36 @@ async def with_retry(
     last_exc: Exception = RuntimeError("no attempts made")
     refresh_attempted = False
 
-    for attempt in range(max_attempts):
+    attempt = 0
+    while attempt < max_attempts:
         try:
             return await func(*args, **kwargs)
         except Exception as e:
             last_exc = e
             if _is_token_expired(e) and not refresh_attempted:
                 refresh_attempted = True
+                logger.warning(
+                    "Feishu token expired; clearing token caches before retry",
+                    extra={"error": str(e)},
+                )
                 try:
-                    from app.feishu.user_token import refresh_user_token
+                    from app.feishu import aily
 
-                    logger.warning(
-                        "Feishu token expired; refreshing user token before retry",
-                        extra={"error": str(e)},
-                    )
-                    await refresh_user_token()
-                    continue
+                    aily._TOKEN_CACHE.clear()
+                except Exception as cache_exc:
+                    logger.warning("Failed to clear Feishu tenant token cache: %s", cache_exc)
+
+                try:
+                    from app.feishu.user_token import get_user_refresh_token, refresh_user_token
+
+                    if get_user_refresh_token():
+                        await refresh_user_token()
                 except Exception as refresh_exc:
                     logger.warning(
                         "Feishu token refresh failed; falling back to normal retry flow: %s",
                         refresh_exc,
                     )
+                continue
 
             if _is_client_error(e):
                 logger.warning(
@@ -63,12 +72,13 @@ async def with_retry(
                 )
                 raise
 
-            if attempt < max_attempts - 1:
-                delay = base_delay * (2 ** attempt)
+            attempt += 1
+            if attempt < max_attempts:
+                delay = base_delay * (2 ** (attempt - 1))
                 logger.warning(
-                    f"Feishu call failed (attempt {attempt+1}/{max_attempts}): {e}. "
+                    f"Feishu call failed (attempt {attempt}/{max_attempts}): {e}. "
                     f"Retrying in {delay}s",
-                    extra={"attempt": attempt + 1, "error": str(e)},
+                    extra={"attempt": attempt, "error": str(e)},
                 )
                 await asyncio.sleep(delay)
     raise last_exc

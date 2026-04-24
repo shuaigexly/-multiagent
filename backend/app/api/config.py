@@ -136,7 +136,10 @@ class FeishuTestRequest(BaseModel):
 
 
 async def _upsert_configs(db: AsyncSession, items: Iterable[ConfigItem]) -> dict[str, str | None]:
-    normalized_items = [(item.key, _normalize_value(item.value)) for item in items]
+    normalized_map = {item.key: _normalize_value(item.value) for item in items}
+    normalized_items = list(normalized_map.items())
+    if not normalized_items:
+        return {}
     keys = [key for key, _ in normalized_items]
     existing_rows = await db.execute(select(UserConfig).where(UserConfig.key.in_(keys)))
     existing = {row.key: row for row in existing_rows.scalars().all()}

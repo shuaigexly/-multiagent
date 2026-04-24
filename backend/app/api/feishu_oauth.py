@@ -17,6 +17,7 @@ from app.core.settings import (
     get_feishu_region,
     settings as _settings,
 )
+from app.core.auth import require_api_key
 from app.feishu.token_crypto import encrypt_token
 from app.feishu.user_token import (
     get_user_access_token,
@@ -78,13 +79,13 @@ def _consume_oauth_state(state: str) -> str:
     return expected_origin
 
 
-@router.get("/oauth/status")
+@router.get("/oauth/status", dependencies=[Depends(require_api_key)])
 async def get_oauth_status():
     """检查用户 OAuth 授权状态"""
     return {"authorized": bool(get_user_access_token())}
 
 
-@router.post("/oauth/refresh")
+@router.post("/oauth/refresh", dependencies=[Depends(require_api_key)])
 async def refresh_oauth_token():
     """使用服务端保存的 refresh_token 刷新用户 OAuth token"""
     try:
@@ -94,7 +95,7 @@ async def refresh_oauth_token():
         return {"ok": False, "message": str(exc)}
 
 
-@router.get("/oauth/url")
+@router.get("/oauth/url", dependencies=[Depends(require_api_key)])
 async def get_oauth_url(
     backend_origin: str = Query("http://localhost:8000"),
     frontend_origin: str = Query("http://localhost:8080"),
@@ -139,7 +140,11 @@ async def oauth_callback(
                 json={"app_id": app_id, "app_secret": app_secret},
             )
             r1.raise_for_status()
-            app_token = r1.json().get("app_access_token", "")
+            app_token_data = r1.json()
+            if app_token_data.get("code") not in (None, 0):
+                logger.error("OAuth: 获取 app_access_token 失败: %s", app_token_data)
+                return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(str(app_token_data.get('msg', '获取app_token失败')), safe='')}")
+            app_token = app_token_data.get("app_access_token", "")
             if not app_token:
                 logger.error("OAuth: 获取 app_access_token 失败")
                 return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote('获取app_token失败', safe='')}")

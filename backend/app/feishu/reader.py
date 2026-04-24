@@ -306,14 +306,24 @@ async def list_tasks(page_size: int = 50) -> list[dict]:
 
 async def read_doc_content(document_id: str) -> str:
     try:
+        import lark_oapi as lark
         from app.feishu.client import get_feishu_client
+        from app.feishu.user_token import get_user_access_token
 
         client = get_feishu_client()
         req = RawContentDocumentRequest.builder().document_id(document_id).build()
-        resp = await asyncio.wait_for(
-            asyncio.to_thread(client.docx.v1.document.raw_content, req),
-            timeout=30.0,
-        )
+        user_token = get_user_access_token()
+        if user_token:
+            option = lark.RequestOption.builder().user_access_token(user_token).build()
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(client.docx.v1.document.raw_content, req, option),
+                timeout=30.0,
+            )
+        else:
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(client.docx.v1.document.raw_content, req),
+                timeout=30.0,
+            )
         if not resp.success():
             logger.error(f"读取文档内容失败: {resp.msg} (code={resp.code})")
             return ""

@@ -1,5 +1,6 @@
 """飞书用户 Token 内存缓存（用于需要用户级授权的 API）"""
 
+import asyncio
 import logging
 
 import httpx
@@ -18,6 +19,14 @@ logger = logging.getLogger(__name__)
 _user_access_token: str | None = None
 _user_refresh_token: str | None = None
 _user_open_id: str | None = None
+_refresh_lock: asyncio.Lock | None = None
+
+
+def _get_refresh_lock() -> asyncio.Lock:
+    global _refresh_lock
+    if _refresh_lock is None:
+        _refresh_lock = asyncio.Lock()
+    return _refresh_lock
 
 
 def get_user_access_token() -> str | None:
@@ -52,6 +61,11 @@ def _feishu_base() -> str:
 
 
 async def refresh_user_token() -> None:
+    async with _get_refresh_lock():
+        await _refresh_user_token_impl()
+
+
+async def _refresh_user_token_impl() -> None:
     refresh_token = get_user_refresh_token()
     if not refresh_token:
         raise RuntimeError("未找到飞书用户 refresh_token")

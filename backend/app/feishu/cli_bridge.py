@@ -72,7 +72,12 @@ async def _run_cli(args: list[str]) -> dict:
         stderr=asyncio.subprocess.PIPE,
         env=env,
     )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+    except asyncio.TimeoutError as exc:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError("lark-cli timed out after 120s") from exc
     if proc.returncode != 0:
         raise RuntimeError(f"lark-cli failed (rc={proc.returncode}): {stderr.decode()[:500]}")
     try:

@@ -16,9 +16,16 @@ from app.core.settings import get_feishu_app_id, get_feishu_app_secret
 
 logger = logging.getLogger(__name__)
 
-_lock = asyncio.Lock()
+_lock: asyncio.Lock | None = None
 _proc: Optional[asyncio.subprocess.Process] = None
 _req_id = 0
+
+
+def _get_lock() -> asyncio.Lock:
+    global _lock
+    if _lock is None:
+        _lock = asyncio.Lock()
+    return _lock
 
 
 def is_mcp_available() -> bool:
@@ -90,7 +97,7 @@ async def call_tool(tool_name: str, params: dict[str, Any]) -> Any:
     global _req_id, _proc
     if not is_mcp_available():
         raise RuntimeError("npx is not available; install Node.js to use lark-mcp")
-    async with _lock:
+    async with _get_lock():
         proc = await _get_proc()
         _req_id += 1
         req_id = _req_id
@@ -112,11 +119,12 @@ async def call_tool(tool_name: str, params: dict[str, Any]) -> Any:
         raise RuntimeError(f"lark-mcp tool error: {resp['error']}")
     result = resp.get("result", {})
     content = result.get("content", [])
-    if content and isinstance(content, list) and content[0].get("type") == "text":
+    first_content = content[0] if content and isinstance(content, list) else None
+    if isinstance(first_content, dict) and first_content.get("type") == "text":
         try:
-            return json.loads(content[0]["text"])
+            return json.loads(first_content["text"])
         except json.JSONDecodeError:
-            return content[0]["text"]
+            return first_content["text"]
     return result
 
 
@@ -125,7 +133,7 @@ async def list_tools() -> list[dict]:
     global _req_id, _proc
     if not is_mcp_available():
         return []
-    async with _lock:
+    async with _get_lock():
         proc = await _get_proc()
         _req_id += 1
         req_id = _req_id
@@ -145,8 +153,12 @@ async def shutdown() -> None:
     """Gracefully terminate the MCP subprocess."""
     global _proc
     if _proc and _proc.returncode is None:
-        if _proc.stdin is not None:
-            _proc.stdin.write_eof()
-        await asyncio.wait_for(_proc.wait(), timeout=5)
+        try:
+            if _proc.stdin is not None:
+                _proc.stdin.write_eof()
+            await asyncio.wait_for(_proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            _proc.kill()
+            await _proc.wait()
         _proc = None
         logger.info("lark-mcp subprocess stopped")

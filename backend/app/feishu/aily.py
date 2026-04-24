@@ -31,7 +31,14 @@ from app.feishu.client import get_feishu_base_url, get_feishu_region
 logger = logging.getLogger(__name__)
 
 _TOKEN_CACHE: dict = {}
-_TOKEN_LOCK = asyncio.Lock()  # prevents thundering-herd double-fetch on expiry
+_TOKEN_LOCK: asyncio.Lock | None = None
+
+
+def _get_token_lock() -> asyncio.Lock:
+    global _TOKEN_LOCK
+    if _TOKEN_LOCK is None:
+        _TOKEN_LOCK = asyncio.Lock()
+    return _TOKEN_LOCK
 
 
 def get_feishu_open_base_url() -> str:
@@ -62,7 +69,7 @@ async def _get_tenant_access_token() -> str:
     if _TOKEN_CACHE.get("token") and now < _TOKEN_CACHE.get("expire", 0) - 60:
         return _TOKEN_CACHE["token"]
 
-    async with _TOKEN_LOCK:
+    async with _get_token_lock():
         # Double-check under lock: another coroutine may have refreshed while we waited
         if _TOKEN_CACHE.get("token") and now < _TOKEN_CACHE.get("expire", 0) - 60:
             return _TOKEN_CACHE["token"]
@@ -164,41 +171,41 @@ async def call_aily(
     deadline = time.monotonic() + timeout
     poll_interval = 2.0
 
-    while time.monotonic() < deadline:
-        await asyncio.sleep(poll_interval)
+    async with httpx.AsyncClient(timeout=15) as http:
+        while time.monotonic() < deadline:
+            await asyncio.sleep(poll_interval)
 
-        # 长任务可能 token 已过期，每次轮询都刷新
-        token = await _get_tenant_access_token()
-        headers = {"Authorization": f"Bearer {token}"}
+            # 长任务可能 token 已过期，每次轮询都刷新
+            token = await _get_tenant_access_token()
+            headers = {"Authorization": f"Bearer {token}"}
 
-        async with httpx.AsyncClient(timeout=15) as http:
             r = await http.get(
                 f"{base}/sessions/{session_id}/runs/{run_id}",
                 headers=headers,
             )
-        r.raise_for_status()
-        d = r.json()
-        if d.get("code") != 0:
-            raise RuntimeError(f"Aily 查询状态失败: code={d.get('code')} msg={d.get('msg')}")
+            r.raise_for_status()
+            d = r.json()
+            if d.get("code") != 0:
+                raise RuntimeError(f"Aily 查询状态失败: code={d.get('code')} msg={d.get('msg')}")
 
-        try:
-            run_status = d["data"]["run"]["status"]
-        except (KeyError, TypeError) as exc:
-            raise RuntimeError(f"Aily 轮询响应结构异常: {d}") from exc
-        logger.debug("Aily run %s status: %s", run_id, run_status)
+            try:
+                run_status = d["data"]["run"]["status"]
+            except (KeyError, TypeError) as exc:
+                raise RuntimeError(f"Aily 轮询响应结构异常: {d}") from exc
+            logger.debug("Aily run %s status: %s", run_id, run_status)
 
-        if run_status == "COMPLETED":
-            for msg in d["data"]["run"].get("output", []):
-                for item in msg.get("content", []):
-                    if item.get("type") == "text" and item.get("text"):
-                        return item["text"]
-            return "[Aily 返回空回复]"
+            if run_status == "COMPLETED":
+                for msg in d["data"]["run"].get("output", []):
+                    for item in msg.get("content", []):
+                        if item.get("type") == "text" and item.get("text"):
+                            return item["text"]
+                raise RuntimeError("Aily returned empty content")
 
-        if run_status in ("FAILED", "CANCELLED"):
-            raise RuntimeError(f"Aily 运行失败，状态={run_status}")
+            if run_status in ("FAILED", "CANCELLED"):
+                raise RuntimeError(f"Aily 运行失败，状态={run_status}")
 
-        # 指数退避，最长 10s 间隔
-        poll_interval = min(poll_interval * 1.5, 10.0)
+            # 指数退避，最长 10s 间隔
+            poll_interval = min(poll_interval * 1.5, 10.0)
 
     raise RuntimeError(
         f"Aily 响应超时（{timeout}s），会话={session_id} 运行={run_id}"

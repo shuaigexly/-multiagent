@@ -65,9 +65,13 @@ def _error_result(agent_id: str, agent_name: str, exc: Exception) -> AgentResult
         agent_name=agent_name,
         sections=[ResultSection(title="错误", content=f"分析失败：{exc}")],
         action_items=[],
-        raw_output=str(exc),
+        raw_output=f"FAILED: {exc}",
         chart_data=[],
     )
+
+
+def _is_failed_result(result: AgentResult) -> bool:
+    return (result.raw_output or "").startswith("FAILED:")
 
 
 async def _safe_analyze(
@@ -114,7 +118,12 @@ async def run_task_pipeline(task_fields: dict) -> tuple[list[AgentResult], Agent
 
     # Wave 3: ceo_assistant synthesizes all upstream conclusions
     all_upstream = wave1_results + wave2_results
+    if all(_is_failed_result(result) for result in all_upstream):
+        raise RuntimeError("所有上游 Agent 均执行失败，任务无可用结果")
+
     ceo_result = await _safe_analyze(_WAVE3_AGENT, task_description, upstream=all_upstream)
+    if _is_failed_result(ceo_result):
+        raise RuntimeError(f"CEO 助理汇总失败: {ceo_result.raw_output}")
     logger.info("Wave 3 complete: ceo_assistant")
 
     return all_upstream, ceo_result
@@ -136,6 +145,8 @@ async def cleanup_prior_task_outputs(
     filter_expr = f'CurrentValue.[任务标题]="{safe_title}"'
     report_filter = f'CurrentValue.[报告标题]="{safe_title}"'
 
+    cleanup_errors = []
+
     if output_table_id:
         try:
             n = await bitable_ops.delete_records_by_filter(
@@ -145,6 +156,7 @@ async def cleanup_prior_task_outputs(
                 logger.info("Cleaned up %d prior 岗位分析 rows for task [%s]", n, task_title)
         except Exception as exc:
             logger.warning("Cleanup 岗位分析 failed for task [%s]: %s", task_title, exc)
+            cleanup_errors.append(f"岗位分析: {exc}")
 
     if report_table_id:
         try:
@@ -155,6 +167,10 @@ async def cleanup_prior_task_outputs(
                 logger.info("Cleaned up %d prior 综合报告 rows for task [%s]", n, task_title)
         except Exception as exc:
             logger.warning("Cleanup 综合报告 failed for task [%s]: %s", task_title, exc)
+            cleanup_errors.append(f"综合报告: {exc}")
+
+    if cleanup_errors:
+        raise RuntimeError("清理历史输出失败: " + "；".join(cleanup_errors))
 
 
 def _format_sections(result: AgentResult, max_chars: int = 2000) -> str:
@@ -189,7 +205,7 @@ async def write_agent_outputs(
 ) -> int:
     """将各岗 AgentResult 写入「岗位分析」表。每个 Agent 写一条记录。
 
-    返回成功写入的记录数。部分失败仅记录日志，不中断整体写入。
+    返回成功写入的记录数。调用方必须校验是否等于结果数量。
     """
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     written = 0

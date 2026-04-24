@@ -37,7 +37,7 @@ def _get_bot_settings() -> dict[str, str]:
 
 def _verify_token(body: dict[str, Any], expected_token: str) -> bool:
     if not expected_token:
-        return True
+        return False
     header = body.get("header") or {}
     candidates = (body.get("token"), header.get("token"))
     return any(
@@ -48,7 +48,7 @@ def _verify_token(body: dict[str, Any], expected_token: str) -> bool:
 
 def _verify_signature(request: Request, raw_body: bytes, encrypt_key: str) -> bool:
     if not encrypt_key:
-        return True
+        return False
     timestamp = request.headers.get("X-Lark-Request-Timestamp")
     nonce = request.headers.get("X-Lark-Request-Nonce")
     signature = request.headers.get("X-Lark-Signature")
@@ -76,6 +76,14 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
     要求在 3 秒内返回 200，实际任务执行放到 BackgroundTasks。
     """
     cfg = _get_bot_settings()
+    allow_insecure = os.getenv("FEISHU_BOT_ALLOW_INSECURE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if not allow_insecure and not cfg["verification_token"] and not cfg["encrypt_key"]:
+        logger.warning("Bot event: verification_token/encrypt_key 未配置，已拒绝")
+        return JSONResponse({"ok": False}, status_code=401)
     try:
         raw_body = await request.body()
         raw_payload = json.loads(raw_body.decode("utf-8"))
@@ -83,9 +91,6 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
     except Exception as exc:
         logger.warning("Bot event: 请求体解析失败: %s", exc)
         return JSONResponse({"ok": False}, status_code=400)
-
-    if raw_payload.get("type") == "url_verification":
-        return JSONResponse({"challenge": raw_payload.get("challenge", "")})
 
     if cfg["encrypt_key"] and not is_encrypted:
         logger.warning("Bot event: 已配置 Encrypt Key，但事件未加密，已拒绝")
@@ -104,6 +109,9 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
     if cfg["verification_token"] and not _verify_token(body, cfg["verification_token"]):
         logger.warning("Bot event: verification_token 不匹配，已忽略")
         return JSONResponse({"ok": False}, status_code=401)
+
+    if body.get("type") == "url_verification":
+        return JSONResponse({"challenge": body.get("challenge", "")})
 
     header = body.get("header") or {}
     if header.get("event_type") != "im.message.receive_v1":

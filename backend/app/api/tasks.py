@@ -33,6 +33,14 @@ logger = logging.getLogger(__name__)
 _RATE_LIMIT_MAX = int(os.getenv("TASK_RATE_LIMIT_MAX", "10"))
 _RATE_LIMIT_WINDOW = int(os.getenv("TASK_RATE_LIMIT_WINDOW", "60"))
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
+_claim_lock: asyncio.Lock | None = None
+
+
+def _get_claim_lock() -> asyncio.Lock:
+    global _claim_lock
+    if _claim_lock is None:
+        _claim_lock = asyncio.Lock()
+    return _claim_lock
 
 
 def _check_rate_limit(client_ip: str) -> None:
@@ -85,14 +93,17 @@ async def create_task(
         if ext not in ALLOWED_EXT:
             raise HTTPException(422, f"不支持的文件类型，仅接受: {', '.join(sorted(ALLOWED_EXT))}")
         MAX_SIZE = 5 * 1024 * 1024  # 5 MB
-        content = await file.read()
+        chunks = bytearray()
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            chunks.extend(chunk)
+            if len(chunks) > MAX_SIZE:
+                break
+        content = bytes(chunks)
         if len(content) > MAX_SIZE:
             raise HTTPException(413, "文件大小超过 5 MB 限制")
-        os.makedirs(settings.upload_dir, exist_ok=True)
-        safe_name = f"{task_id}{ext}"  # never use client filename in path
-        input_file_path = os.path.join(settings.upload_dir, safe_name)
-        async with aiofiles.open(input_file_path, "wb") as f:
-            await f.write(content)
         for _enc in ("utf-8", "gbk", "gb18030", "latin-1"):
             try:
                 file_content = content.decode(_enc)
@@ -101,6 +112,11 @@ async def create_task(
                 continue
         else:
             raise HTTPException(422, "文件编码无法识别，请另存为 UTF-8 后重新上传")
+        os.makedirs(settings.upload_dir, exist_ok=True)
+        safe_name = f"{task_id}{ext}"  # never use client filename in path
+        input_file_path = os.path.join(settings.upload_dir, safe_name)
+        async with aiofiles.open(input_file_path, "w", encoding="utf-8") as f:
+            await f.write(file_content)
 
     # 拼接用于规划的文本
     planning_text = input_text or ""
@@ -299,34 +315,42 @@ async def _execute_task(
             if task.status == "cancelled":
                 return
 
-            MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_TASKS", "3"))
-            running_count = await db.scalar(
-                select(func.count()).select_from(Task).where(Task.status == "running")
-            )
-            if (running_count or 0) >= MAX_CONCURRENT:
-                error_message = f"当前运行中的任务已达上限（{MAX_CONCURRENT}），请稍后重试"
-                logger.error(
-                    "Task failed",
-                    extra={"task_id": task_id, "error": error_message},
+            claim_error_message = None
+            async with _get_claim_lock():
+                MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_TASKS", "3"))
+                running_count = await db.scalar(
+                    select(func.count()).select_from(Task).where(Task.status == "running")
                 )
-                if await _update_task_unless_cancelled(
-                    db,
-                    task_id,
-                    status="failed",
-                    error_message=error_message,
-                ):
-                    emitter = EventEmitter(task_id=task_id, db=db, redis_client=redis_client)
-                    await emitter.emit_task_error(error_message)
+                if (running_count or 0) >= MAX_CONCURRENT:
+                    claim_error_message = f"当前运行中的任务已达上限（{MAX_CONCURRENT}），请稍后重试"
+                    logger.error(
+                        "Task failed",
+                        extra={"task_id": task_id, "error": claim_error_message},
+                    )
+                    fail_result = await db.execute(
+                        update(Task)
+                        .where(Task.id == task_id, Task.status != "cancelled")
+                        .values(status="failed", error_message=claim_error_message)
+                    )
+                    await db.commit()
+                    if fail_result.rowcount == 0:
+                        return
+                else:
+                    run_result = await db.execute(
+                        update(Task)
+                        .where(Task.id == task_id, Task.status == "pending")
+                        .values(status="running")
+                    )
+                    await db.commit()
+                    if run_result.rowcount == 0:
+                        return
+
+            if claim_error_message:
+                emitter = EventEmitter(task_id=task_id, db=db, redis_client=redis_client)
+                await emitter.emit_task_error(claim_error_message)
                 return
 
-            # 标记运行中
-            run_result = await db.execute(
-                update(Task)
-                .where(Task.id == task_id, Task.status.in_(["pending", "running"]))
-                .values(status="running")
-            )
-            await db.commit()
-            if run_result.rowcount == 0 or await _is_task_cancelled(db, task_id):
+            if await _is_task_cancelled(db, task_id):
                 return
 
             await db.execute(delete(TaskResult).where(TaskResult.task_id == task_id))
@@ -347,15 +371,9 @@ async def _execute_task(
             data_summary = None
             input_file_path = task.input_file
             if input_file_path and os.path.exists(input_file_path):
-                try:
-                    async with aiofiles.open(input_file_path, "r", encoding="utf-8", errors="replace") as f:
-                        file_content = await f.read()
-                    data_summary = parse_content(file_content, os.path.basename(input_file_path))
-                finally:
-                    try:
-                        os.unlink(input_file_path)
-                    except OSError:
-                        pass
+                async with aiofiles.open(input_file_path, "r", encoding="utf-8") as f:
+                    file_content = await f.read()
+                data_summary = parse_content(file_content, os.path.basename(input_file_path))
 
             # 若无上传文件，则尝试从飞书上下文中读取真实文档内容
             if not data_summary and task.feishu_context:
@@ -433,7 +451,15 @@ async def _execute_task(
                 result_summary=summary,
             ):
                 return
-            await emitter.emit_task_done(summary)
+            try:
+                await emitter.emit_task_done(summary)
+            except Exception as emit_exc:
+                logger.warning("task.done event emission failed: %s", emit_exc)
+            if input_file_path:
+                try:
+                    os.unlink(input_file_path)
+                except OSError as cleanup_exc:
+                    logger.warning("uploaded file cleanup failed for task=%s: %s", task_id, cleanup_exc)
 
         except Exception as e:
             logger.error(

@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def _assess_data_availability(
+    task_description: str,
     data_summary: Optional[DataSummary],
     feishu_context: Optional[dict],
 ) -> tuple[bool, str]:
@@ -23,6 +24,9 @@ def _assess_data_availability(
     Returns (can_proceed, message).
     can_proceed=False means no analyzable data exists.
     """
+    if task_description and task_description.strip():
+        return True, ""
+
     # Check uploaded file data
     if data_summary is not None:
         return True, ""
@@ -118,7 +122,11 @@ async def orchestrate(
     if not selected_modules:
         raise ValueError("未选择任何 Agent 模块，请至少选择一个模块后再执行。")
 
-    can_proceed, no_data_message = _assess_data_availability(data_summary, feishu_context)
+    can_proceed, no_data_message = _assess_data_availability(
+        task_description,
+        data_summary,
+        feishu_context,
+    )
     if not can_proceed:
         # Return a single informational result instead of running agents
         no_data_result = AgentResult(
@@ -164,10 +172,7 @@ async def orchestrate(
             ]
 
         if not ready:
-            logger.warning(
-                f"Dependency deadlock detected, running remaining in parallel: {remaining}"
-            )
-            ready = list(remaining)
+            raise RuntimeError(f"Dependency deadlock detected: {remaining}")
 
         wave_tasks = [
             run_agent_safe(
@@ -187,7 +192,9 @@ async def orchestrate(
             if isinstance(res, AgentResult):
                 wave_results.append(res)
                 continue
-            if isinstance(res, Exception):
+            if isinstance(res, asyncio.CancelledError):
+                raise res
+            if isinstance(res, BaseException):
                 agent = AGENT_REGISTRY.get(aid)
                 agent_name = agent.agent_name if agent else aid
                 logger.error(f"Agent task failed unexpectedly: {res}")
@@ -212,7 +219,7 @@ async def orchestrate(
                 logger.warning(f"Agent {aid} returned None (not found in registry), skipping")
                 wave_results.append(AgentResult(
                     agent_id=aid,
-                    agent_name=aid,
+                    agent_name=agent_name,
                     sections=[ResultSection(
                         title="执行状态",
                         content=f"[{aid}] 模块未注册，已跳过。"
@@ -226,5 +233,7 @@ async def orchestrate(
 
     if not all_results:
         raise RuntimeError("所有 Agent 模块均执行失败，任务无结果")
+    if all((result.raw_output or "").startswith("FAILED:") for result in all_results):
+        raise RuntimeError("所有 Agent 模块均执行失败，任务无可用结果")
 
     return all_results

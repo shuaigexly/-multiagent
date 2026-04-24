@@ -230,6 +230,8 @@ class BaseAgent(ABC):
     def _parse_output(self, raw: str) -> AgentResult:
         """将 LLM 输出解析成结构化结果。子类可覆盖。"""
         raw = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', raw, flags=re.DOTALL).strip()
+        if not raw:
+            raise ValueError(f"{self.agent_id} returned empty output")
 
         chart_data: list[dict] = []
         chart_pattern = re.compile(r"```chart_data\s*\n([\s\S]*?)\n```", re.MULTILINE)
@@ -240,8 +242,8 @@ class BaseAgent(ABC):
                 if isinstance(parsed, list):
                     chart_data = [item for item in parsed if isinstance(item, dict)]
                     raw = chart_pattern.sub("", raw).strip()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[%s] chart_data parse failed: %s", self.agent_id, exc)
 
         sections = []
         action_items = []

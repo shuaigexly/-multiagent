@@ -81,15 +81,17 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
                 app_token, task_tid, rid, {"状态": Status.ANALYZING}
             )
 
-            # 清理此任务可能遗留的历史输出（重试或崩溃恢复场景）
-            await cleanup_prior_task_outputs(app_token, task_title, output_tid, report_tid)
-
             # 执行七岗 DAG 分析流水线（Wave1→Wave2→Wave3）
             all_results, ceo_result = await run_task_pipeline(fields)
 
-            # 写入各岗分析输出（可选表，部分失败不阻断主流程）
+            # 清理此任务可能遗留的历史输出（重试或崩溃恢复场景）
+            await cleanup_prior_task_outputs(app_token, task_title, output_tid, report_tid)
+
+            # 写入各岗分析输出（可选表；写入不完整会使整条任务重试）
             if output_tid:
-                await write_agent_outputs(app_token, output_tid, task_title, all_results)
+                output_written = await write_agent_outputs(app_token, output_tid, task_title, all_results)
+                if output_written != len(all_results):
+                    raise RuntimeError(f"岗位分析写入不完整: {output_written}/{len(all_results)}")
 
             # 写入 CEO 综合报告（核心交付物；失败直接抛出使整条任务回到待分析）
             await write_ceo_report(

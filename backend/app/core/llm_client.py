@@ -83,7 +83,10 @@ async def _call_openai_compatible(
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            return (resp.choices[0].message.content or "").strip()
+            content = (resp.choices[0].message.content or "").strip()
+            if not content:
+                raise RuntimeError("LLM returned empty content")
+            return content
         except Exception as e:
             last_err = e
             if attempt < 2:

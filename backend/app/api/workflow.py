@@ -3,16 +3,21 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.bitable_workflow import bitable_ops, runner
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
+from app.core.auth import require_api_key
 
 _VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
 _VALID_STATUSES: set[str] = set(ALL_STATUSES)
 
-router = APIRouter(prefix="/api/v1/workflow", tags=["workflow"])
+router = APIRouter(
+    prefix="/api/v1/workflow",
+    tags=["workflow"],
+    dependencies=[Depends(require_api_key)],
+)
 logger = logging.getLogger(__name__)
 
 # 运行时状态（单进程内有效）
