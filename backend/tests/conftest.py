@@ -1,5 +1,28 @@
 """共享测试夹具（Fixtures）"""
+import sys
+from unittest.mock import MagicMock
 import pytest
+
+# lark_oapi SDK 在单元测试环境不安装，预先注入 mock 避免 ImportError。
+# 生产环境通过 requirements.txt 安装真实包。
+for _mod in [
+    "lark_oapi",
+    "lark_oapi.api",
+    "lark_oapi.api.im",
+    "lark_oapi.api.im.v1",
+    "lark_oapi.api.bitable",
+    "lark_oapi.api.bitable.v1",
+    "lark_oapi.api.drive",
+    "lark_oapi.api.drive.v1",
+    "lark_oapi.api.task",
+    "lark_oapi.api.task.v2",
+    "lark_oapi.api.calendar",
+    "lark_oapi.api.calendar.v4",
+    "lark_oapi.api.auth",
+    "lark_oapi.api.auth.v3",
+]:
+    sys.modules.setdefault(_mod, MagicMock())
+
 from app.agents.base_agent import AgentResult, ResultSection
 
 

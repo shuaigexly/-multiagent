@@ -25,12 +25,13 @@ class TestIsFailedResult:
         )
         assert _is_failed_result(result) is False
 
-    def test_none_raw_output(self):
+    def test_failed_prefix_case(self):
+        # raw_output 是 str 类型（非 Optional），空字符串是正常情况
         result = AgentResult(
             agent_id="x", agent_name="X",
-            sections=[], action_items=[], raw_output=None
+            sections=[], action_items=[], raw_output="FAILED: timeout"
         )
-        assert _is_failed_result(result) is False
+        assert _is_failed_result(result) is True
 
 
 class TestBuildTaskDescription:
@@ -99,7 +100,8 @@ class TestWriteAgentOutputs:
                 "app_token", "tbl_out", "测试任务", [ok_result], task_record_id="rec_task123"
             )
         assert count == 1
-        call_fields = mock_create.call_args[0][3]
+        # create_record(app_token, table_id, fields) → positional index 2 is fields
+        call_fields = mock_create.call_args[0][2]
         assert "关联任务" in call_fields
         assert call_fields["关联任务"] == [{"record_id": "rec_task123"}]
 
@@ -112,7 +114,7 @@ class TestWriteAgentOutputs:
                 "app_token", "tbl_out", "测试任务", [ok_result]
             )
         assert count == 1
-        call_fields = mock_create.call_args[0][3]
+        call_fields = mock_create.call_args[0][2]
         assert "关联任务" not in call_fields
 
     @pytest.mark.asyncio
@@ -145,7 +147,7 @@ class TestWriteCeoReport:
                 participant_count=7, task_record_id="rec_task_abc"
             )
         assert rid == "rec_report"
-        call_fields = mock_create.call_args[0][3]
+        call_fields = mock_create.call_args[0][2]
         assert "关联任务" in call_fields
         assert call_fields["关联任务"] == [{"record_id": "rec_task_abc"}]
 
@@ -157,7 +159,7 @@ class TestWriteCeoReport:
             await write_ceo_report(
                 "app_token", "tbl_r", "任务", ceo_result, participant_count=7
             )
-        fields = mock_create.call_args[0][3]
+        fields = mock_create.call_args[0][2]
         assert "整体经营状况稳健" in fields["核心结论"]
         assert "短视频赛道" in fields["重要机会"]
         assert "竞争对手" in fields["重要风险"]
