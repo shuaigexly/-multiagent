@@ -37,33 +37,35 @@ async def _list_records_impl(
     all_items: list[dict] = []
     page_token: Optional[str] = None
 
-    while True:
-        token = await _get_token()
-        params: dict = {"page_size": min(page_size, max_records - len(all_items))}
-        if filter_expr:
-            params["filter"] = filter_expr
-        if page_token:
-            params["page_token"] = page_token
+    # Reuse one client for the entire pagination loop — creating a new AsyncClient
+    # per page incurs TCP handshake overhead for each request.
+    async with httpx.AsyncClient(timeout=30) as http:
+        while True:
+            token = await _get_token()
+            params: dict = {"page_size": min(page_size, max_records - len(all_items))}
+            if filter_expr:
+                params["filter"] = filter_expr
+            if page_token:
+                params["page_token"] = page_token
 
-        async with httpx.AsyncClient(timeout=30) as http:
             r = await http.get(
                 url,
                 headers={"Authorization": f"Bearer {token}"},
                 params=params,
             )
-        r.raise_for_status()
-        data = r.json()
-        if data.get("code") != 0:
-            raise RuntimeError(f"列出记录失败: code={data.get('code')} msg={data.get('msg')}")
+            r.raise_for_status()
+            data = r.json()
+            if data.get("code") != 0:
+                raise RuntimeError(f"列出记录失败: code={data.get('code')} msg={data.get('msg')}")
 
-        page_data = data.get("data", {})
-        all_items.extend(page_data.get("items") or [])
+            page_data = data.get("data", {})
+            all_items.extend(page_data.get("items") or [])
 
-        if not page_data.get("has_more") or len(all_items) >= max_records:
-            break
-        page_token = page_data.get("page_token")
-        if not page_token:
-            break
+            if not page_data.get("has_more") or len(all_items) >= max_records:
+                break
+            page_token = page_data.get("page_token")
+            if not page_token:
+                break
 
     return all_items[:max_records]
 

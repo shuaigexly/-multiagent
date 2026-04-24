@@ -72,7 +72,7 @@ async def run_agent_safe(
                 feishu_context=feishu_context,
                 user_instructions=user_instructions,
             )
-            summary = result.sections[0].content[:100] if result.sections else "完成"
+            summary = (result.sections[0].content or "")[:100] if result.sections else "完成"
             await emitter.emit_module_completed(agent.agent_id, agent.agent_name, summary)
             return result
         except Exception as e:

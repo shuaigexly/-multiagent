@@ -118,8 +118,8 @@ class BaseAgent(ABC):
                         "</quality_feedback>"
                     )
                     raw = await self._call_llm(feedback_prompt)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[%s] reflection refinement call failed, keeping original output: %s", self.agent_id, e)
         return self._parse_output(raw)
 
     def _build_prompt(
@@ -148,7 +148,7 @@ class BaseAgent(ABC):
             parts = []
             for r in upstream_results:
                 section_text = "\n".join(
-                    f"  [{s.title}]\n  {s.content[:1500]}" for s in r.sections
+                    f"  [{s.title}]\n  {(s.content or '')[:1500]}" for s in r.sections
                 )
                 action_text = ""
                 if r.action_items:

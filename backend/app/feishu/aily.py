@@ -25,12 +25,13 @@ from typing import Optional
 
 import httpx
 
-from app.core.settings import settings
+from app.core.settings import get_feishu_app_id, get_feishu_app_secret
 from app.feishu.client import get_feishu_base_url, get_feishu_region
 
 logger = logging.getLogger(__name__)
 
 _TOKEN_CACHE: dict = {}
+_TOKEN_LOCK = asyncio.Lock()  # prevents thundering-herd double-fetch on expiry
 
 
 def get_feishu_open_base_url() -> str:
@@ -51,32 +52,40 @@ async def get_tenant_access_token() -> str:
 
 
 async def _get_tenant_access_token() -> str:
-    """获取飞书 Tenant Access Token（内存缓存，提前 60 秒刷新）"""
+    """获取飞书 Tenant Access Token（内存缓存，提前 60 秒刷新）。
+
+    使用 _TOKEN_LOCK 防止多个协程同时发现 token 过期后并发发起多次刷新请求。
+    使用 get_feishu_app_id/secret() 确保运行时 DB override 生效。
+    """
     now = time.time()
-    cached = _TOKEN_CACHE.get("token")
-    expire = _TOKEN_CACHE.get("expire", 0)
-    if cached and now < expire - 60:
-        return cached
+    # Fast path: valid cached token (no lock needed for read)
+    if _TOKEN_CACHE.get("token") and now < _TOKEN_CACHE.get("expire", 0) - 60:
+        return _TOKEN_CACHE["token"]
 
-    async with httpx.AsyncClient(timeout=10) as http:
-        resp = await http.post(
-            f"{_get_feishu_open_base_url()}/open-apis/auth/v3/tenant_access_token/internal",
-            json={
-                "app_id": settings.feishu_app_id,
-                "app_secret": settings.feishu_app_secret,
-            },
-        )
-    resp.raise_for_status()
-    data = resp.json()
-    if data.get("code") != 0:
-        raise RuntimeError(f"获取飞书 token 失败: {data}")
+    async with _TOKEN_LOCK:
+        # Double-check under lock: another coroutine may have refreshed while we waited
+        if _TOKEN_CACHE.get("token") and now < _TOKEN_CACHE.get("expire", 0) - 60:
+            return _TOKEN_CACHE["token"]
 
-    token = data.get("tenant_access_token")
-    if not token:
-        raise RuntimeError(f"飞书 token 响应缺少 tenant_access_token 字段: {data}")
-    _TOKEN_CACHE["token"] = token
-    _TOKEN_CACHE["expire"] = now + data.get("expire", 7200)
-    return token
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.post(
+                f"{_get_feishu_open_base_url()}/open-apis/auth/v3/tenant_access_token/internal",
+                json={
+                    "app_id": get_feishu_app_id(),
+                    "app_secret": get_feishu_app_secret(),
+                },
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"获取飞书 token 失败: {data}")
+
+        token = data.get("tenant_access_token")
+        if not token:
+            raise RuntimeError(f"飞书 token 响应缺少 tenant_access_token 字段: {data}")
+        _TOKEN_CACHE["token"] = token
+        _TOKEN_CACHE["expire"] = now + data.get("expire", 7200)
+        return token
 
 
 async def call_aily(

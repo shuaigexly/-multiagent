@@ -421,10 +421,10 @@ async def _execute_task(
             summary = ""
             for ar in agent_results:
                 if ar.agent_id == "ceo_assistant" and ar.sections:
-                    summary = ar.sections[0].content[:500]
+                    summary = (ar.sections[0].content or "")[:500]
                     break
             if not summary and agent_results:
-                summary = agent_results[-1].sections[0].content[:300] if agent_results[-1].sections else "分析完成"
+                summary = (agent_results[-1].sections[0].content or "")[:300] if agent_results[-1].sections else "分析完成"
 
             if not await _update_task_unless_cancelled(
                 db,
