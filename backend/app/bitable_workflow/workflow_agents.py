@@ -213,8 +213,21 @@ def _role_with_emoji(agent_name: str) -> str:
     return _AGENT_ROLE_EMOJI_MAP.get(agent_name, agent_name)
 
 
+_HEALTH_MAP = {
+    "🟢": "🟢 健康",
+    "🟡": "🟡 关注",
+    "🔴": "🔴 预警",
+    "⚪": "⚪ 数据不足",
+}
+
+
 def _extract_health(result: AgentResult) -> str:
-    """扫描 sections + raw_output 中的 🟢🟡🔴 emoji，返回 SingleSelect 选项名。"""
+    """健康度评级：优先 LLM 自报（metadata.health），否则从正文 emoji 推断。"""
+    if result.health_hint:
+        emoji = result.health_hint.strip()[:2] if len(result.health_hint.strip()) > 1 else result.health_hint.strip()
+        for key, label in _HEALTH_MAP.items():
+            if key in result.health_hint:
+                return label
     text_blobs = [s.content or "" for s in result.sections]
     text_blobs.append(result.raw_output or "")
     combined = "\n".join(text_blobs)[:5000]
@@ -228,7 +241,9 @@ def _extract_health(result: AgentResult) -> str:
 
 
 def _estimate_confidence(result: AgentResult) -> int:
-    """估算置信度（1-5 stars）。"""
+    """置信度：优先 LLM 自报（metadata.confidence），否则启发式估算。"""
+    if 1 <= result.confidence_hint <= 5:
+        return result.confidence_hint
     raw = result.raw_output or ""
     if not raw or "FAILED" in raw[:50]:
         return 1
@@ -249,7 +264,15 @@ def _estimate_confidence(result: AgentResult) -> int:
 
 
 def _estimate_urgency(ceo_result: AgentResult) -> int:
-    """从 CEO 报告中估算决策紧急度（1-5）。"""
+    """决策紧急度：优先从 CEO 的 metadata.actions 提取最高优先级。"""
+    if ceo_result.structured_actions:
+        priority_score = {"P0": 5, "P1": 4, "P2": 3, "P3": 2}
+        max_score = max(
+            (priority_score.get((a.get("priority") or "").upper(), 0) for a in ceo_result.structured_actions),
+            default=0,
+        )
+        if max_score:
+            return max_score
     combined = (ceo_result.raw_output or "").lower()
     if "🔴" in ceo_result.raw_output or "紧急" in combined or "p0" in combined:
         return 5
