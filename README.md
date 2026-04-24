@@ -50,14 +50,16 @@
 ⑤ 结果同步到飞书（文档 / 多维表格 / 演示文稿 / 群消息 / 任务）
 ```
 
-### 内容运营工作流：三个 AI 数字员工
+### 七岗多智能体 · 多维表格自驱工作流
 
 ```
-① 用户在多维表格写入待选题任务
-② 内容编辑 AI 自动领取、撰写草稿
-③ 内容审核员 AI 自动审核、评分、决定发布或拒绝
-④ 运营分析师 AI 定期汇总数据、生成周报
-⑤ 所有操作实时回写飞书多维表格，全流程可追溯
+① 用户在分析任务表写入任务（可选粘贴 CSV 数据源）
+② 调度器领取 → Wave1 五岗并行分析（数据/内容/SEO/产品/运营）
+③ Wave2 财务顾问基于数据分析师输出继续深挖
+④ Wave3 CEO 助理汇总全部上游，输出决策摘要 + A/B 选项
+⑤ 七岗输出写回多维表格：🟢🟡🔴 健康度 / ⭐ 置信度 / 🔥 紧急度 / 进度条
+⑥ 前端 SSE 实时推送 Wave 进度；CEO 行动项同步到飞书原生 Tasks
+⑦ 行动项生成新的「待分析」任务 → 系统自驱闭环
 ```
 
 ---
@@ -292,16 +294,22 @@ backend/app/
 ```
 frontend/src/
 ├── pages/
-│   ├── Index.tsx           # 工作台主页（任务输入 + 模块选择 + 执行监控）
-│   ├── ResultView.tsx      # 结果详情（分节报告 + 行动项 + 飞书发布）
-│   ├── FeishuWorkspace.tsx # 飞书工作区（云盘/日历/任务/群聊 四 Tab）
-│   ├── Settings.tsx        # 设置页（LLM + 飞书配置 + OAuth 授权）
-│   └── History.tsx         # 任务历史列表
+│   ├── Index.tsx              # 工作台主页（任务输入 + 模块选择 + 执行监控）
+│   ├── ResultView.tsx         # 结果详情（分节报告 + 行动项 + 飞书发布）
+│   ├── BitableWorkflow.tsx    # 七岗工作流仪表盘（初始化 / 启停 / SSE 实时进度）
+│   ├── FeishuWorkspace.tsx    # 飞书工作区（云盘/日历/任务/群聊 四 Tab）
+│   ├── Settings.tsx           # 设置页（LLM + 飞书配置 + OAuth 授权）
+│   └── History.tsx            # 任务历史列表
+├── services/
+│   ├── api.ts                 # 主工作流任务 REST + SSE
+│   ├── feishu.ts              # 飞书工作区数据读取
+│   ├── workflow.ts            # 七岗工作流 + SSE 进度订阅（subscribeTaskProgress）
+│   └── config.ts              # LLM/飞书配置读写
 └── components/
-    ├── ExecutionTimeline.tsx   # 执行日志（Agent 活动卡片 + 时间线）
-    ├── ModuleCard.tsx          # Agent 选择卡片（含 persona 信息）
-    ├── ContextSuggestions.tsx  # 飞书上下文智能推荐
-    └── FeishuAssetCard.tsx     # 发布资产卡片（doc/bitable/slides/message）
+    ├── ExecutionTimeline.tsx  # 执行日志（Agent 活动卡片 + 时间线）
+    ├── ModuleCard.tsx         # Agent 选择卡片（含 persona 信息）
+    ├── ContextSuggestions.tsx # 飞书上下文智能推荐
+    └── FeishuAssetCard.tsx    # 发布资产卡片（doc/bitable/slides/message）
 ```
 
 ### 关键工程设计
