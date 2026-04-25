@@ -533,7 +533,26 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.8（当前） — 第二轮审计修复（继续清 bug）
+### v7.9（当前） — 第三轮审计修复（再清 5 个 bug）
+
+🔴 严重：
+17. `_extract_first_json_array` 转义符在字符串外被处理 → `\]` 之类的字符让深度计数错乱。修：把转义/引号判定限定在 `in_str=True` 分支内，字符串外只看 `[`/`]`/`"`。
+18. PIL 图像模式覆盖不全 — 只转 RGBA/P 漏 L/1/CMYK/I/PA → JPEG `save()` 在这些模式上抛 `OSError`。修：`if img.mode != "RGB": img.convert("RGB")` 一刀切。
+19. `_check_redis` ping 超时不走 `aclose` → 健康探针每次失败漏一个 Redis 连接。修：try/except/finally 保证关闭。
+20. **Plan-execute execute 阶段 system_prompt 退化**：之前用了弱版本 `f"你是「{name}」..."`，agent 几千字的领域 SYSTEM_PROMPT（RICE/JTBD/RFM 等专业框架）在 5 个子问题里全部失效，子问题答案变成"通用车轱辘话"。修：保留 agent 的 SYSTEM_PROMPT 前 1500 字 + 子问题约束。
+21. 优先级排序仅识别精确字符串 `"P0 紧急"` — 用户填 `P0` / `紧急` / `p1` 都被降到优先级 99。修：宽松匹配（包含 P0/紧急/高/中/低 关键词）。
+
+🧪 测试：
+- `tests/test_audit_round3.py`（7 cases）：
+  - 转义符在字符串内/外的两条路径
+  - 字符串内含 `]` 不让深度提前归零
+  - 优先级宽松匹配 6 种用户输入
+  - Redis aclose 在 ping 超时仍被调用
+  - Plan-execute exec 阶段 system_prompt 含 agent persona 关键词
+  - PIL 全模式（RGBA/P/L/1/CMYK/I/PA）转 JPEG
+- 全套件 136 → **143 passing**
+
+### v7.8 — 第二轮审计修复（继续清 bug）
 
 第一轮把表面问题修了，再深翻一遍又找出 6 个真实 bug，每条都加回归测试。
 

@@ -372,11 +372,22 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
         max_records=pending_pool_size,
     )
 
-    # 优先级排序：P0 紧急 < P1 高 < P2 中 < P3 低 < 未填
-    _PRIO_ORDER = {"P0 紧急": 0, "P1 高": 1, "P2 中": 2, "P3 低": 3}
-    pending.sort(
-        key=lambda r: _PRIO_ORDER.get((r.get("fields") or {}).get("优先级", ""), 99)
-    )
+    # 优先级排序（v7.9 修复：宽松匹配，不只识别精确字符串）：
+    # 容忍 "P0" / "P0 紧急" / "p1" / "高" / "紧急" 等多种用户输入习惯
+    def _prio_key(record: dict) -> int:
+        raw = (record.get("fields") or {}).get("优先级", "") or ""
+        s = str(raw).upper().strip()
+        if "P0" in s or "紧急" in s:
+            return 0
+        if "P1" in s or "高" in s:
+            return 1
+        if "P2" in s or "中" in s:
+            return 2
+        if "P3" in s or "低" in s:
+            return 3
+        return 99
+
+    pending.sort(key=_prio_key)
     pending = pending[:_MAX_PER_CYCLE]
     if pending:
         prio_summary = [

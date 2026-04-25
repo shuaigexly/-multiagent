@@ -119,7 +119,9 @@ async def _enrich_with_vision(task_description: str, fields: dict) -> str:
                     from PIL import Image
 
                     img = Image.open(BytesIO(img_bytes))
-                    img = img.convert("RGB") if img.mode in ("RGBA", "P") else img
+                    # JPEG 仅支持 RGB / L / CMYK；其他模式（RGBA/P/1/I/F/PA/...）必须先转 RGB
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
                     img.thumbnail((1280, 1280), Image.LANCZOS)
                     out = BytesIO()
                     img.save(out, format="JPEG", quality=75, optimize=True)

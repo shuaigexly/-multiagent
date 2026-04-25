@@ -37,15 +37,22 @@ async def _check_db() -> dict[str, Any]:
 
 async def _check_redis() -> dict[str, Any]:
     start = time.monotonic()
+    client = None
     try:
         import redis.asyncio as aioredis
 
         client = aioredis.from_url(settings.redis_url, decode_responses=True)
         await asyncio.wait_for(client.ping(), timeout=2.0)
-        await client.aclose()
         return {"ok": True, "latency_ms": round((time.monotonic() - start) * 1000, 1)}
     except Exception as exc:
         return {"ok": False, "optional": True, "error": str(exc)[:200]}
+    finally:
+        # 关键修复：ping 超时/异常时之前不会执行 aclose → 健康探针每次失败都泄漏一个 Redis 连接
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
 
 
 async def _check_llm() -> dict[str, Any]:

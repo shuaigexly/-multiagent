@@ -63,16 +63,19 @@ def _extract_first_json_array(text: str):
     escape = False
     for i in range(start, len(s)):
         ch = s[i]
-        if escape:
-            escape = False
-            continue
-        if ch == "\\":
-            escape = True
-            continue
-        if ch == '"' and not escape:
-            in_str = not in_str
-            continue
         if in_str:
+            # 转义只在字符串内有意义；放在外面会让非字符串中的 \] 跳过 ] → 计数错乱
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
             continue
         if ch == "[":
             depth += 1
@@ -143,8 +146,19 @@ async def run_plan_execute(
     logger.info("plan_execute.plan agent=%s steps=%s", agent.agent_id, len(plan))
 
     # ------ Phase 2: Execute (each sub-question) ------
-    # 成本控制：execute 阶段直接走 call_llm（FAST 档）+ 不进工具循环，否则
-    # 5 步 × 4 工具迭代 = 20 次 LLM 调用，单任务成本失控。工具调用集中在 synthesize 阶段。
+    # 成本控制：execute 走 call_llm FAST 档不进工具循环（工具集中在 synthesize 阶段）
+    # 关键修复（v7.9）：保留 agent 的领域 SYSTEM_PROMPT（RICE/JTBD/RFM 等专业框架），
+    # 之前只用弱 prompt "你是 X" 让子问题答案丧失专业性 — 5 步全部退化成通用回答。
+    base_persona = (agent.SYSTEM_PROMPT or "").strip()
+    if base_persona:
+        # 取前 1500 字 + 任务上下文标识，避免子步骤 prompt 过长
+        base_persona = truncate_with_marker(base_persona, 1500, "\n...[persona truncated]")
+    exec_system = (
+        f"{base_persona}\n\n"
+        f"---\n你（「{agent.agent_name}」）现在正在回答一个分解出来的聚焦子问题，"
+        "保持上述角色的专业框架与方法论；不要写元数据块、不要罗列章节，"
+        "用 200-400 字直接给出针对此子问题的精准答案。"
+    )
     sub_answers: list[str] = []
     for idx, step in enumerate(plan, 1):
         exec_prompt = (
@@ -158,7 +172,7 @@ async def run_plan_execute(
         )
         try:
             ans = await call_llm(
-                system_prompt=f"你是「{agent.agent_name}」，正在回答任务的一个聚焦子问题。",
+                system_prompt=exec_system,
                 user_prompt=exec_prompt,
                 temperature=0.4,
                 max_tokens=600,
