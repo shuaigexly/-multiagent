@@ -235,11 +235,69 @@ class BaseAgent(ABC):
                     agent_id=self.agent_id,
                     task_text=task_description,
                     summary=summary,
+                    kind="case",
                 )
         except Exception as exc:
             logger.debug("[%s] memory store skipped: %s", self.agent_id, exc)
 
+        # 异步反思日志 — 后台 fire-and-forget，不阻塞主流程
+        if os.getenv("LLM_REFLECTION_LOG", "1") != "0" and result.confidence_hint > 0:
+            try:
+                asyncio.create_task(
+                    self._write_reflection(task_description, result),
+                    name=f"reflect-{self.agent_id}",
+                )
+            except RuntimeError:
+                # 没有运行中的事件循环 — 测试场景下静默忽略
+                pass
+
         return result
+
+    async def _write_reflection(self, task_description: str, result: AgentResult) -> None:
+        """事后反思：让 agent 自评 这次做得好/不好的地方，存入 memory(kind=reflection)。
+
+        与 case 不同：reflection 的 task_text 仍是原任务（用于召回），summary 是反思文本。
+        失败仅 debug 日志，绝不影响主流程。
+        """
+        try:
+            from app.core.llm_client import call_llm
+            from app.core.memory import store_memory
+
+            sample_output = ""
+            if result.sections:
+                sample_output = "\n\n".join(
+                    f"## {s.title}\n{s.content[:300]}" for s in result.sections[:3]
+                )
+            actions_text = "\n".join(f"- {a}" for a in result.action_items[:5])
+
+            reflection_prompt = (
+                f"作为「{self.agent_name}」，你刚完成了任务：\n{task_description[:400]}\n\n"
+                f"你的输出（节选）：\n{truncate_with_marker(sample_output, 1500)}\n\n"
+                f"行动项（节选）：\n{truncate_with_marker(actions_text, 600)}\n\n"
+                f"自评 confidence：{result.confidence_hint}/5；health：{result.health_hint}\n\n"
+                "请用第一人称写一段简短反思（150 字以内），结构：\n"
+                "  1. 这次做得好的地方（如能正确归因、或调用了工具拿真数据）\n"
+                "  2. 这次做得不够的地方（如哪里凭空估算、哪个环节没覆盖）\n"
+                "  3. 下次遇到类似任务时具体应该怎么做（可执行经验）\n"
+                "不要写客套话，直接给经验教训。"
+            )
+            reflection_text = await call_llm(
+                system_prompt=f"你是「{self.agent_name}」，正在写自我反思日志。",
+                user_prompt=reflection_prompt,
+                temperature=0.4,
+                max_tokens=400,
+                tier="fast",
+            )
+            if reflection_text:
+                await store_memory(
+                    agent_id=self.agent_id,
+                    task_text=task_description,
+                    summary=reflection_text.strip(),
+                    kind="reflection",
+                )
+                logger.info("[%s] reflection stored (%d chars)", self.agent_id, len(reflection_text))
+        except Exception as exc:
+            logger.debug("[%s] reflection write skipped: %s", self.agent_id, exc)
 
     def _format_upstream_block(self, upstream_results: Optional[list[AgentResult]]) -> str:
         """把 upstream results 格式化为 plan_execute 所需的纯文本块（不带 XML 标签）。"""

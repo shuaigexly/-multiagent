@@ -119,6 +119,11 @@ TASK_FIELDS = [
     {"field_name": "背景说明", "type": TEXT_FIELD_TYPE},
     {"field_name": "数据源", "type": TEXT_FIELD_TYPE},  # 用户粘贴 CSV / markdown / 纯文本作为分析输入
     {
+        "field_name": "任务图像",
+        "type": ATTACHMENT_FIELD_TYPE,
+        "ui_type": "Attachment",
+    },  # 仪表盘截图/手写白板/图表照 — vision LLM 转文字注入分析
+    {
         "field_name": "创建时间",
         "type": CREATED_TIME_FIELD_TYPE,
         "ui_type": "CreatedTime",

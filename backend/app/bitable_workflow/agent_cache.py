@@ -53,6 +53,12 @@ def _cache_key(task_id: str, agent_id: str, input_hash: str) -> str:
     return f"agent_cache:{_task_key(task_id)}:{agent_id}:{input_hash}"
 
 
+def _shared_key(dimension: str, agent_id: str, input_hash: str) -> str:
+    """跨任务共享 cache：相同分析维度 + 相同输入哈希的 agent 输出可复用。"""
+    dim_safe = (dimension or "default").strip().replace(":", "_")[:32]
+    return f"agent_cache:shared:{dim_safe}:{agent_id}:{input_hash}"
+
+
 async def get_cached_result(task_id: str, agent_id: str, input_hash: str) -> Optional[AgentResult]:
     client = await _get_redis()
     if client is None or not task_id or not agent_id or not input_hash:
@@ -79,6 +85,40 @@ async def set_cached_result(task_id: str, agent_id: str, input_hash: str, result
         )
     except Exception as exc:
         logger.debug("agent cache SET failed: %s", exc)
+
+
+async def get_shared_result(
+    dimension: str, agent_id: str, input_hash: str
+) -> Optional[AgentResult]:
+    """跨任务读：同维度 + 同输入哈希的过往 agent 输出。"""
+    client = await _get_redis()
+    if client is None or not dimension or not agent_id or not input_hash:
+        return None
+    try:
+        payload = await client.get(_shared_key(dimension, agent_id, input_hash))
+        if not payload:
+            return None
+        return AgentResult.model_validate_json(payload)
+    except Exception as exc:
+        logger.debug("shared cache GET failed: %s", exc)
+        return None
+
+
+async def set_shared_result(
+    dimension: str, agent_id: str, input_hash: str, result: AgentResult
+) -> None:
+    """跨任务写：成功结果同时落 shared cache，TTL 与 task cache 一致。"""
+    client = await _get_redis()
+    if client is None or not dimension or not agent_id or not input_hash:
+        return
+    try:
+        await client.set(
+            _shared_key(dimension, agent_id, input_hash),
+            result.model_dump_json(),
+            ex=_CACHE_TTL_SECONDS,
+        )
+    except Exception as exc:
+        logger.debug("shared cache SET failed: %s", exc)
 
 
 async def invalidate_task_cache(task_id: str) -> int:

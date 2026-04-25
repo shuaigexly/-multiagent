@@ -52,6 +52,64 @@ _WAVE2_AGENTS = [finance_advisor_agent]
 _WAVE3_AGENT = ceo_assistant_agent
 
 
+async def _enrich_with_vision(task_description: str, fields: dict) -> str:
+    """如果任务带「任务图像」附件，用 vision LLM 把图片转成文字描述并附加到 task_description。
+
+    飞书 Bitable 附件字段值是 list[{"file_token": "..."}]；通过 file_token 拼出可访问 URL。
+    每张图最多分析前 3 张，避免无限放大 token 成本。
+    LLM_VISION_MODEL 未配置时直接返回原 task_description。
+    """
+    images = fields.get("任务图像") or []
+    if not images or not isinstance(images, list):
+        return task_description
+
+    import os
+
+    if not os.getenv("LLM_VISION_MODEL", "").strip():
+        return task_description
+
+    from app.core.vision import analyze_image
+    from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
+
+    base = get_feishu_open_base_url()
+    try:
+        token = await get_tenant_access_token()
+    except Exception as exc:
+        logger.warning("vision skipped: feishu token failed: %s", exc)
+        return task_description
+
+    descriptions: list[str] = []
+    for idx, item in enumerate(images[:3], 1):
+        if not isinstance(item, dict):
+            continue
+        file_token = item.get("file_token") or ""
+        if not file_token:
+            continue
+        # 飞书附件下载 URL（带 access_token query）
+        download_url = (
+            f"{base}/open-apis/drive/v1/medias/{file_token}/download"
+            f"?extra=&access_token={token}"
+        )
+        try:
+            text = await analyze_image(download_url)
+        except Exception as exc:
+            logger.warning("vision analyze failed idx=%s err=%s", idx, exc)
+            text = None
+        if text:
+            descriptions.append(f"【图像 {idx} 描述】\n{text}")
+
+    if not descriptions:
+        return task_description
+
+    enriched = (
+        f"{task_description}\n\n"
+        f"=== 用户附上 {len(descriptions)} 张图像，vision LLM 已转译如下 ===\n"
+        + "\n\n".join(descriptions)
+    )
+    logger.info("Pipeline enriched with %d image descriptions", len(descriptions))
+    return enriched
+
+
 def _build_task_description(fields: dict) -> str:
     title = fields.get("任务标题", "未命名任务")
     dimension = fields.get("分析维度", "综合分析")
@@ -114,20 +172,46 @@ async def _safe_analyze(
     upstream: Optional[list[AgentResult]] = None,
     data_summary=None,
     task_id: Optional[str] = None,
+    dimension: Optional[str] = None,
 ) -> AgentResult:
-    """Run one agent with error isolation + optional Redis cache by input hash."""
+    """Run one agent with error isolation + multi-level Redis cache.
+
+    Cache lookup order：
+      1. task-specific (task_id, agent_id, input_hash) — 同任务重试复用
+      2. shared (dimension, agent_id, input_hash) — 跨任务 DAG 共享（同维度 + 同输入）
+    """
     input_hash = _cache_input_hash(task_description, data_summary, upstream)
-    # Cache hit path — skip LLM call if we've already run this agent for this task
+    # Layer 1: task-specific cache
     if task_id:
         try:
-            from app.bitable_workflow.agent_cache import get_cached_result, set_cached_result
+            from app.bitable_workflow.agent_cache import get_cached_result
 
             cached = await get_cached_result(task_id, agent.agent_id, input_hash)
             if cached:
-                logger.info("[cache-hit] %s/%s — skipping LLM call", task_id, agent.agent_id)
+                logger.info("[cache-hit:task] %s/%s", task_id, agent.agent_id)
                 return cached
         except Exception as cache_exc:
-            logger.debug("agent cache read skipped: %s", cache_exc)
+            logger.debug("task cache read skipped: %s", cache_exc)
+
+    # Layer 2: cross-task shared cache (DAG sharing — same dimension + same input)
+    if dimension:
+        try:
+            from app.bitable_workflow.agent_cache import get_shared_result
+
+            shared = await get_shared_result(dimension, agent.agent_id, input_hash)
+            if shared:
+                logger.info("[cache-hit:shared] dim=%s/%s", dimension, agent.agent_id)
+                # 复制后写入 task cache 加速本任务后续重试
+                if task_id:
+                    try:
+                        from app.bitable_workflow.agent_cache import set_cached_result
+
+                        await set_cached_result(task_id, agent.agent_id, input_hash, shared)
+                    except Exception:
+                        pass
+                return shared
+        except Exception as cache_exc:
+            logger.debug("shared cache read skipped: %s", cache_exc)
 
     try:
         result = await agent.analyze(
@@ -152,12 +236,15 @@ async def _safe_analyze(
             logger.warning("[%s] fallback build failed: %s", agent.agent_id, fb_exc)
             return _error_result(agent.agent_id, agent.agent_name, exc)
 
-    # Cache the successful result for crash recovery
-    if task_id and not _is_failed_result(result):
+    # Cache the successful result for crash recovery + cross-task DAG share
+    if not _is_failed_result(result):
         try:
-            from app.bitable_workflow.agent_cache import set_cached_result
+            from app.bitable_workflow.agent_cache import set_cached_result, set_shared_result
 
-            await set_cached_result(task_id, agent.agent_id, input_hash, result)
+            if task_id:
+                await set_cached_result(task_id, agent.agent_id, input_hash, result)
+            if dimension:
+                await set_shared_result(dimension, agent.agent_id, input_hash, result)
         except Exception as cache_exc:
             logger.debug("agent cache write skipped: %s", cache_exc)
 
@@ -183,7 +270,11 @@ async def run_task_pipeline(
     返回：(wave1+wave2 共六个 AgentResult, CEO 助理综合 AgentResult)
     """
     task_description = _build_task_description(task_fields)
-    logger.info("Pipeline started for task: %s", task_fields.get("任务标题", "?"))
+    dimension = (task_fields.get("分析维度") or "").strip() or None
+    logger.info("Pipeline started for task: %s (dim=%s)", task_fields.get("任务标题", "?"), dimension)
+
+    # Vision: 用户上传任务图像 → vision LLM 转文字 → 注入 task_description
+    task_description = await _enrich_with_vision(task_description, task_fields)
 
     # 解析用户粘贴的数据源（CSV / markdown / 文本），注入到每个 agent 的 data_summary
     data_summary = None
@@ -202,7 +293,10 @@ async def run_task_pipeline(
 
     # Wave 1: parallel execution of 5 independent agents
     wave1_coros = [
-        _safe_analyze(agent, task_description, data_summary=data_summary, task_id=task_id)
+        _safe_analyze(
+            agent, task_description,
+            data_summary=data_summary, task_id=task_id, dimension=dimension,
+        )
         for agent in _WAVE1_AGENTS
     ]
     wave1_results: list[AgentResult] = list(await asyncio.gather(*wave1_coros))
@@ -221,7 +315,7 @@ async def run_task_pipeline(
     da_result = wave1_by_id.get("data_analyst") or wave1_results[0]
     fa_result = await _safe_analyze(
         finance_advisor_agent, task_description,
-        upstream=[da_result], data_summary=data_summary, task_id=task_id,
+        upstream=[da_result], data_summary=data_summary, task_id=task_id, dimension=dimension,
     )
     wave2_results = [fa_result]
     _raise_if_failed(wave2_results, "Wave2")
@@ -243,7 +337,7 @@ async def run_task_pipeline(
     try:
         ceo_result = await _safe_analyze(
             _WAVE3_AGENT, task_description,
-            upstream=all_upstream, data_summary=data_summary, task_id=task_id,
+            upstream=all_upstream, data_summary=data_summary, task_id=task_id, dimension=dimension,
         )
     finally:
         clear_peer_pool(peer_token)

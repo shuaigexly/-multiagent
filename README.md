@@ -533,7 +533,39 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.4（当前） — Plan-Execute / LLM-Judge / 规则降级 / Prompt Injection 防护
+### v7.5（当前） — Multi-modal Vision / 反思日志 / 优先级 + DAG 共享
+
+**👁️ Multi-modal Vision（`app/core/vision.py` + `inspect_image` 工具）**
+- 适配任意 OpenAI vision 协议模型：GLM-4V / GPT-4o / DeepSeek-VL / Qwen-VL
+- 环境变量 `LLM_VISION_MODEL` 启用；缺失自动降级（仅文本管线）
+- `inspect_image(image, focus)` 注册为 agent 可调工具：image 接受 URL / data URI / 裸 base64
+- 自动注入：分析任务表新增「任务图像」附件字段，`run_task_pipeline` 启动时自动调 vision LLM 把图片转文字 + 拼到 task_description
+- 用户可粘截图/手写白板/图表照 → agent 直接基于真实视觉信息分析
+
+**🧠 Agent 自我反思日志**
+- `AgentMemory` 表新增 `kind` 列：`case`（任务输出）/ `reflection`（自评经验）
+- `analyze` 完成后异步触发：用 FAST 档调 LLM 写 150 字反思（做得好/不够/下次该怎么做）
+- 入库 `kind=reflection`；下次任务召回时 reflection **优先于** case 出现在 prompt 中
+- `format_memory_hits` 自动分组渲染：「经验教训」段在前，「相似案例」段在后
+- 环境变量 `LLM_REFLECTION_LOG=0` 可关闭
+
+**⏱️ 优先级队列（scheduler）**
+- `list_records` 拉取 `_MAX_PER_CYCLE × 4` 候选 → 本地按 P0 紧急 / P1 高 / P2 中 / P3 低排序 → 取 top N
+- 紧急任务永远先跑，避免被早期插入的 P3 任务阻塞
+
+**🔄 跨任务 DAG 共享（agent_cache shared layer）**
+- 新增 `get_shared_result` / `set_shared_result`：key 为 `(dimension, agent_id, input_hash)`
+- `_safe_analyze` cache 查找两层：
+  1. task-specific（同任务重试复用）
+  2. shared（跨任务复用 — 同维度 + 同输入哈希直接复用 Wave1 输出）
+- 批量同维度任务（如全部「数据复盘」）跨任务可共享 5 个 Wave1 agent 结果，省 5 次 LLM 调用
+- shared cache 命中时自动回填 task cache 加速本任务后续重试
+
+**🧪 测试**
+- 新增 `tests/test_v75_features.py`（8 cases）：vision 工具降级 / vision 调用透传 / memory 反思优先 / shared key 隔离维度 / 优先级排序
+- 全套件 95 → **102 passing**
+
+### v7.4 — Plan-Execute / LLM-Judge / 规则降级 / Prompt Injection 防护
 
 把 agent 推向真正的"分层思考 + 韧性 + 安全"。
 

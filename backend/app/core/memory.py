@@ -41,6 +41,7 @@ class MemoryHit:
     summary: str
     similarity: float
     created_at: str
+    kind: str = "case"
 
 
 def _hash_embedding(text: str, dim: int = _DIM_FALLBACK) -> list[float]:
@@ -112,8 +113,12 @@ async def store_memory(
     agent_id: str,
     task_text: str,
     summary: str,
+    kind: str = "case",
 ) -> None:
-    """落库一条 agent 记忆。失败仅 warning，不阻塞主流程。"""
+    """落库一条 agent 记忆。失败仅 warning，不阻塞主流程。
+
+    kind: 'case' (默认 — 任务输出) | 'reflection' (反思日志)
+    """
     if not agent_id or not task_text or not summary:
         return
     tenant = get_tenant_id() or "default"
@@ -123,6 +128,7 @@ async def store_memory(
             entry = AgentMemory(
                 tenant_id=tenant,
                 agent_id=agent_id,
+                kind=kind,
                 task_hash=_task_hash(task_text),
                 task_text=task_text[:2000],
                 summary=summary[:2000],
@@ -131,7 +137,7 @@ async def store_memory(
             db.add(entry)
             await db.commit()
     except Exception as exc:
-        logger.warning("store_memory failed agent=%s err=%s", agent_id, exc)
+        logger.warning("store_memory failed agent=%s kind=%s err=%s", agent_id, kind, exc)
 
 
 async def query_memories(
@@ -140,8 +146,9 @@ async def query_memories(
     task_text: str,
     k: int = 3,
     min_similarity: float = 0.25,
+    kind: Optional[str] = None,
 ) -> list[MemoryHit]:
-    """检索过往最相似的 k 条 agent 记忆。"""
+    """检索过往最相似的 k 条 agent 记忆。kind=None 时不过滤（混合 case + reflection）。"""
     if not agent_id or not task_text:
         return []
     tenant = get_tenant_id() or "default"
@@ -154,6 +161,8 @@ async def query_memories(
                 .order_by(AgentMemory.created_at.desc())
                 .limit(200)
             )
+            if kind:
+                stmt = stmt.where(AgentMemory.kind == kind)
             rows = (await db.execute(stmt)).scalars().all()
     except Exception as exc:
         logger.debug("query_memories DB failed: %s", exc)
@@ -178,21 +187,36 @@ async def query_memories(
             summary=r.summary,
             similarity=round(sim, 3),
             created_at=r.created_at.isoformat() if r.created_at else "",
+            kind=getattr(r, "kind", "case") or "case",
         )
         for sim, r in scored[:k]
     ]
 
 
 def format_memory_hits(hits: list[MemoryHit]) -> str:
-    """把检索结果格式化为 prompt 可注入的文本块。"""
+    """把检索结果格式化为 prompt 可注入的文本块。
+
+    自动按 kind 分组：reflection 放最前（agent 的"经验教训"优先于具体案例）。
+    """
     if not hits:
         return ""
-    lines = ["<long_term_memory>", "（基于过往相似任务的同岗位历史结论，仅供参考，不要复制粘贴）"]
-    for i, h in enumerate(hits, 1):
-        lines.append(
-            f"  [案例{i}] 相似度={h.similarity:.2f} 时间={h.created_at[:10]}\n"
-            f"    任务：{h.task_text[:200]}\n"
-            f"    结论摘要：{h.summary[:400]}"
-        )
+    reflections = [h for h in hits if h.kind == "reflection"]
+    cases = [h for h in hits if h.kind != "reflection"]
+    lines = ["<long_term_memory>"]
+    if reflections:
+        lines.append("（以下是该岗位过往任务的自我反思 — 优先参考其中的经验教训）")
+        for i, h in enumerate(reflections, 1):
+            lines.append(
+                f"  [反思{i}] 相似度={h.similarity:.2f} 时间={h.created_at[:10]}\n"
+                f"    {h.summary[:400]}"
+            )
+    if cases:
+        lines.append("（以下是该岗位过往相似任务结论摘要 — 仅供参考，不要照搬）")
+        for i, h in enumerate(cases, 1):
+            lines.append(
+                f"  [案例{i}] 相似度={h.similarity:.2f} 时间={h.created_at[:10]}\n"
+                f"    任务：{h.task_text[:200]}\n"
+                f"    结论摘要：{h.summary[:400]}"
+            )
     lines.append("</long_term_memory>")
     return "\n".join(lines)

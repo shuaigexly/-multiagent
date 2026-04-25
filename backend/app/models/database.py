@@ -119,20 +119,27 @@ class AuditLog(Base):
 
 
 class AgentMemory(Base):
-    """Agent 长期记忆 — 跨任务召回相似案例。"""
+    """Agent 长期记忆 — 跨任务召回相似案例 + 自我反思。
+
+    kind:
+      'case'       一次任务的输出摘要（默认）
+      'reflection' agent 在任务后自评的"我学到了什么"
+    """
     __tablename__ = "agent_memory"
     __table_args__ = (
         Index("ix_agent_memory_tenant_agent", "tenant_id", "agent_id"),
+        Index("ix_agent_memory_kind", "kind"),
         Index("ix_agent_memory_created", "created_at"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     tenant_id = Column(String(64), nullable=False, default="default")
     agent_id = Column(String(64), nullable=False)
+    kind = Column(String(32), nullable=False, default="case")
     task_hash = Column(String(64), nullable=False)
     task_text = Column(Text, nullable=False)
     summary = Column(Text, nullable=False)
-    embedding_json = Column(Text, nullable=False)  # JSON list of floats
+    embedding_json = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 

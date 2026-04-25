@@ -216,6 +216,40 @@ _SAFE_GLOBALS = {
 
 
 @register_tool(
+    name="inspect_image",
+    description=(
+        "对一张图片（http URL 或 base64）进行视觉分析，提取图表数值/截图文字/关键洞察。"
+        "适合用户附上业绩仪表盘截图、产品界面、手写白板照等场景。"
+        "需要服务端配置 LLM_VISION_MODEL；未配置时返回 'ERROR: vision disabled'。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "image": {
+                "type": "string",
+                "description": "图片 URL 或 base64 字符串（可加 data:image/png;base64, 前缀）",
+            },
+            "focus": {
+                "type": "string",
+                "description": "可选：你想从图片提取的具体焦点（如『提取所有图表数值』）",
+            },
+        },
+        "required": ["image"],
+    },
+)
+async def inspect_image(image: str, focus: str = "") -> str:
+    from app.core.vision import _DEFAULT_VISION_PROMPT, analyze_image
+
+    prompt = _DEFAULT_VISION_PROMPT
+    if focus:
+        prompt = f"{_DEFAULT_VISION_PROMPT}\n\n额外焦点：{focus[:200]}"
+    result = await analyze_image(image, prompt=prompt)
+    if result is None:
+        return "ERROR: vision disabled (set LLM_VISION_MODEL) or call failed"
+    return result
+
+
+@register_tool(
     name="python_calc",
     description=(
         "执行受限的 Python 表达式做数值/统计计算。"
