@@ -20,12 +20,19 @@ _user_access_token: str | None = None
 _user_refresh_token: str | None = None
 _user_open_id: str | None = None
 _refresh_lock: asyncio.Lock | None = None
+import threading as _threading
+_refresh_lock_init = _threading.Lock()
 
 
 def _get_refresh_lock() -> asyncio.Lock:
+    """v8.3 修复：懒初始化 race — 并发首次刷新 user OAuth token 各自创建独立锁
+    → token 双重刷新（飞书 refresh_token 一次性的，可能让其中一个失败）。
+    """
     global _refresh_lock
     if _refresh_lock is None:
-        _refresh_lock = asyncio.Lock()
+        with _refresh_lock_init:
+            if _refresh_lock is None:
+                _refresh_lock = asyncio.Lock()
     return _refresh_lock
 
 

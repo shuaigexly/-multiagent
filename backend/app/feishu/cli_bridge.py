@@ -14,10 +14,17 @@ CLI_AVAILABLE: Optional[bool] = None
 _LARK_CLI_VERSION = os.getenv("LARK_CLI_VERSION", "1.1.0")
 
 
+import threading as _threading
+_cli_available_lock = _threading.Lock()
+
+
 def is_cli_available() -> bool:
+    """v8.3 修复 race — 双检守护，避免并发首次调用重复执行 shutil.which。"""
     global CLI_AVAILABLE
     if CLI_AVAILABLE is None:
-        CLI_AVAILABLE = shutil.which("npx") is not None
+        with _cli_available_lock:
+            if CLI_AVAILABLE is None:
+                CLI_AVAILABLE = shutil.which("npx") is not None
     return CLI_AVAILABLE
 
 

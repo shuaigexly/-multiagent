@@ -533,7 +533,25 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v8.2（当前） — 第十 ~ 十四轮审计（4 个真实 bug + 1 dead code）
+### v8.3（当前） — 第十五~十六轮审计（7 个真实 bug，含 1 个 meta-race）
+
+🔴 严重 — 持续清理懒初始化 race 系统性问题：
+39. `feishu/client.get_feishu_client` race — 并发首次创建 lark Client 各自构造 connection pool。修：threading.Lock 双检 + 把构造放进 lock 内部（之前误漏 `with` 块包围范围）。
+40. `mcp_client._get_lock` race — _get_proc 串行化失效 → 启动多个 mcp subprocess。修：双检守护。
+41. **Meta-race**: `agent_cache._get_init_lock` 自身仍是单检懒 init — 讽刺地，"防 race 的代码"本身有 race。修：再加一层 `threading.Lock` 守护"创建守护锁"步骤。
+42. `budget._get_init_lock` 同款 meta-race。
+43. `user_token._get_refresh_lock` race — 并发刷新 user OAuth token → 两次刷新（refresh_token 一次性，第二次失败）。修：双检守护。
+44. `cli_bridge.is_cli_available` race — 并发首次调用重复 `shutil.which`。修：双检守护。
+
+🟡 中：
+45. `health._check_db` 无 timeout — DB 锁/磁盘满时探针挂起，K8s 默认 timeout 1-5s 探针卡住会让 pod 反复重启。修：`asyncio.wait_for(_ping, timeout=3.0)`。
+
+🧪 测试：
+- 全套件保持 **154/154 passing**（修复为内部线程安全，行为不变）
+
+🎯 收敛声明：本轮覆盖了项目中**所有**已识别的 module-level lazy singleton（10+ 处）。grep `if _.* is None:` 已全部转双检模式。
+
+### v8.2 — 第十 ~ 十四轮审计（4 个真实 bug + 1 dead code）
 
 🔴 严重 — 全部都是同款"懒初始化 race"系统性问题：
 36. `bitable_ops._get_http_client` race — 并发 Bitable 请求各自创建 httpx client，winner 之外的 client 永不 close → FD + connection pool 泄漏（持续累积可耗尽 sockets）。

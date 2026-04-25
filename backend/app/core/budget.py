@@ -68,12 +68,17 @@ _redis_client = None
 _redis_retry_at = 0.0
 _REDIS_RETRY_SECONDS = 60.0
 _init_lock: asyncio.Lock | None = None
+import threading as _threading
+_init_lock_create = _threading.Lock()
 
 
 def _get_init_lock() -> asyncio.Lock:
+    """v8.3 修复 meta-race：之前 _get_init_lock 自身仍是单检懒 init → 仍可能 race。"""
     global _init_lock
     if _init_lock is None:
-        _init_lock = asyncio.Lock()
+        with _init_lock_create:
+            if _init_lock is None:
+                _init_lock = asyncio.Lock()
     return _init_lock
 
 

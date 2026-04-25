@@ -24,13 +24,21 @@ router = APIRouter(tags=["health"])
 
 
 async def _check_db() -> dict[str, Any]:
+    """v8.3 修复：探针不能因 DB 锁/磁盘满而挂起，加 3s 超时。
+    K8s liveness/readiness 默认 timeout 1-5s，探针卡住会让 pod 被反复重启。
+    """
     start = time.monotonic()
     try:
         from sqlalchemy import text
 
-        async with AsyncSessionLocal() as db:
-            await db.execute(text("SELECT 1"))
+        async def _ping() -> None:
+            async with AsyncSessionLocal() as db:
+                await db.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(_ping(), timeout=3.0)
         return {"ok": True, "latency_ms": round((time.monotonic() - start) * 1000, 1)}
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "DB ping timeout (3s)"}
     except Exception as exc:
         return {"ok": False, "error": str(exc)[:200]}
 

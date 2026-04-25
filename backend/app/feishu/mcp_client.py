@@ -19,12 +19,19 @@ logger = logging.getLogger(__name__)
 _lock: asyncio.Lock | None = None
 _proc: Optional[asyncio.subprocess.Process] = None
 _req_id = 0
+import threading as _threading
+_lock_init = _threading.Lock()
 
 
 def _get_lock() -> asyncio.Lock:
+    """v8.3 修复：懒初始化 race — 并发首次访问可能创建多把 Lock，
+    后续 _get_proc 串行化失效 → 启动多个 mcp subprocess 浪费且消息可能错乱。
+    """
     global _lock
     if _lock is None:
-        _lock = asyncio.Lock()
+        with _lock_init:
+            if _lock is None:
+                _lock = asyncio.Lock()
     return _lock
 
 
