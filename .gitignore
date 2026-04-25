@@ -25,3 +25,8 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# SQLite WAL/SHM
+*.db-shm
+*.db-wal
+*.db-journal
