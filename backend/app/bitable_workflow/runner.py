@@ -182,25 +182,25 @@ async def _create_extra_views(
 
     单次视图创建失败不应阻塞整体 setup — 静默降级即可。
     """
-    # (table_id, view_name, view_type, filter_field, filter_value)
-    # filter_field 为 None 时不设置过滤；kanban/gallery 仅靠 UI 自动归组
+    # v8.6.12 — 删除所有 kanban + 多数 gallery（飞书 OpenAPI 不公开 group_info /
+    # cover_field_id，看板永远显示"暂无分组"空白；画册无封面字段也是浪费视图槽）。
+    # 改成按字段切片的 grid + filter 视图，filter 100% API 可配，且 grid 视图原生支持
+    # 列头下拉筛选（飞书 UI 内置，无需我们配置）。
     view_plan: list[tuple[str, str, str, str | None, str | None]] = [
-        # 分析任务表
-        (task_tid, "📊 状态看板", "kanban", None, None),
-        (task_tid, "📇 任务画册", "gallery", None, None),
-        (task_tid, "🔥 待分析任务", "grid", "状态", "待分析"),
-        (task_tid, "✅ 已完成任务", "grid", "状态", "已完成"),
-        # 岗位分析表
-        (output_tid, "👥 岗位看板", "kanban", None, None),
-        (output_tid, "🩺 健康度画册", "gallery", None, None),
-        (output_tid, "🔴 预警分析", "grid", "健康度评级", "🔴 预警"),
-        # 综合报告表（v8.6.4 新增报告画册 + 决策视图，原版本缺失画册视图）
-        (report_tid, "🚦 健康度看板", "kanban", None, None),
-        (report_tid, "📋 报告画册", "gallery", None, None),
-        (report_tid, "🚨 预警报告", "grid", "综合健康度", "🔴 预警"),
-        # 效能表
-        (performance_tid, "🏅 岗位看板", "kanban", None, None),
-        (performance_tid, "🏆 效能画册", "gallery", None, None),
+        # 分析任务表 — 4 个状态 + 3 个优先级切片
+        (task_tid, "🕐 待分析", "grid", "状态", "待分析"),
+        (task_tid, "⚙️ 分析中", "grid", "状态", "分析中"),
+        (task_tid, "✅ 已完成", "grid", "状态", "已完成"),
+        (task_tid, "🔥 P0 紧急", "grid", "优先级", "P0 紧急"),
+        (task_tid, "📌 P1 高优", "grid", "优先级", "P1 高"),
+        # 岗位分析表 — 按健康度三色 + 按岗位角色切片
+        (output_tid, "🟢 健康岗位", "grid", "健康度评级", "🟢 健康"),
+        (output_tid, "🟡 关注岗位", "grid", "健康度评级", "🟡 关注"),
+        (output_tid, "🔴 预警岗位", "grid", "健康度评级", "🔴 预警"),
+        # 综合报告表 — 按综合健康度切片
+        (report_tid, "🟢 健康报告", "grid", "综合健康度", "🟢 健康"),
+        (report_tid, "🟡 关注报告", "grid", "综合健康度", "🟡 关注"),
+        (report_tid, "🔴 预警报告", "grid", "综合健康度", "🔴 预警"),
     ]
     for table_id, name, vtype, filter_field, filter_value in view_plan:
         try:
