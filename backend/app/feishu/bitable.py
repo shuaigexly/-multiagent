@@ -57,7 +57,166 @@ async def close_http_client() -> None:
 
 
 async def create_bitable(name: str) -> dict:
-    return await with_retry(_create_bitable_impl, name)
+    """v8.6.6: 建完 base 立刻把"用户本人"加为 full_access 协作者 +
+    （可选）打开链接分享。默认 app 建的 base 只有 app 有权限 → 用户/他人打开
+    会得到「无权访问」。
+    """
+    result = await with_retry(_create_bitable_impl, name)
+    try:
+        await _grant_initial_permissions(result["app_token"])
+    except Exception as exc:
+        logger.warning("grant initial bitable permissions failed: %s", exc)
+    return result
+
+
+async def _grant_initial_permissions(app_token: str) -> None:
+    """读取 .env 配置，把用户本人加为 full_access + 可选链接分享。
+
+    所有失败都不阻塞建 base 主流程（warn 后继续）。
+    需在飞书应用后台开启：
+      - drive:drive  (协作者管理)
+      - docs:permission.member:create
+    """
+    from app.core.settings import settings
+
+    base = get_feishu_open_base_url()
+    token = await get_tenant_access_token()
+
+    # 1. 把所有者本人加为 full_access
+    owner_email = (settings.feishu_base_owner_email or "").strip()
+    owner_open_id = (settings.feishu_base_owner_open_id or "").strip()
+    if owner_email and not owner_open_id:
+        # 先把邮箱反查成 open_id（飞书 add_member 不直接接受邮箱，需要先 lookup）
+        owner_open_id = await _resolve_email_to_open_id(base, token, owner_email)
+        if not owner_open_id:
+            logger.warning(
+                "owner email %r not found in Feishu tenant — 用户必须是该飞书租户成员才能加协作者；"
+                "请改填 FEISHU_BASE_OWNER_OPEN_ID 或确认邮箱在租户内",
+                owner_email,
+            )
+    if owner_open_id:
+        try:
+            await _add_bitable_member(
+                base=base, token=token, app_token=app_token,
+                member_type="openid", member_id=owner_open_id, perm="full_access",
+            )
+        except Exception as exc:
+            logger.warning("add owner failed: %s", exc)
+
+    # 2. 附加只读成员
+    extras = [v.strip() for v in (settings.feishu_base_extra_viewers or "").split(",") if v.strip()]
+    for v in extras:
+        oid = v
+        if "@" in v:
+            oid = await _resolve_email_to_open_id(base, token, v) or ""
+            if not oid:
+                logger.warning("extra viewer email %r not in tenant", v)
+                continue
+        try:
+            await _add_bitable_member(
+                base=base, token=token, app_token=app_token,
+                member_type="openid", member_id=oid, perm="view",
+            )
+        except Exception as exc:
+            logger.warning("add extra viewer %s failed: %s", v, exc)
+
+    # 3. 打开「组织内任何人可查看」链接分享
+    if settings.feishu_base_public_link_share:
+        try:
+            await _patch_public_link_share(base=base, token=token, app_token=app_token)
+        except Exception as exc:
+            logger.warning("public link share patch failed: %s", exc)
+
+
+async def _resolve_email_to_open_id(base: str, token: str, email: str) -> str | None:
+    """飞书 contact API 把邮箱反查成 open_id；不在租户内返回 None。
+
+    POST /contact/v3/users/batch_get_id?user_id_type=open_id
+      body: {"emails": ["..."]}
+    """
+    url = f"{base}/open-apis/contact/v3/users/batch_get_id"
+    r = await _get_http_client().post(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        params={"user_id_type": "open_id"},
+        json={"emails": [email]},
+    )
+    body: dict = {}
+    try:
+        body = r.json()
+    except Exception:
+        pass
+    if r.status_code >= 400 or body.get("code", 0) != 0:
+        logger.warning(
+            "email→open_id lookup failed: status=%s code=%s msg=%s",
+            r.status_code, body.get("code"), body.get("msg"),
+        )
+        return None
+    items = (body.get("data") or {}).get("user_list") or []
+    for u in items:
+        if u.get("email") == email:
+            return u.get("user_id")  # user_id_type=open_id 时这里就是 open_id
+    return None
+
+
+async def _add_bitable_member(
+    *, base: str, token: str, app_token: str,
+    member_type: str, member_id: str, perm: str,
+) -> None:
+    url = f"{base}/open-apis/drive/v1/permissions/{app_token}/members"
+    payload = {
+        "member_type": member_type,
+        "member_id": member_id,
+        "perm": perm,
+        "type": "user",
+    }
+    r = await _get_http_client().post(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        params={"type": "bitable", "need_notification": "false"},
+        json=payload,
+    )
+    body: dict = {}
+    try:
+        body = r.json()
+    except Exception:
+        pass
+    if r.status_code >= 400 or body.get("code", 0) != 0:
+        raise RuntimeError(
+            f"add member failed status={r.status_code} code={body.get('code')} "
+            f"msg={body.get('msg')} member={member_type}:{member_id} perm={perm}"
+        )
+    logger.info("Granted %s to %s:%s on bitable %s", perm, member_type, member_id, app_token)
+
+
+async def _patch_public_link_share(*, base: str, token: str, app_token: str) -> None:
+    """开启链接分享。链接级别由 settings.feishu_base_link_share_entity 控制：
+      - tenant_readable: 组织内可查看（仅同租户成员）
+      - anyone_readable: 任何人凭链接可查看（默认；解决"他人无法查看"最直接的方案）
+      - tenant_editable / anyone_editable: 可编辑（飞书企业版可能受限）
+
+    飞书接口 PATCH /drive/v1/permissions/{token}/public?type=bitable
+    """
+    from app.core.settings import settings
+    entity = (settings.feishu_base_link_share_entity or "anyone_readable").strip()
+    url = f"{base}/open-apis/drive/v1/permissions/{app_token}/public"
+    payload = {"link_share_entity": entity}
+    r = await _get_http_client().patch(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        params={"type": "bitable"},
+        json=payload,
+    )
+    body: dict = {}
+    try:
+        body = r.json()
+    except Exception:
+        pass
+    if r.status_code >= 400 or body.get("code", 0) != 0:
+        raise RuntimeError(
+            f"public link share failed status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+        )
+    logger.info("Enabled tenant_readable link share on bitable %s", app_token)
 
 
 async def create_table(app_token: str, table_name: str, fields: list[dict]) -> str:

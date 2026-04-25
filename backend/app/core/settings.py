@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     daily_token_budget: int = 0          # 每个租户每日 token 上限
     per_task_token_budget: int = 0       # 单条任务 token 上限
 
+    # v8.6.6 — 多维表格初始权限（默认 app 建的 base 别人完全打不开）
+    feishu_base_owner_email: str = ""    # 用户邮箱，必须在飞书租户内才能反查成 open_id
+    feishu_base_owner_open_id: str = ""  # 或直接填 open_id（首选，最不易出错）
+    feishu_base_public_link_share: bool = False  # 是否开链接分享
+    # link_share_entity: tenant_readable=组织内可查看 / anyone_readable=任何人凭链接可查看
+    #                    tenant_editable / anyone_editable / closed
+    feishu_base_link_share_entity: str = "anyone_readable"
+    feishu_base_extra_viewers: str = ""  # 逗号分隔附加只读成员（邮箱/open_id）
+
     def __getattribute__(self, name: str):
         if name in _OVERRIDABLE_FIELDS:
             override = _db_overrides.get(name)
