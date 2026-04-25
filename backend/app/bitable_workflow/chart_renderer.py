@@ -100,20 +100,29 @@ def render_chart_to_png(chart_data: list[dict], title: str = "") -> Optional[byt
         return None  # 1 个数据点不画图
 
     # v8.6.3 修量纲混杂：MAU=11.2万、留存=38%、LTV=212元 用同一 Y 轴 → 大值一柱独大
-    # 解决：按 unit 分组（％/万/元/比例…），各组绘制成一组子图（每组共享 Y 轴尺度）
-    # 单一 unit 时仍然单图。复杂 unit 组合（>3 组）退化为按 max 归一化展示相对值。
+    # v8.6.9 修单柱独占：之前 2-4 组不同 unit 时拆成多子图，但每组 <2 项时
+    # 子图就是"一根柱占满整宽"，丑且信息量低（数据分析师/财务顾问 都中招）。
+    # 现在改逻辑：
+    #   · 所有数据点同 unit  → 单图（最常见，最好看）
+    #   · 多 unit 但每组都 ≥ 2 项 → 子图（每组本身有比较意义）
+    #   · 否则                → 单图 + 组内归一化（柱高 = 组内占比%，标签保留原值）
     from collections import defaultdict
     groups: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
     for n, v, u in zip(names, values, units):
         groups[u or "无单位"].append((n, v, u))
+
+    multi_subplot_ok = (
+        2 <= len(groups) <= 4
+        and all(len(items) >= 2 for items in groups.values())
+    )
 
     try:
         if len(groups) <= 1:
             # 单一量纲：单子图
             fig, ax = plt.subplots(figsize=(8, 4.5), dpi=110)
             _draw_bar_group(ax, names, values, units, title or "关键指标")
-        elif len(groups) <= 4:
-            # 2-4 组量纲：纵向多子图（每子图独立 Y 轴）
+        elif multi_subplot_ok:
+            # 2-4 组量纲且每组都 ≥ 2 项：纵向多子图（每子图本身有横向对比）
             fig, axes = plt.subplots(
                 len(groups), 1,
                 figsize=(8, 2.4 * len(groups)),
@@ -127,17 +136,22 @@ def render_chart_to_png(chart_data: list[dict], title: str = "") -> Optional[byt
                 us = [it[2] for it in items]
                 _draw_bar_group(ax, ns, vs, us, f"按 {unit_key} 分组")
         else:
-            # >4 组量纲极少出现，按 max 归一化（百分比）合并展示
+            # 多 unit 但有 group 只有 1 项 — 单图 + 组内归一化
             normalized = []
             for n, v, u in zip(names, values, units):
                 grp_max = max(it[1] for it in groups[u or "无单位"]) or 1
                 normalized.append((n, v / grp_max * 100, f"{v:g}{u}"))
-            fig, ax = plt.subplots(figsize=(8, 4.5), dpi=110)
+            fig, ax = plt.subplots(figsize=(9, 4.8), dpi=110)
             ax.bar([x[0] for x in normalized], [x[1] for x in normalized], color="#5B8DEF")
-            ax.set_title((title or "关键指标") + "（组内归一化 %）")
+            ax.set_title((title or "关键指标") + "（组内归一化 %，柱标签为原值）")
             ax.set_ylabel("组内相对值 %")
-            for i, (n, _v_norm, lbl) in enumerate(normalized):
-                ax.annotate(lbl, xy=(i, normalized[i][1]), ha="center", va="bottom", fontsize=8)
+            ax.set_ylim(0, 115)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.tick_params(axis="x", labelrotation=20, labelsize=9)
+            for i, (n, v_norm, lbl) in enumerate(normalized):
+                ax.annotate(lbl, xy=(i, v_norm), xytext=(0, 3), textcoords="offset points",
+                            ha="center", va="bottom", fontsize=8)
 
         fig.tight_layout()
         buf = io.BytesIO()
