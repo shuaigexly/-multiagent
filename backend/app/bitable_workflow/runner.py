@@ -53,6 +53,35 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
         keep_table_ids={task_tid, output_tid, report_tid, performance_tid},
     )
 
+    # v8.6.14：先写一条 UI 配置引导记录（已归档状态，不参与分析），再写 SEED 任务。
+    # 飞书 OpenAPI 不公开 kanban.group_field / gallery.cover_field，必须用户在 UI
+    # 上 1 次点击配置；飞书前端会持久化记住选择，下次进来自动分组。
+    await bitable_ops.create_record(
+        app_token, task_tid,
+        {
+            "任务标题": "📌 使用提示：看板/画册首次 UI 配置指引（请勿删）",
+            "分析维度": "综合分析",
+            "优先级": "P0 紧急",
+            "状态": "已归档",
+            "进度": 1.0,
+            "背景说明": (
+                "📌 看板/画册视图的一次性 UI 配置（飞书 OpenAPI 限制，无法编程实现）：\n\n"
+                "【分析任务/📊 状态看板】点顶部「分组依据」→ 选「状态」字段\n"
+                "【分析任务/📇 任务画册】点顶部「封面字段」→ 选「任务图像」\n"
+                "【岗位分析/👥 岗位看板】点顶部「分组依据」→ 选「岗位角色」\n"
+                "【岗位分析/🩺 健康度画册】点顶部「封面字段」→ 选「图表」附件\n"
+                "【综合报告/🚦 健康度看板】点顶部「分组依据」→ 选「综合健康度」\n"
+                "【综合报告/📋 报告画册】点顶部「封面字段」→ 选「图表」附件（无则留空）\n"
+                "【数字员工效能/🏅 岗位看板】点顶部「分组依据」→ 选「岗位」\n\n"
+                "⚠️ 飞书 OpenAPI v1 不公开 kanban.group_field / gallery.cover_field 接口"
+                "（飞书 SDK AppTableViewProperty 类型声明只有 filter_info/hidden_fields/"
+                "hierarchy_config，应用层 tenant_access_token 调 PATCH 这两个字段会被"
+                "静默丢弃，仅 user_access_token 走前端 OAuth 才能配）。"
+                "一次手动点选后飞书会持久化记忆，下次进来自动生效。"
+            ),
+        },
+    )
+
     for title, dimension, background, data_source in schema.SEED_TASKS:
         await bitable_ops.create_record(
             app_token,
