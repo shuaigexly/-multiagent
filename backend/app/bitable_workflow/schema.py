@@ -117,6 +117,7 @@ TASK_FIELDS = [
         "property": {"formatter": "0%", "min": 0, "max": 1, "range_customize": True},
     },
     {"field_name": "背景说明", "type": TEXT_FIELD_TYPE},
+    {"field_name": "依赖任务编号", "type": TEXT_FIELD_TYPE},  # 逗号分隔任务编号，如 "1,3"；只有这些任务全部已完成才会启动本任务
     {"field_name": "数据源", "type": TEXT_FIELD_TYPE},  # 用户粘贴 CSV / markdown / 纯文本作为分析输入
     {
         "field_name": "任务图像",

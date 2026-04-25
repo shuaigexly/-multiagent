@@ -143,6 +143,27 @@ class AgentMemory(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class AgentPromptHint(Base):
+    """Prompt 自演化 — 把高质量反思 promote 为 system_prompt 注入条目。
+
+    base_agent._call_llm 启动时按 (tenant_id, agent_id, active=True) 拉取条目，
+    拼到 SYSTEM_PROMPT 末尾。每个 (tenant, agent) 最多 _MAX_HINTS 条，超出 FIFO 替换。
+    """
+    __tablename__ = "agent_prompt_hint"
+    __table_args__ = (
+        Index("ix_agent_prompt_hint_tenant_agent", "tenant_id", "agent_id", "active"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), nullable=False, default="default")
+    agent_id = Column(String(64), nullable=False)
+    rule_text = Column(Text, nullable=False)         # 提炼后的规则（1-2 句，祈使句）
+    source_summary = Column(Text, nullable=False)    # 来源 reflection 原文
+    score = Column(Integer, nullable=False, default=0)  # 0-10 LLM-judge 分
+    active = Column(Integer, nullable=False, default=1)  # 1/0 — 软删除
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class FeishuBotEvent(Base):
     __tablename__ = "feishu_bot_events"
 

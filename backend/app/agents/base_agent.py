@@ -289,13 +289,26 @@ class BaseAgent(ABC):
                 tier="fast",
             )
             if reflection_text:
+                stripped = reflection_text.strip()
                 await store_memory(
                     agent_id=self.agent_id,
                     task_text=task_description,
-                    summary=reflection_text.strip(),
+                    summary=stripped,
                     kind="reflection",
                 )
-                logger.info("[%s] reflection stored (%d chars)", self.agent_id, len(reflection_text))
+                logger.info("[%s] reflection stored (%d chars)", self.agent_id, len(stripped))
+
+                # Prompt 自演化：评分 → ≥8 分则 promote 入 SYSTEM_PROMPT 注入池
+                if os.getenv("LLM_PROMPT_EVOLUTION", "1") != "0":
+                    try:
+                        from app.core.prompt_evolution import maybe_promote
+
+                        await maybe_promote(agent_id=self.agent_id, reflection_text=stripped)
+                    except Exception as promote_exc:
+                        logger.debug(
+                            "[%s] prompt promote skipped: %s",
+                            self.agent_id, promote_exc,
+                        )
         except Exception as exc:
             logger.debug("[%s] reflection write skipped: %s", self.agent_id, exc)
 
@@ -405,6 +418,16 @@ class BaseAgent(ABC):
         from app.agents.tools import list_tool_names
         from app.core.llm_client import call_llm, call_llm_with_tools
         from app.core.model_router import ModelTier, select_tier
+        from app.core.prompt_evolution import fetch_active_hints, format_hints_block
+
+        # Prompt 自演化：把 promote 过的高分反思规则注入 SYSTEM_PROMPT 末尾
+        evolved_block = ""
+        if os.getenv("LLM_PROMPT_EVOLUTION", "1") != "0":
+            try:
+                hints = await fetch_active_hints(self.agent_id)
+                evolved_block = format_hints_block(hints)
+            except Exception as exc:
+                logger.debug("[%s] hints fetch skipped: %s", self.agent_id, exc)
 
         tier = (
             force_tier
@@ -474,7 +497,7 @@ class BaseAgent(ABC):
             "```\n"
             "硬性要求：health 必填；actions 至少 3 条；不要写 [任务1] 这类占位符。\n"
         )
-        full_system = SAFETY_PREFIX + self.SYSTEM_PROMPT + METADATA_REQUIREMENT + TOOL_HINT
+        full_system = SAFETY_PREFIX + self.SYSTEM_PROMPT + evolved_block + METADATA_REQUIREMENT + TOOL_HINT
         if tools_available:
             return await call_llm_with_tools(
                 system_prompt=full_system,

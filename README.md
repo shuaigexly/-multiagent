@@ -533,7 +533,34 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.5（当前） — Multi-modal Vision / 反思日志 / 优先级 + DAG 共享
+### v7.6（当前） — Prompt 自演化 + 任务依赖图
+
+让 agent 真正"越用越聪明"，让多任务能形成 DAG 业务流。
+
+**🌱 Prompt 自演化（`app/core/prompt_evolution.py` + `models.AgentPromptHint`）**
+- 每次 agent 写完反思后，FAST 档 LLM 给反思打分（0-10）+ 提炼成 1-2 句祈使句
+- 4 维评判：普适性 / 可执行 / 简洁性 / 不重复；分数 ≥ 8 才 promote
+- 落库 `agent_prompt_hint` 表：`(tenant_id, agent_id, rule_text, score, active)`
+- FIFO cap：每个 (tenant, agent) 最多 5 条 active；超出 → 最旧的 active=0
+- 重复规则去重（同 rule_text 直接复用，不写新行）
+- `base_agent._call_llm` 启动时调 `fetch_active_hints(agent_id)` 拼到 SYSTEM_PROMPT 末尾
+- 形成正反馈：agent 反思 → 高分 promote → 下次任务 system_prompt 自动带这条经验
+- 环境变量 `LLM_PROMPT_EVOLUTION=0` 关闭
+
+**🔗 任务依赖图（schema + scheduler）**
+- 分析任务表新增「依赖任务编号」文本字段：用户填 `1, 3` 或 `T0001, T0003`
+- scheduler 启动 cycle 时构建全表 `任务编号 → 状态` 索引
+- 每条 pending 任务先检查依赖：所有依赖任务 `已完成` 才能领取，否则当前阶段写「⏸ 等待依赖任务：T0001(分析中)」
+- 容错宽松：支持中文分号/换行/逗号/T 前缀混用；引用不存在的任务编号视为未完成
+- 形成简单 DAG：A 完成 → 触发 B；B+C 完成 → 触发 D（用户在 Bitable 里填好依赖即可）
+
+**🧪 测试**
+- 新增 `tests/test_evolution_deps.py`（13 cases）：
+  - prompt promote 各分支（低分跳过/SKIP/解析失败/写入成功/dedup）
+  - dep 解析（空/全完成/部分待定/未知/中文分隔/T 前缀/换行）
+- 全套件 102 → **115 passing**
+
+### v7.5 — Multi-modal Vision / 反思日志 / 优先级 + DAG 共享
 
 **👁️ Multi-modal Vision（`app/core/vision.py` + `inspect_image` 工具）**
 - 适配任意 OpenAI vision 协议模型：GLM-4V / GPT-4o / DeepSeek-VL / Qwen-VL

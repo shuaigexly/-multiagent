@@ -11,6 +11,7 @@
 import asyncio
 import logging
 import os
+import re
 import socket
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -127,6 +128,61 @@ def _parse_feishu_time(value) -> datetime | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+async def _build_dep_index(app_token: str, task_tid: str) -> dict[str, str]:
+    """构建 任务编号 → 状态 索引，供依赖检查使用。
+
+    任务编号 字段类型为 AutoNumber，飞书会以序列号字符串返回（如 '1', '2', '3'）。
+    若该字段缺失或返回结构异常，统一以空字符串兜底，让依赖检查降级为通过。
+    """
+    index: dict[str, str] = {}
+    try:
+        rows = await bitable_ops.list_records(app_token, task_tid, max_records=200)
+    except Exception as exc:
+        logger.debug("dep index list_records failed (skip dep check): %s", exc)
+        return index
+    for r in rows:
+        f = r.get("fields") or {}
+        num = f.get("任务编号")
+        # AutoNumber 在 SDK 中可能返回 dict {"value": [{"text": "1"}]} 或 直接字符串
+        num_str = ""
+        if isinstance(num, str):
+            num_str = num.strip()
+        elif isinstance(num, dict):
+            value = num.get("value")
+            if isinstance(value, list) and value:
+                first = value[0]
+                num_str = (first.get("text") if isinstance(first, dict) else str(first)) or ""
+        elif isinstance(num, (int, float)):
+            num_str = str(int(num))
+        if num_str:
+            index[num_str.lstrip("T0").lstrip("0") or num_str] = f.get("状态") or ""
+    return index
+
+
+def _unmet_dependencies(dep_field: object, dep_index: dict[str, str]) -> list[str]:
+    """解析依赖任务编号字段，返回未完成的依赖列表。
+
+    格式宽松：
+      - "1, 3"  / "T0001, T0003" / "1；3" / "1\n3" 都识别
+      - 缺省 / 空白 / 解析失败 → 视为无依赖
+    """
+    if not dep_field:
+        return []
+    raw = str(dep_field) if not isinstance(dep_field, str) else dep_field
+    parts = [p.strip().lstrip("T0").lstrip("0") for p in re.split(r"[,，;；\n\s]+", raw) if p.strip()]
+    unmet: list[str] = []
+    for num in parts:
+        if not num:
+            continue
+        status = dep_index.get(num)
+        if status is None:
+            # 引用了不存在的任务编号 — 容错：视为未完成（用户应改正字段）
+            unmet.append(f"T{num}(未知)")
+        elif status != Status.COMPLETED:
+            unmet.append(f"T{num}({status or '空状态'})")
+    return unmet
 
 
 def _is_stale_analyzing(fields: dict) -> bool:
@@ -310,6 +366,9 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
         ]
         logger.info("Phase 1 picked %d tasks by priority: %s", len(pending), prio_summary)
 
+    # 任务依赖图：构建 任务编号 → status 的全表索引（便于检查依赖）
+    dep_index = await _build_dep_index(app_token, task_tid)
+
     for record in pending:
         rid = record.get("record_id", "?")
         fields = record.get("fields", {})
@@ -317,6 +376,19 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
 
         # 绑定 task_id 上下文 — 此后所有 logger.* 调用自动带上 task_id，便于聚合查询
         set_task_context(task_id=rid)
+
+        # 任务依赖检查：「依赖任务编号」中的所有任务必须 已完成 才能启动
+        unmet_deps = _unmet_dependencies(fields.get("依赖任务编号"), dep_index)
+        if unmet_deps:
+            stage_msg = f"⏸ 等待依赖任务：{', '.join(unmet_deps[:3])}"
+            try:
+                await bitable_ops.update_record(
+                    app_token, task_tid, rid, {"当前阶段": stage_msg}
+                )
+            except Exception as upd_exc:
+                logger.debug("dep wait stage update failed: %s", upd_exc)
+            logger.info("Task [%s] blocked by deps: %s", task_title, unmet_deps)
+            continue
 
         try:
             # 标记为「分析中」并回读校验 owner，降低多实例重复领取概率。
