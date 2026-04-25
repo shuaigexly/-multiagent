@@ -159,8 +159,12 @@ async def run_plan_execute(
         "保持上述角色的专业框架与方法论；不要写元数据块、不要罗列章节，"
         "用 200-400 字直接给出针对此子问题的精准答案。"
     )
-    sub_answers: list[str] = []
-    for idx, step in enumerate(plan, 1):
+    # v8.6.10：之前 5 个 sub-question for 串行执行 = 5×30s ≈ 150s（CEO Wave3 主要耗时来源）。
+    # 子问题相互独立（plan 阶段已要求"独立可回答"），改 asyncio.gather 并行 = ~30s，
+    # 任务整体提速 ~3-5×。失败用 try/except per-item 包裹，单个 sub-Q 失败不阻塞其他。
+    import asyncio as _asyncio
+
+    async def _run_step(idx: int, step: dict) -> str:
         exec_prompt = (
             _EXECUTE_PROMPT
             .replace("{idx}", str(idx))
@@ -181,7 +185,11 @@ async def run_plan_execute(
         except Exception as exc:
             logger.warning("plan_execute step %s failed: %s", idx, exc)
             ans = f"（子问题 {idx} 执行失败：{exc}）"
-        sub_answers.append(f"### [{idx}] {step.get('step', '')}\n{truncate_with_marker(ans, 1500)}")
+        return f"### [{idx}] {step.get('step', '')}\n{truncate_with_marker(ans, 1500)}"
+
+    sub_answers: list[str] = list(await _asyncio.gather(
+        *[_run_step(i, s) for i, s in enumerate(plan, 1)]
+    ))
 
     # ------ Phase 3: Synthesize ------
     synth_prompt = (
