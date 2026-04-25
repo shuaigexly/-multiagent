@@ -351,6 +351,9 @@ async def _patch_view_filter(
     else:
         encoded_value = str(filter_value)
 
+    # v8.6.8：之前 PATCH 只设 filter_info，飞书 UI 上每次切换页面提示"存在未保存的视图"
+    # —— 因为 hidden_fields / hierarchy_config 留 null，UI 把视图视为"半改"状态。
+    # 这里同时显式 set hidden_fields=[]（对 grid 合法），让 property 处于"完整初始化"。
     payload = {
         "property": {
             "filter_info": {
@@ -358,7 +361,8 @@ async def _patch_view_filter(
                 "conditions": [
                     {"field_id": fid, "operator": filter_operator, "value": encoded_value}
                 ],
-            }
+            },
+            "hidden_fields": [],
         }
     }
     patch_url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view_id}"
