@@ -53,7 +53,7 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
         keep_table_ids={task_tid, output_tid, report_tid, performance_tid},
     )
 
-    for title, dimension, background in schema.SEED_TASKS:
+    for title, dimension, background, data_source in schema.SEED_TASKS:
         await bitable_ops.create_record(
             app_token,
             task_tid,
@@ -64,6 +64,7 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
                 "状态": schema.Status.PENDING,
                 "进度": 0,
                 "背景说明": background,
+                "数据源": data_source,
             },
         )
 

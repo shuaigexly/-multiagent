@@ -113,10 +113,21 @@ class TestSeedData:
 
     def test_seed_tasks_format(self):
         for task in SEED_TASKS:
-            assert len(task) == 3, "种子任务格式：(标题, 分析维度, 背景说明)"
-            title, dimension, background = task
-            assert title and dimension and background
+            assert len(task) == 4, "v8.6.5 种子任务格式：(标题, 分析维度, 背景说明, 数据源)"
+            title, dimension, background, data_source = task
+            assert title and dimension and background and data_source
 
     def test_seed_tasks_dimensions_valid(self):
-        for _, dimension, _ in SEED_TASKS:
+        for _, dimension, _, _ in SEED_TASKS:
             assert dimension in ANALYSIS_DIMENSIONS, f"维度 {dimension!r} 不在合法值列表中"
+
+    def test_seed_tasks_have_real_data_source(self):
+        """v8.6.5：每个 SEED 必须带可解析的数据源（CSV/markdown/json），否则 6 个 agent
+        全部基于背景说明跑空，输出"内容干巴巴"。
+        """
+        for title, _, _, data_source in SEED_TASKS:
+            # 至少要有数字或 CSV 分隔符，避免纯文字任务说明误判为"数据源"
+            assert any(c.isdigit() for c in data_source), \
+                f"{title} 数据源里没数字，等于没数据"
+            assert "," in data_source or "|" in data_source or "\n" in data_source, \
+                f"{title} 数据源不是结构化数据"
