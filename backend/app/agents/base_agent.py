@@ -14,6 +14,9 @@ from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
+# Strong references for fire-and-forget background tasks（避免 asyncio.create_task GC）
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
 
 def _escape_xml(text: str) -> str:
     return (
@@ -25,7 +28,21 @@ def _escape_xml(text: str) -> str:
 
 
 def _safe_prompt_text(value: object, max_chars: int = 1500) -> str:
-    return _escape_xml(str(value or "")[:max_chars])
+    """飞书上下文/上游分析切片 — 同时做 prompt injection 消毒（v7.7 修复）。
+
+    feishu_context 来自飞书文档/任务/日历，文档内容是用户可控的；之前只做 XML 转义
+    没过 injection guard，恶意文档可绕过 prompt 防护层。这里统一过一遍。
+    """
+    raw = str(value or "")[:max_chars]
+    # 只对足够长的内容做 sanitize（短字符串如时间戳/姓名跳过避免误伤）
+    if len(raw) > 30:
+        try:
+            from app.core.prompt_guard import sanitize
+
+            raw = sanitize(raw, source="feishu_context").text
+        except Exception:
+            pass
+    return _escape_xml(raw)
 
 
 def _format_feishu_context(ctx: Optional[dict]) -> str:
@@ -115,6 +132,14 @@ class BaseAgent(ABC):
         feishu_context: Optional[dict] = None,
         user_instructions: Optional[str] = None,
     ) -> AgentResult:
+        # 入口统一消毒 — 让 memory query / plan_execute / reflection 全部用 sanitized 版本
+        try:
+            from app.core.prompt_guard import sanitize
+
+            task_description = sanitize(task_description, source="user_task").text
+        except Exception:
+            pass
+
         # 召回长期记忆 — 同岗位过往相似任务的结论摘要
         memory_block = ""
         try:
@@ -150,6 +175,7 @@ class BaseAgent(ABC):
                     task_description=task_description,
                     upstream_block=upstream_block,
                     max_steps=int(os.getenv("LLM_PLAN_MAX_STEPS", "5")),
+                    memory_block=memory_block,
                 )
             except Exception as exc:
                 logger.warning("[%s] plan_execute failed, falling back to single-shot: %s", self.agent_id, exc)
@@ -243,10 +269,13 @@ class BaseAgent(ABC):
         # 异步反思日志 — 后台 fire-and-forget，不阻塞主流程
         if os.getenv("LLM_REFLECTION_LOG", "1") != "0" and result.confidence_hint > 0:
             try:
-                asyncio.create_task(
+                t = asyncio.create_task(
                     self._write_reflection(task_description, result),
                     name=f"reflect-{self.agent_id}",
                 )
+                # 强引用避免 task 在弱引用下被 GC（Python 3.12 已知坑）
+                _BACKGROUND_TASKS.add(t)
+                t.add_done_callback(_BACKGROUND_TASKS.discard)
             except RuntimeError:
                 # 没有运行中的事件循环 — 测试场景下静默忽略
                 pass
@@ -336,11 +365,9 @@ class BaseAgent(ABC):
         feishu_context: Optional[dict],
         user_instructions: Optional[str] = None,
     ) -> str:
-        # Prompt injection 防护：消毒所有用户来源输入
+        # task_description 已在 analyze 入口消毒；这里只补 user_instructions / data_summary
         from app.core.prompt_guard import sanitize
 
-        guard_task = sanitize(task_description, source="user_task")
-        task_description = guard_task.text
         if user_instructions:
             user_instructions = sanitize(user_instructions, source="user_instructions").text
 

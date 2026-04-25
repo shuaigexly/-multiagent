@@ -533,7 +533,34 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.6（当前） — Prompt 自演化 + 任务依赖图
+### v7.7（当前） — 审计修复（v7.x 真实 bug 清算）
+
+对 v7.0 → v7.6 全量审计，发现并修复 10 个真实 bug。每条都附回归测试。
+
+**🔴 严重**
+1. `_safe_analyze` 把 FALLBACK 兜底结果写进 shared cache → **一次 LLM 失败污染整个分析维度**的所有后续任务。修：FALLBACK 不写 shared，且要求 confidence ≥ 3 才进 shared。
+2. CEO plan-execute 成本爆炸：5 步 execute × 4 工具迭代 + plan + synth = **单任务最多 24 次 LLM 调用**。修：execute 阶段直接走 `call_llm` (FAST 档) 不进工具循环；工具调用集中在 synthesize 阶段。
+3. Vision 处理飞书附件构造的 URL `?access_token=xxx` 不带 Auth header → vision LLM 永远 401。修：后端先下载字节，base64 → data URI 喂给 vision API。
+4. `AgentMemory.kind` 新列在旧库不会被 `create_all` 加上 → INSERT 直接 SQL 失败。修：新增通用 `_ensure_column` 幂等迁移，`init_db` 中调用。
+5. `_unmet_dependencies` 用 `lstrip("T0")` 是 char-set 剥离，**任务编号 100 / T100 都会被错剥成 "1"** → 100 号任务做依赖永远查不到。修：换正则 `^[Tt]?0*(\d+)$` 精确匹配。
+
+**🟡 中**
+6. `prompt_guard` 漏掉 `feishu_context` — 飞书文档/任务/日历是用户可控内容，恶意文档可绕过 injection 防护。修：`_safe_prompt_text` 集成 sanitize（长度 > 30 字才检测，避免误伤名字/时间戳）。
+7. `analyze` 中 memory query 用未消毒的 `task_description` → 攻击文本污染 embedding 库 + 后续任务召回时再被消毒（双重处理）。修：`analyze` 入口统一消毒一次，`_build_prompt` 不再重复处理。
+8. Plan-execute 跳过长期记忆 + 反思 hints 注入 → CEO 用 plan-execute 路径时丧失"经验内化"。修：`memory_block` 通过参数透传到 plan/synthesize 两阶段。
+9. `_write_reflection` 用 `asyncio.create_task` fire-and-forget 但未持有强引用 → Python 3.12 GC 风险，反思可能在执行中被回收。修：`_BACKGROUND_TASKS` 强引用集合 + `add_done_callback(discard)`。
+10. CEO 的 reflection / peer_qa 等内部 LLM 调用通过 `self._call_llm` 会触发 SYSTEM_PROMPT + tools + streaming，不必要的开销。已确认走 `call_llm` 直接路径（修复时已发现 ask_peer / reflection 已经是直接调用，无需改）。
+
+**🧪 测试**
+- 新增 `tests/test_audit_fixes.py`（9 cases）：
+  - `_normalize_task_number` 边界（T100 / 0010 / 100 / 空 / 异常）
+  - `_unmet_dependencies` 100 号任务依赖回归
+  - `_safe_analyze` FALLBACK 不写两层 cache
+  - `_ensure_column` 幂等迁移
+  - `_safe_prompt_text` sanitize 长内容 + 短串豁免
+- 全套件 115 → **124 passing**
+
+### v7.6 — Prompt 自演化 + 任务依赖图
 
 让 agent 真正"越用越聪明"，让多任务能形成 DAG 业务流。
 

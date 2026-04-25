@@ -68,6 +68,9 @@ async def _enrich_with_vision(task_description: str, fields: dict) -> str:
     if not os.getenv("LLM_VISION_MODEL", "").strip():
         return task_description
 
+    import base64
+    import httpx
+
     from app.core.vision import analyze_image
     from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 
@@ -79,24 +82,35 @@ async def _enrich_with_vision(task_description: str, fields: dict) -> str:
         return task_description
 
     descriptions: list[str] = []
-    for idx, item in enumerate(images[:3], 1):
-        if not isinstance(item, dict):
-            continue
-        file_token = item.get("file_token") or ""
-        if not file_token:
-            continue
-        # 飞书附件下载 URL（带 access_token query）
-        download_url = (
-            f"{base}/open-apis/drive/v1/medias/{file_token}/download"
-            f"?extra=&access_token={token}"
-        )
-        try:
-            text = await analyze_image(download_url)
-        except Exception as exc:
-            logger.warning("vision analyze failed idx=%s err=%s", idx, exc)
-            text = None
-        if text:
-            descriptions.append(f"【图像 {idx} 描述】\n{text}")
+    # 关键修复：Vision LLM 不能直接访问飞书带鉴权的 URL（永远 401），
+    # 必须由后端先下载字节，再 base64 → data URI 喂给 vision API。
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as http:
+        for idx, item in enumerate(images[:3], 1):
+            if not isinstance(item, dict):
+                continue
+            file_token = item.get("file_token") or ""
+            if not file_token:
+                continue
+            try:
+                resp = await http.get(
+                    f"{base}/open-apis/drive/v1/medias/{file_token}/download",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                resp.raise_for_status()
+                img_bytes = resp.content
+            except Exception as exc:
+                logger.warning("vision: download attachment failed idx=%s err=%s", idx, exc)
+                continue
+
+            mime = resp.headers.get("content-type", "image/png").split(";", 1)[0].strip() or "image/png"
+            data_uri = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('ascii')}"
+            try:
+                text = await analyze_image(data_uri)
+            except Exception as exc:
+                logger.warning("vision analyze failed idx=%s err=%s", idx, exc)
+                text = None
+            if text:
+                descriptions.append(f"【图像 {idx} 描述】\n{text}")
 
     if not descriptions:
         return task_description
@@ -236,14 +250,18 @@ async def _safe_analyze(
             logger.warning("[%s] fallback build failed: %s", agent.agent_id, fb_exc)
             return _error_result(agent.agent_id, agent.agent_name, exc)
 
-    # Cache the successful result for crash recovery + cross-task DAG share
-    if not _is_failed_result(result):
+    # Cache the successful result.
+    # 关键：FALLBACK 兜底结果不能写 shared cache（会污染同维度其他任务）；
+    #      task cache 也只在 confidence>=3 才写，避免低质量重试时把 1 分输出锁定下来。
+    is_fallback = _is_fallback_result(result)
+    is_failed = _is_failed_result(result)
+    if not is_failed:
         try:
             from app.bitable_workflow.agent_cache import set_cached_result, set_shared_result
 
-            if task_id:
+            if task_id and not is_fallback:
                 await set_cached_result(task_id, agent.agent_id, input_hash, result)
-            if dimension:
+            if dimension and not is_fallback and (result.confidence_hint or 5) >= 3:
                 await set_shared_result(dimension, agent.agent_id, input_hash, result)
         except Exception as cache_exc:
             logger.debug("agent cache write skipped: %s", cache_exc)

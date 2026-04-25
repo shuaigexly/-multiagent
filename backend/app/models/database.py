@@ -216,10 +216,33 @@ async def _ensure_task_user_instructions_column(conn):
                 raise
 
 
+async def _ensure_column(conn, table_name: str, column_name: str, ddl_type: str, default: str = ""):
+    """通用幂等 ALTER ADD COLUMN — create_all 不会给已存在表加新列，需手动迁移。"""
+    def has_column(sync_conn) -> bool:
+        inspector = inspect(sync_conn)
+        try:
+            cols = inspector.get_columns(table_name)
+        except Exception:
+            return True  # 表本身不存在 → create_all 会建好整张表（含此列），无需 ALTER
+        return any(c["name"] == column_name for c in cols)
+
+    if await conn.run_sync(has_column):
+        return
+    from sqlalchemy.exc import OperationalError
+    suffix = f" DEFAULT {default}" if default else ""
+    try:
+        await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}{suffix}"))
+    except OperationalError as exc:
+        if "duplicate column" not in str(exc).lower():
+            raise
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_task_user_instructions_column(conn)
+        # v7.5+ 幂等迁移：旧库已存在 agent_memory 表时 create_all 不会加 kind 列
+        await _ensure_column(conn, "agent_memory", "kind", "VARCHAR(32)", default="'case'")
 
 
 async def get_db():

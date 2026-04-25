@@ -58,10 +58,12 @@ async def run_plan_execute(
     task_description: str,
     upstream_block: str = "",
     max_steps: int = 5,
+    memory_block: str = "",
 ) -> str:
     """执行 plan→execute→synthesize 三阶段，返回最终 raw 文本。
 
     任一阶段失败抛异常，由调用方走 fallback 路径。
+    memory_block 由调用方传入（包含长期记忆 + 反思 hints），统一注入到 plan/synthesize 阶段。
     """
     from app.core.llm_client import call_llm
 
@@ -70,6 +72,8 @@ async def run_plan_execute(
         task=task_description[:1500],
         upstream_block=upstream_block[:3000] if upstream_block else "<no_upstream/>",
     )
+    if memory_block:
+        plan_prompt = memory_block + "\n\n" + plan_prompt
     plan_raw = await call_llm(
         system_prompt="你是一位严格的任务分解师。只输出合法 JSON 数组。",
         user_prompt=plan_prompt,
@@ -96,6 +100,8 @@ async def run_plan_execute(
     logger.info("plan_execute.plan agent=%s steps=%s", agent.agent_id, len(plan))
 
     # ------ Phase 2: Execute (each sub-question) ------
+    # 成本控制：execute 阶段直接走 call_llm（FAST 档）+ 不进工具循环，否则
+    # 5 步 × 4 工具迭代 = 20 次 LLM 调用，单任务成本失控。工具调用集中在 synthesize 阶段。
     sub_answers: list[str] = []
     for idx, step in enumerate(plan, 1):
         exec_prompt = _EXECUTE_PROMPT.format(
@@ -107,7 +113,13 @@ async def run_plan_execute(
             upstream_block=upstream_block[:2000] if upstream_block else "<no_upstream/>",
         )
         try:
-            ans = await agent._call_llm(exec_prompt)
+            ans = await call_llm(
+                system_prompt=f"你是「{agent.agent_name}」，正在回答任务的一个聚焦子问题。",
+                user_prompt=exec_prompt,
+                temperature=0.4,
+                max_tokens=600,
+                tier="fast",
+            )
         except Exception as exc:
             logger.warning("plan_execute step %s failed: %s", idx, exc)
             ans = f"（子问题 {idx} 执行失败：{exc}）"
@@ -118,5 +130,7 @@ async def run_plan_execute(
         task=task_description[:1000],
         sub_answers=truncate_with_marker("\n\n".join(sub_answers), 8000),
     )
+    if memory_block:
+        synth_prompt = memory_block + "\n\n" + synth_prompt
     final_raw = await agent._call_llm(synth_prompt, force_tier="deep")
     return final_raw

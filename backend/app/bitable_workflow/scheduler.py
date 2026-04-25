@@ -130,6 +130,23 @@ def _parse_feishu_time(value) -> datetime | None:
         return None
 
 
+_DEP_NUM_RE = re.compile(r"^[Tt]?0*(\d+)$")
+
+
+def _normalize_task_number(raw: str) -> str:
+    """规范化任务编号：'T0001' / '0001' / '1' / 'T100' 都归一为 '1' / '100' 等纯数字字符串。
+
+    旧实现用 lstrip('T0').lstrip('0') 是 char-set 剥离，对 '100' 会变成空字符串 → 100 号任务永远查不到。
+    """
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    m = _DEP_NUM_RE.match(s)
+    if m:
+        return m.group(1) or "0"
+    return s  # 异常格式原样返回，由调用方判定为"未知"
+
+
 async def _build_dep_index(app_token: str, task_tid: str) -> dict[str, str]:
     """构建 任务编号 → 状态 索引，供依赖检查使用。
 
@@ -146,18 +163,19 @@ async def _build_dep_index(app_token: str, task_tid: str) -> dict[str, str]:
         f = r.get("fields") or {}
         num = f.get("任务编号")
         # AutoNumber 在 SDK 中可能返回 dict {"value": [{"text": "1"}]} 或 直接字符串
-        num_str = ""
+        raw_num = ""
         if isinstance(num, str):
-            num_str = num.strip()
+            raw_num = num
         elif isinstance(num, dict):
             value = num.get("value")
             if isinstance(value, list) and value:
                 first = value[0]
-                num_str = (first.get("text") if isinstance(first, dict) else str(first)) or ""
+                raw_num = (first.get("text") if isinstance(first, dict) else str(first)) or ""
         elif isinstance(num, (int, float)):
-            num_str = str(int(num))
-        if num_str:
-            index[num_str.lstrip("T0").lstrip("0") or num_str] = f.get("状态") or ""
+            raw_num = str(int(num))
+        normalized = _normalize_task_number(raw_num)
+        if normalized:
+            index[normalized] = f.get("状态") or ""
     return index
 
 
@@ -171,7 +189,7 @@ def _unmet_dependencies(dep_field: object, dep_index: dict[str, str]) -> list[st
     if not dep_field:
         return []
     raw = str(dep_field) if not isinstance(dep_field, str) else dep_field
-    parts = [p.strip().lstrip("T0").lstrip("0") for p in re.split(r"[,，;；\n\s]+", raw) if p.strip()]
+    parts = [_normalize_task_number(p) for p in re.split(r"[,，;；\n\s]+", raw) if p.strip()]
     unmet: list[str] = []
     for num in parts:
         if not num:
