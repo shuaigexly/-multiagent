@@ -533,7 +533,39 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.1（当前） — Agent 真实工具调用 + 多租户传播
+### v7.2（当前） — Agent 跨岗 Q&A + 图表渲染 + LLM token 流式
+
+继续把 agent 推向"真实可用"：可互相追问、能产出可视化、思考过程实时透出。
+
+**🤝 跨 agent Q&A 协议（`app/agents/peer_qa.py`）**
+- 新工具 `ask_peer(agent_id, question)` —— CEO 助理在汇总时可对 Wave1/2 同侪发起定向追问
+- 通过 `ContextVar` 把同侪 `AgentResult` 池注入 Wave3 LLM 调用作用域
+- 被问的 peer 拿到自己的完整分析作为上下文，发起短 prompt 二次 LLM 调用回答（200 字内、temperature=0.3）
+- 严格防环：peer 在被 ask 时不会再触发 ask_peer
+- 解决"CEO 凭静态文本拼凑、信息丢失"的痛点 → 现在能动态澄清"留存率具体多少？"
+
+**📊 自动图表渲染（`app/bitable_workflow/chart_renderer.py`）**
+- chart_data JSON → matplotlib PNG bytes（headless Agg backend）
+- 上传到飞书云空间 `/drive/v1/medias/upload_all`，附件挂到 Bitable「图表」字段（type=Attachment）
+- 支持中文 emoji 标签（DejaVu Sans + 中文 fallback）
+- matplotlib 缺失 / 上传失败 / 数据点 < 2 → 优雅降级，仍写文本「图表数据」字段
+- schema.py 岗位分析表追加 `图表` 附件字段（FieldType=17 Attachment）
+
+**📡 LLM token 流式输出（`call_llm_streaming`）**
+- 新增 `core/llm_client.call_llm_streaming(on_token=...)`，OpenAI streaming 协议
+- `base_agent._call_llm` 检测当前 task_id 时自动启用流式，每累计 ~30 字符或换行推一次 `agent.token` SSE 事件
+- 前端 `subscribeTaskProgress` 增加 `agent.token` 监听，UI 可实时显示 agent "正在思考"
+- include_usage=True 让最后 chunk 仍能记账到 budget tracker
+- 环境变量 `LLM_STREAMING=0` 可全局关闭
+
+**🧪 测试**
+- 新增 `tests/test_peer_qa_and_chart.py`（5 cases）：peer pool 设置/清理、ask_peer 错误路径、ask_peer LLM 调用上下文、chart 空输入返 None、PNG magic header 校验
+- 全套件 65 → **70 passing**
+
+**📦 依赖**
+- 新增 `matplotlib==3.9.2`（chart 渲染）
+
+### v7.1 — Agent 真实工具调用 + 多租户传播
 
 本轮聚焦 **agent 实际能力提升**：让 7 岗 LLM 不再凭空估算，而是在分析过程中主动调用工具拉真实数据。
 

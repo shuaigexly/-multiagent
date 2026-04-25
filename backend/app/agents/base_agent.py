@@ -2,6 +2,7 @@
 import asyncio
 import json as _json
 import logging
+import os
 import re
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -281,6 +282,45 @@ class BaseAgent(ABC):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
+
+        # 流式：若当前 task_id 有 SSE 订阅者在监听，启用 token 增量推送
+        from app.core.llm_client import call_llm_streaming
+        from app.core.observability import get_task_id
+
+        task_id = get_task_id()
+        agent_id = self.agent_id
+
+        if task_id and os.getenv("LLM_STREAMING", "1") != "0":
+            from app.bitable_workflow import progress_broker
+
+            buffer: list[str] = []
+
+            async def _push(chunk: str) -> None:
+                buffer.append(chunk)
+                # 累计 ~120 字符或遇换行才推一次，避免每个 token 都广播
+                if len(buffer) >= 30 or "\n" in chunk:
+                    text = "".join(buffer)
+                    buffer.clear()
+                    await progress_broker.publish(
+                        task_id, "agent.token",
+                        {"agent_id": agent_id, "chunk": text},
+                    )
+
+            result = await call_llm_streaming(
+                system_prompt=full_system,
+                user_prompt=user_prompt,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                on_token=_push,
+            )
+            # flush 残留 buffer
+            if buffer:
+                await progress_broker.publish(
+                    task_id, "agent.token",
+                    {"agent_id": agent_id, "chunk": "".join(buffer)},
+                )
+            return result
+
         return await call_llm(
             system_prompt=full_system,
             user_prompt=user_prompt,

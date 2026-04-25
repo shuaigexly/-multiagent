@@ -171,6 +171,7 @@ def agent_output_fields(task_table_id: str) -> list[dict]:
         },
         {"field_name": "分析思路", "type": TEXT_FIELD_TYPE},
         {"field_name": "图表数据", "type": TEXT_FIELD_TYPE},
+        {"field_name": "图表", "type": ATTACHMENT_FIELD_TYPE, "ui_type": "Attachment"},
         {
             "field_name": "生成时间",
             "type": CREATED_TIME_FIELD_TYPE,

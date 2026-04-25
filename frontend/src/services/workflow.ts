@@ -78,7 +78,7 @@ export async function listRecords(
 
 export interface ProgressEvent {
   task_id: string;
-  event_type: 'task.started' | 'wave.completed' | 'task.done' | 'task.error';
+  event_type: 'task.started' | 'wave.completed' | 'task.done' | 'task.error' | 'agent.token';
   payload: Record<string, unknown>;
   ts: string;
 }
@@ -109,7 +109,7 @@ export function subscribeTaskProgress(
       es = new EventSource(
         `${BASE_URL}/api/v1/workflow/stream/${recordId}?token=${encodeURIComponent(resp.data.token)}`,
       );
-      ['task.started', 'wave.completed', 'task.done', 'task.error'].forEach((evt) =>
+      ['task.started', 'wave.completed', 'task.done', 'task.error', 'agent.token'].forEach((evt) =>
         es?.addEventListener(evt, handler as EventListener),
       );
       es.onerror = () => {

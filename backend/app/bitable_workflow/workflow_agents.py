@@ -219,10 +219,16 @@ async def run_task_pipeline(
     if all(_is_failed_result(result) for result in all_upstream):
         raise RuntimeError("所有上游 Agent 均执行失败，任务无可用结果")
 
-    ceo_result = await _safe_analyze(
-        _WAVE3_AGENT, task_description,
-        upstream=all_upstream, data_summary=data_summary, task_id=task_id,
-    )
+    # 把 wave1+wave2 注入 ContextVar，供 ask_peer 工具在 CEO LLM 调用中使用
+    from app.agents.peer_qa import clear_peer_pool, set_peer_pool
+    peer_token = set_peer_pool(all_upstream)
+    try:
+        ceo_result = await _safe_analyze(
+            _WAVE3_AGENT, task_description,
+            upstream=all_upstream, data_summary=data_summary, task_id=task_id,
+        )
+    finally:
+        clear_peer_pool(peer_token)
     if _is_failed_result(ceo_result):
         raise RuntimeError(f"CEO 助理汇总失败: {ceo_result.raw_output}")
     logger.info("Wave 3 complete: ceo_assistant")
@@ -433,6 +439,8 @@ async def write_agent_outputs(
 
     生成时间字段为 CreatedTime 类型，由飞书自动填充，无需手动写入。
     """
+    from app.bitable_workflow.chart_renderer import render_chart_to_png, upload_chart_to_bitable
+
     written = 0
     for result in results:
         summary = _format_sections(result, max_chars=5000)
@@ -441,6 +449,24 @@ async def write_agent_outputs(
             if result.action_items
             else ""
         )
+        # 自动渲染 chart_data → PNG → 上传 Bitable 附件字段
+        chart_attachment_token: Optional[str] = None
+        if result.chart_data:
+            try:
+                png = render_chart_to_png(
+                    result.chart_data,
+                    title=f"{result.agent_name} · 关键指标",
+                )
+                if png:
+                    chart_attachment_token = await upload_chart_to_bitable(
+                        app_token,
+                        output_table_id,
+                        png,
+                        file_name=f"{result.agent_id}_chart.png",
+                    )
+            except Exception as render_exc:
+                logger.warning("chart render/upload failed for %s: %s", result.agent_id, render_exc)
+
         fields: dict = {
             "任务标题": task_title,
             "岗位角色": _role_with_emoji(result.agent_name),
@@ -452,6 +478,8 @@ async def write_agent_outputs(
             "分析思路": truncate_with_marker(result.thinking_process, 3000, "\n...[已截断]") if result.thinking_process else "",
             "图表数据": truncate_with_marker(_json.dumps(result.chart_data, ensure_ascii=False), 3000, "\n...[已截断]") if result.chart_data else "",
         }
+        if chart_attachment_token:
+            fields["图表"] = [{"file_token": chart_attachment_token}]
         if task_record_id:
             fields["关联任务"] = [{"record_id": task_record_id}]
         try:

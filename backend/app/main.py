@@ -23,9 +23,10 @@ from app.core.event_emitter import EventEmitter
 configure_logging()
 logger = logging.getLogger(__name__)
 
-# 注册 agent 工具（fetch_url / bitable_query / feishu_sheet / python_calc）
+# 注册 agent 工具（fetch_url / bitable_query / feishu_sheet / python_calc / ask_peer）
 # 装饰器在导入时自动注册到 app.agents.tools._REGISTRY
 from app.agents import builtin_tools  # noqa: F401
+from app.agents import peer_qa  # noqa: F401
 
 _sentry_dsn = os.getenv("SENTRY_DSN", "")
 if _sentry_dsn:

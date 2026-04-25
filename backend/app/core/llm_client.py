@@ -114,6 +114,88 @@ async def _call_feishu_aily(system_prompt: str, user_prompt: str) -> str:
     return await call_aily(combined)
 
 
+async def call_llm_streaming(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    temperature: float = 0.7,
+    max_tokens: int = 2000,
+    on_token: Any = None,
+) -> str:
+    """流式 LLM 调用：每个 token 通过 on_token(chunk:str) 增量回调，最终返回完整内容。
+
+    on_token 可以是 sync 或 async 函数；返回值忽略。
+    用于把 LLM 思考实时推送到 SSE 频道，让前端"看到 agent 思考"。
+    feishu_aily 不支持流式 → 回退普通调用并触发一次性回调。
+    """
+    provider = get_llm_provider().strip().lower()
+    if provider == "feishu_aily":
+        text = await call_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        if on_token:
+            res = on_token(text)
+            if asyncio.iscoroutine(res):
+                await res
+        return text
+
+    try:
+        await check_budget(strict=True)
+    except BudgetExceeded as exc:
+        logger.warning("Streaming LLM refused — budget exceeded: %s", exc)
+        raise
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=get_llm_api_key(), base_url=get_llm_base_url())
+    chunks: list[str] = []
+    prompt_tokens = 0
+    completion_tokens = 0
+
+    async with _get_llm_semaphore():
+        stream = await client.chat.completions.create(
+            model=get_llm_model(),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        async for event in stream:
+            # usage 仅在最后一个 chunk 上出现（include_usage=True）
+            if getattr(event, "usage", None):
+                prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
+                completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
+            if not event.choices:
+                continue
+            delta = event.choices[0].delta
+            piece = getattr(delta, "content", None)
+            if not piece:
+                continue
+            chunks.append(piece)
+            if on_token:
+                try:
+                    res = on_token(piece)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception as cb_exc:
+                    logger.debug("on_token callback failed: %s", cb_exc)
+
+    if prompt_tokens or completion_tokens:
+        try:
+            await record_usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+        except Exception as exc:
+            logger.debug("record_usage failed: %s", exc)
+
+    return "".join(chunks).strip()
+
+
 async def call_llm_with_tools(
     system_prompt: str,
     user_prompt: str,
