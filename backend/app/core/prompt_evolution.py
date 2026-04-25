@@ -52,7 +52,7 @@ async def maybe_promote(*, agent_id: str, reflection_text: str) -> Optional[int]
 
         verdict = await call_llm(
             system_prompt="你是 prompt-engineering 评审，只按指定格式回复，不写多余内容。",
-            user_prompt=_JUDGE_PROMPT.format(reflection=reflection_text[:1500]),
+            user_prompt=_JUDGE_PROMPT.replace("{reflection}", reflection_text[:1500]),
             temperature=0,
             max_tokens=200,
             tier="fast",

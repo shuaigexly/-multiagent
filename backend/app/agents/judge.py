@@ -54,9 +54,10 @@ async def judge_best(
     try:
         verdict = await call_llm(
             system_prompt="你是 LLM-as-Judge，严格按规则评判输出质量，不写多余话。",
-            user_prompt=_JUDGE_PROMPT.format(
-                task=truncate_with_marker(task_description, 800),
-                candidates=candidates_block,
+            user_prompt=(
+                _JUDGE_PROMPT
+                .replace("{task}", truncate_with_marker(task_description, 800))
+                .replace("{candidates}", candidates_block)
             ),
             temperature=0,
             max_tokens=120,

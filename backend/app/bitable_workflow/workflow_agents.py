@@ -84,6 +84,10 @@ async def _enrich_with_vision(task_description: str, fields: dict) -> str:
     descriptions: list[str] = []
     # 关键修复：Vision LLM 不能直接访问飞书带鉴权的 URL（永远 401），
     # 必须由后端先下载字节，再 base64 → data URI 喂给 vision API。
+    # v7.8 再修：大图必须降采样压缩，否则 5MB → base64 7MB → ~1.7M tokens 直接爆 context。
+    MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 4MB 原始上限（兜底）
+    MAX_AFTER_RESIZE = 600 * 1024       # 压缩后 600KB 目标（合理 vision 输入）
+
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as http:
         for idx, item in enumerate(images[:3], 1):
             if not isinstance(item, dict):
@@ -102,7 +106,31 @@ async def _enrich_with_vision(task_description: str, fields: dict) -> str:
                 logger.warning("vision: download attachment failed idx=%s err=%s", idx, exc)
                 continue
 
+            if len(img_bytes) > MAX_IMAGE_BYTES:
+                logger.warning("vision: image %s too large (%d bytes), skipping", idx, len(img_bytes))
+                continue
+
+            # 大图压缩：若 PIL 可用且图片 > 600KB，按长边 1280 缩放 + JPEG 75 质量
             mime = resp.headers.get("content-type", "image/png").split(";", 1)[0].strip() or "image/png"
+            if len(img_bytes) > MAX_AFTER_RESIZE:
+                try:
+                    from io import BytesIO
+
+                    from PIL import Image
+
+                    img = Image.open(BytesIO(img_bytes))
+                    img = img.convert("RGB") if img.mode in ("RGBA", "P") else img
+                    img.thumbnail((1280, 1280), Image.LANCZOS)
+                    out = BytesIO()
+                    img.save(out, format="JPEG", quality=75, optimize=True)
+                    img_bytes = out.getvalue()
+                    mime = "image/jpeg"
+                    logger.info("vision: image %s resized to %d bytes", idx, len(img_bytes))
+                except ImportError:
+                    logger.warning("vision: PIL unavailable, large image %d bytes may exceed context", len(img_bytes))
+                except Exception as exc:
+                    logger.warning("vision: resize failed idx=%s err=%s — using original", idx, exc)
+
             data_uri = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('ascii')}"
             try:
                 text = await analyze_image(data_uri)

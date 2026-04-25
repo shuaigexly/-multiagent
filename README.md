@@ -533,7 +533,29 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.7（当前） — 审计修复（v7.x 真实 bug 清算）
+### v7.8（当前） — 第二轮审计修复（继续清 bug）
+
+第一轮把表面问题修了，再深翻一遍又找出 6 个真实 bug，每条都加回归测试。
+
+**🔴 严重**
+11. **流式 LLM 路径是死代码** — 启动时 `builtin_tools` 自动注册 4 个工具，`tools_available` 永远为 True → `call_llm_with_tools` 分支抢占，前端 SSE `agent.token` 事件**永远不会被发送**。修：`call_llm_with_tools` 加 `on_token` 参数，最后一轮（强制 `tool_choice=none`）走流式协议；`base_agent` 把 SSE callback 透传过去。
+12. **`.format()` 在含花括号的输入下抛 `KeyError`** — `plan_execute` 三个 prompt + `judge` + `prompt_evolution` 五处用 `.format()`。任务描述含 `{"users": ...}` 这类 JSON 直接崩。base_agent 早就改成 replace 了，新模块全部退化回 format。修：5 处全改为 `.replace("{key}", val)`。
+13. **Vision base64 大图爆 context** — 5MB 截图 → base64 7MB → ~1.7M tokens。修：4MB 原始上限 + 600KB 压缩阈值，超过时 PIL 自动 thumbnail (1280px) + JPEG 75 质量；PIL 缺失时 warn 并跳过大图。
+14. **Plan JSON 解析在 LLM 加废话时直接崩** — LLM 回答常带 "Sure, here is the plan:" 前置文本或末尾解释。原解析仅去 `\`\`\`json` 围栏，前置普通文本就 `json.loads` 失败 → plan-execute 整段抛错回退到单轮 prompt。修：新增 `_extract_first_json_array(text)` 用栈式扫描提取第一个完整 `[...]`，正确处理嵌套、字符串内方括号、转义字符。
+
+**🟡 中**
+15. on_token 同时支持 sync / async — 已通过 `asyncio.iscoroutine` 处理。审计确认无问题。
+16. **Memory 存了带 `[REDACTED:]` 标记的任务** — sanitize 在 analyze 入口提前做了，被 redact 的任务文本仍被 `store_memory` 存入 → 后续召回让 LLM 看到 `[REDACTED:]` 标记反而暗示了攻击痕迹存在。修：`store_memory` 检测到 `[REDACTED:]` 直接跳过入库。
+
+**🧪 测试**
+- 新增 `tests/test_audit_round2.py`（12 cases）：
+  - `_extract_first_json_array` 6 路径（clean / 围栏 / 前置废话 / 嵌套 / 字符串内方括号 / 垃圾）
+  - 5 个 prompt 改用 replace 不再炸 KeyError
+  - `store_memory` REDACTED 任务跳过 + 干净任务正常写入对照
+  - `call_llm_with_tools` 签名含 `on_token`（防回归死代码）
+- 全套件 124 → **136 passing**
+
+### v7.7 — 审计修复（v7.x 真实 bug 清算）
 
 对 v7.0 → v7.6 全量审计，发现并修复 10 个真实 bug。每条都附回归测试。
 

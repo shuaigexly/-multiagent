@@ -223,6 +223,7 @@ async def call_llm_with_tools(
     max_tokens: int = 2000,
     max_tool_iterations: int = 4,
     tier: str | None = None,
+    on_token: Any = None,
 ) -> str:
     """带工具调用的 LLM 入口（OpenAI function calling 兼容协议）。
 
@@ -271,13 +272,58 @@ async def call_llm_with_tools(
             logger.warning("Tool loop aborted — budget exceeded at iter %s: %s", iteration, exc)
             break
 
+        # 关键修复（v7.8）：tools 路径之前完全不流式 → SSE agent.token 事件永不触发。
+        # 现在最后一轮（已强制 tool_choice=none）走流式协议，让前端能实时看 agent 输出。
+        is_final_iter = iteration == max_tool_iterations - 1
+        use_stream = bool(on_token) and is_final_iter
+
         async with _get_llm_semaphore():
             try:
+                if use_stream:
+                    chunks: list[str] = []
+                    final_prompt_tokens = 0
+                    final_completion_tokens = 0
+                    stream = await client.chat.completions.create(
+                        model=cfg.model,
+                        messages=messages,
+                        tools=tools_schema,
+                        tool_choice="none",
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                    )
+                    async for event in stream:
+                        if getattr(event, "usage", None):
+                            final_prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
+                            final_completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
+                        if not event.choices:
+                            continue
+                        delta = event.choices[0].delta
+                        piece = getattr(delta, "content", None)
+                        if not piece:
+                            continue
+                        chunks.append(piece)
+                        try:
+                            res = on_token(piece)
+                            if asyncio.iscoroutine(res):
+                                await res
+                        except Exception as cb_exc:
+                            logger.debug("on_token callback failed: %s", cb_exc)
+                    if final_prompt_tokens or final_completion_tokens:
+                        try:
+                            await record_usage(
+                                prompt_tokens=final_prompt_tokens,
+                                completion_tokens=final_completion_tokens,
+                            )
+                        except Exception as exc:
+                            logger.debug("record_usage failed: %s", exc)
+                    return "".join(chunks).strip() or last_content
                 resp = await client.chat.completions.create(
                     model=cfg.model,
                     messages=messages,
                     tools=tools_schema,
-                    tool_choice="auto" if iteration < max_tool_iterations - 1 else "none",
+                    tool_choice="auto" if not is_final_iter else "none",
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )

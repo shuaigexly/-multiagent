@@ -118,8 +118,13 @@ async def store_memory(
     """落库一条 agent 记忆。失败仅 warning，不阻塞主流程。
 
     kind: 'case' (默认 — 任务输出) | 'reflection' (反思日志)
+
+    v7.8 修：含 [REDACTED:] 的恶意任务不写 memory，避免污染长期检索池。
     """
     if not agent_id or not task_text or not summary:
+        return
+    if "[REDACTED:" in task_text:
+        logger.info("store_memory skip — task contains injection redaction marks")
         return
     tenant = get_tenant_id() or "default"
     try:

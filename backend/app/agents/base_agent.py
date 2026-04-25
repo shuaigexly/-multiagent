@@ -526,13 +526,45 @@ class BaseAgent(ABC):
         )
         full_system = SAFETY_PREFIX + self.SYSTEM_PROMPT + evolved_block + METADATA_REQUIREMENT + TOOL_HINT
         if tools_available:
-            return await call_llm_with_tools(
+            # 流式：若当前任务被 SSE 订阅 → 工具路径最后一轮也流式输出 token（v7.8 修复死代码）
+            from app.core.observability import get_task_id
+
+            sse_task_id = get_task_id()
+            stream_cb = None
+            if sse_task_id and os.getenv("LLM_STREAMING", "1") != "0":
+                from app.bitable_workflow import progress_broker
+
+                buf: list[str] = []
+
+                async def _push_tools(chunk: str) -> None:
+                    buf.append(chunk)
+                    if len(buf) >= 30 or "\n" in chunk:
+                        text = "".join(buf)
+                        buf.clear()
+                        await progress_broker.publish(
+                            sse_task_id, "agent.token",
+                            {"agent_id": self.agent_id, "chunk": text},
+                        )
+
+                stream_cb = _push_tools
+
+            result = await call_llm_with_tools(
                 system_prompt=full_system,
                 user_prompt=user_prompt,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 tier=tier,
+                on_token=stream_cb,
             )
+            # flush 剩余 buffer
+            if stream_cb is not None and buf:
+                from app.bitable_workflow import progress_broker
+
+                await progress_broker.publish(
+                    sse_task_id, "agent.token",
+                    {"agent_id": self.agent_id, "chunk": "".join(buf)},
+                )
+            return result
 
         # 流式：若当前 task_id 有 SSE 订阅者在监听，启用 token 增量推送
         from app.core.llm_client import call_llm_streaming

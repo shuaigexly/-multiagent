@@ -41,6 +41,52 @@ _EXECUTE_PROMPT = (
 )
 
 
+def _extract_first_json_array(text: str):
+    """从 LLM 输出中提取第一个完整 JSON 数组（容错 markdown 围栏 / 前置废话 / 尾部废话）。
+
+    返回 list[dict] 或 None；失败永不抛异常。
+    """
+    if not text:
+        return None
+    # 第一步：去 markdown 围栏
+    s = text.strip()
+    if s.startswith("```"):
+        s = s.split("```", 2)[1] if s.count("```") >= 2 else s.lstrip("`")
+        if s.lstrip().startswith("json"):
+            s = s.split("\n", 1)[1] if "\n" in s else s[4:]
+    # 第二步：扫描第一个 [ 与匹配的 ]，跟踪转义和字符串内的方括号
+    start = s.find("[")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                candidate = s[start : i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 _SYNTHESIZE_PROMPT = (
     "你已分别回答了下列子问题，现在请把它们整合成一份完整分析。\n\n"
     "<task>\n{task}\n</task>\n\n"
@@ -68,9 +114,12 @@ async def run_plan_execute(
     from app.core.llm_client import call_llm
 
     # ------ Phase 1: Plan ------
-    plan_prompt = _PLAN_PROMPT.format(
-        task=task_description[:1500],
-        upstream_block=upstream_block[:3000] if upstream_block else "<no_upstream/>",
+    # 关键修复（v7.8）：用 replace 而不是 format —— task_description 含 {var} / JSON 花括号
+    # 会让 .format() 抛 KeyError。这与 base_agent.USER_PROMPT_TEMPLATE 已采用的同一防护。
+    plan_prompt = (
+        _PLAN_PROMPT
+        .replace("{task}", task_description[:1500])
+        .replace("{upstream_block}", upstream_block[:3000] if upstream_block else "<no_upstream/>")
     )
     if memory_block:
         plan_prompt = memory_block + "\n\n" + plan_prompt
@@ -82,17 +131,11 @@ async def run_plan_execute(
         tier="standard",
     )
     plan_raw = plan_raw.strip()
-    # 容错：去 ```json 包裹
-    if plan_raw.startswith("```"):
-        plan_raw = plan_raw.split("```", 2)[1]
-        if plan_raw.lstrip().startswith("json"):
-            plan_raw = plan_raw.split("\n", 1)[1] if "\n" in plan_raw else plan_raw[4:]
-    try:
-        plan = json.loads(plan_raw)
-        if not isinstance(plan, list):
-            raise ValueError("plan is not a list")
-    except Exception as exc:
-        raise RuntimeError(f"plan parse failed: {exc}; raw={plan_raw[:300]}")
+    plan = _extract_first_json_array(plan_raw)
+    if plan is None:
+        raise RuntimeError(f"plan parse failed: no JSON array; raw={plan_raw[:300]}")
+    if not isinstance(plan, list):
+        raise RuntimeError(f"plan parse: not a list; raw={plan_raw[:300]}")
 
     plan = [p for p in plan if isinstance(p, dict) and p.get("step")][:max_steps]
     if len(plan) < 2:
@@ -104,13 +147,14 @@ async def run_plan_execute(
     # 5 步 × 4 工具迭代 = 20 次 LLM 调用，单任务成本失控。工具调用集中在 synthesize 阶段。
     sub_answers: list[str] = []
     for idx, step in enumerate(plan, 1):
-        exec_prompt = _EXECUTE_PROMPT.format(
-            idx=idx,
-            total=len(plan),
-            step=step.get("step", "")[:300],
-            why=step.get("why", "")[:200],
-            task=task_description[:1000],
-            upstream_block=upstream_block[:2000] if upstream_block else "<no_upstream/>",
+        exec_prompt = (
+            _EXECUTE_PROMPT
+            .replace("{idx}", str(idx))
+            .replace("{total}", str(len(plan)))
+            .replace("{step}", str(step.get("step", ""))[:300])
+            .replace("{why}", str(step.get("why", ""))[:200])
+            .replace("{task}", task_description[:1000])
+            .replace("{upstream_block}", upstream_block[:2000] if upstream_block else "<no_upstream/>")
         )
         try:
             ans = await call_llm(
@@ -126,9 +170,10 @@ async def run_plan_execute(
         sub_answers.append(f"### [{idx}] {step.get('step', '')}\n{truncate_with_marker(ans, 1500)}")
 
     # ------ Phase 3: Synthesize ------
-    synth_prompt = _SYNTHESIZE_PROMPT.format(
-        task=task_description[:1000],
-        sub_answers=truncate_with_marker("\n\n".join(sub_answers), 8000),
+    synth_prompt = (
+        _SYNTHESIZE_PROMPT
+        .replace("{task}", task_description[:1000])
+        .replace("{sub_answers}", truncate_with_marker("\n\n".join(sub_answers), 8000))
     )
     if memory_block:
         synth_prompt = memory_block + "\n\n" + synth_prompt
