@@ -28,6 +28,7 @@ TABLE_TASK = "分析任务"
 TABLE_AGENT_OUTPUT = "岗位分析"
 TABLE_REPORT = "综合报告"
 TABLE_PERFORMANCE = "数字员工效能"
+TABLE_DATASOURCE = "📚 数据源库"  # v8.6.16 — 独立数据源表（B 方案）
 
 
 class Status:
@@ -227,6 +228,46 @@ def report_fields(task_table_id: str) -> list[dict]:
             "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
         },
     ]
+
+
+DATASOURCE_TYPE_OPTIONS = [
+    {"name": "时间序列指标", "color": 6},
+    {"name": "渠道转化", "color": 8},
+    {"name": "关键词机会", "color": 4},
+    {"name": "功能 RICE", "color": 7},
+    {"name": "用户漏斗", "color": 2},
+    {"name": "财务报表", "color": 3},
+    {"name": "竞品对标", "color": 5},
+    {"name": "其他", "color": 0},
+]
+
+
+# v8.6.16 — 独立数据源表（B 方案）：数据源跟分析任务解耦，便于复用、版本管理、UI 浏览
+DATASOURCE_FIELDS = [
+    {"field_name": "数据集名称", "type": TEXT_FIELD_TYPE},  # 主字段
+    {
+        "field_name": "类型",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": DATASOURCE_TYPE_OPTIONS,
+    },
+    {"field_name": "字段说明", "type": TEXT_FIELD_TYPE},  # 数据列定义说明
+    {"field_name": "原始 CSV", "type": TEXT_FIELD_TYPE},  # 纯 CSV，给 agent 解析
+    {"field_name": "渲染表格", "type": TEXT_FIELD_TYPE},  # markdown table，飞书 UI 友好渲染
+    {
+        "field_name": "数据行数",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {"field_name": "原始数据文件", "type": ATTACHMENT_FIELD_TYPE, "ui_type": "Attachment"},
+    {
+        "field_name": "创建时间",
+        "type": CREATED_TIME_FIELD_TYPE,
+        "ui_type": "CreatedTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
+    },
+]
 
 
 PERFORMANCE_FIELDS = [

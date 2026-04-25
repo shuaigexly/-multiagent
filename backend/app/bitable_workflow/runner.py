@@ -39,6 +39,8 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     output_tid = await create_table(app_token, schema.TABLE_AGENT_OUTPUT, agent_output_fields(task_tid))
     report_tid = await create_table(app_token, schema.TABLE_REPORT, report_fields(task_tid))
     performance_tid = await create_table(app_token, schema.TABLE_PERFORMANCE, schema.PERFORMANCE_FIELDS)
+    # v8.6.16 — 第 5 张表「📚 数据源库」：每行一个数据集，分析任务通过名称引用
+    datasource_tid = await create_table(app_token, schema.TABLE_DATASOURCE, schema.DATASOURCE_FIELDS)
 
     # 为每张表创建附加视图（看板/画册）以提升可视化效果
     # 每张表的第一个视图是默认网格视图（创建表时自动生成），这里追加额外视图
@@ -50,8 +52,24 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     # 看起来像一列空数据。统一在 setup 末尾把这些清理掉。
     await _cleanup_auto_created_artifacts(
         app_token,
-        keep_table_ids={task_tid, output_tid, report_tid, performance_tid},
+        keep_table_ids={task_tid, output_tid, report_tid, performance_tid, datasource_tid},
     )
+
+    # v8.6.16 — 写入数据源表（B 方案）：把 7 张 CSV 拆出来作为可复用数据集
+    from app.bitable_workflow.demo_data import DATASETS, csv_to_markdown
+    for ds_name, ds_type, field_doc, csv_text in DATASETS:
+        n_rows = max(0, len([ln for ln in csv_text.strip().splitlines() if ln.strip()]) - 1)
+        await bitable_ops.create_record(
+            app_token, datasource_tid,
+            {
+                "数据集名称": ds_name,
+                "类型": ds_type,
+                "字段说明": field_doc,
+                "原始 CSV": csv_text,
+                "渲染表格": csv_to_markdown(csv_text),
+                "数据行数": n_rows,
+            },
+        )
 
     # v8.6.14：先写一条 UI 配置引导记录（已归档状态，不参与分析），再写 SEED 任务。
     # 飞书 OpenAPI 不公开 kanban.group_field / gallery.cover_field，必须用户在 UI
@@ -82,7 +100,16 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
         },
     )
 
+    # v8.6.16 — 数据源字段同时存「人看的 markdown 表格」+「机器解析的原始 CSV」。
+    # 飞书 PC/Web 客户端 text 字段会把 markdown 表格渲染成可视化表格，
+    # CSV 留在最末段供 agent 的 data_parser 识别。
     for title, dimension, background, data_source in schema.SEED_TASKS:
+        from app.bitable_workflow.demo_data import csv_to_markdown
+        rendered = (
+            f"{csv_to_markdown(data_source)}\n\n"
+            f"---\n_原始 CSV（agent 解析用，请勿编辑下方原始数据格式）：_\n```\n"
+            f"{data_source}\n```"
+        )
         await bitable_ops.create_record(
             app_token,
             task_tid,
@@ -93,7 +120,7 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
                 "状态": schema.Status.PENDING,
                 "进度": 0,
                 "背景说明": background,
-                "数据源": data_source,
+                "数据源": rendered,
             },
         )
 
@@ -106,6 +133,7 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
             "output": output_tid,
             "report": report_tid,
             "performance": performance_tid,
+            "datasource": datasource_tid,
         },
     }
 

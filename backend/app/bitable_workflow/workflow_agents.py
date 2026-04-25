@@ -333,6 +333,14 @@ async def run_task_pipeline(
     # 会阻塞事件循环数百毫秒。放进线程池避免拖延 SSE 推送 / 健康检查 / 其他并行任务。
     data_summary = None
     data_source_text = (task_fields.get("数据源") or "").strip()
+    # v8.6.16：数据源字段为「markdown 表格 + 原始 CSV」组合格式（飞书 UI 友好渲染）。
+    # 优先抽出 ```...``` 围栏内的纯 CSV（机器解析），找不到再回退给 parse_content
+    # 自识别（它能直接消化 markdown 表格 / CSV / JSON 各种形态）。
+    if data_source_text:
+        import re as _re
+        m = _re.search(r"```(?:csv)?\s*\n?([\s\S]+?)\n?```", data_source_text)
+        if m:
+            data_source_text = m.group(1).strip()
     if data_source_text:
         try:
             from app.core.data_parser import parse_content

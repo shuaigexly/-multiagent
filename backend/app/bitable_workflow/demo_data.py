@@ -18,6 +18,24 @@
   · COMPETITOR_CSV        — 5 个竞品对比（MAU/付费率/价格）
 """
 
+def csv_to_markdown(csv_text: str) -> str:
+    """v8.6.16：CSV → Markdown table，让飞书 text 字段渲染成可视化表格而不是一坨字。
+
+    飞书 PC/Web 客户端的多行文本字段会渲染 markdown 表格语法。空行以下的内容会
+    作为段落保留。
+    """
+    lines = [ln for ln in csv_text.strip().splitlines() if ln.strip()]
+    if not lines:
+        return csv_text
+    rows = [[c.strip() for c in ln.split(",")] for ln in lines]
+    n_cols = max(len(r) for r in rows)
+    rows = [r + [""] * (n_cols - len(r)) for r in rows]
+    head = "| " + " | ".join(rows[0]) + " |"
+    sep = "| " + " | ".join(["---"] * n_cols) + " |"
+    body = "\n".join("| " + " | ".join(r) + " |" for r in rows[1:])
+    return f"{head}\n{sep}\n{body}"
+
+
 PRODUCT_BACKGROUND = (
     "InsightHub 是一款面向中文知识工作者的 AI 写作 / 资料整理工具。"
     "三个月前完成天使轮，月烧 80 万元，目标 18 个月 runway 内做到月营收 200 万。"
@@ -113,6 +131,54 @@ COMPETITOR_CSV = (
     "Kimi 浏览,650,1.2,0(免费),长文阅读,免费但变现弱\n"
     "InsightHub(本品),11.2,4.5,66,知识工作者写作,垂直深度"
 )
+
+
+# v8.6.16 — 数据源元数据（写入「📚 数据源库」表，每行一个数据集）
+# (name, type, field_doc, csv)
+DATASETS: list[tuple[str, str, str, str]] = [
+    (
+        "InsightHub Q1 月度指标",
+        "时间序列指标",
+        "8 项核心指标在 1-3 月的逐月数值（用户量/留存/付费/单位经济学/内容产出）",
+        MONTHLY_KPI_CSV,
+    ),
+    (
+        "渠道获客漏斗 Q1",
+        "渠道转化",
+        "6 渠道：曝光→点击→注册→付费 4 步漏斗 + CAC（拼多多式投放数据）",
+        CHANNEL_FUNNEL_CSV,
+    ),
+    (
+        "SEO 关键词机会库",
+        "关键词机会",
+        "8 个关键词的搜索量/竞争度/当前排名/搜索意图/机会评分",
+        SEO_KEYWORDS_CSV,
+    ),
+    (
+        "Q2 候选功能 RICE 评分",
+        "功能 RICE",
+        "6 个候选产品功能的 Reach/Impact/Confidence/Effort/总分/优先级",
+        FEATURE_RICE_CSV,
+    ),
+    (
+        "本月用户激活漏斗",
+        "用户漏斗",
+        "5 步漏斗：访问首页→注册→激活→留存→付费 + 每步流失原因诊断",
+        USER_FUNNEL_CSV,
+    ),
+    (
+        "Q1 损益表 P&L",
+        "财务报表",
+        "营收/服务器/LLM API/内容创作者/市场推广/团队薪资/Burn/Runway/毛利率",
+        QUARTERLY_PNL_CSV,
+    ),
+    (
+        "AI 工具竞品对标",
+        "竞品对标",
+        "5 个竞品 + 本品 InsightHub：MAU/付费率/客单价/主打场景/差异化",
+        COMPETITOR_CSV,
+    ),
+]
 
 
 # 任务种子（标题, 维度, 背景说明, 数据源 — 共 7 条覆盖全分析维度）

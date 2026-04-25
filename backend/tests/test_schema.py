@@ -121,6 +121,24 @@ class TestSeedData:
         for _, dimension, _, _ in SEED_TASKS:
             assert dimension in ANALYSIS_DIMENSIONS, f"维度 {dimension!r} 不在合法值列表中"
 
+    def test_datasets_metadata_complete(self):
+        """v8.6.16：DATASETS 每行 4-tuple，CSV 至少 3 行（表头+2 数据行），描述非空。"""
+        from app.bitable_workflow.demo_data import DATASETS, csv_to_markdown
+        assert len(DATASETS) >= 7, "至少 7 条数据集覆盖 InsightHub 全场景"
+        for name, dtype, doc, csv in DATASETS:
+            assert name and dtype and doc and csv
+            lines = [ln for ln in csv.strip().splitlines() if ln.strip()]
+            assert len(lines) >= 3, f"{name} 数据集行数过少"
+            md = csv_to_markdown(csv)
+            assert "|" in md and "---" in md, f"{name} markdown 转换失败"
+
+    def test_csv_to_markdown_basic(self):
+        from app.bitable_workflow.demo_data import csv_to_markdown
+        out = csv_to_markdown("a,b,c\n1,2,3\n4,5,6")
+        assert out.startswith("| a | b | c |")
+        assert "| --- | --- | --- |" in out
+        assert "| 1 | 2 | 3 |" in out
+
     def test_seed_tasks_have_real_data_source(self):
         """v8.6.5：每个 SEED 必须带可解析的数据源（CSV/markdown/json），否则 6 个 agent
         全部基于背景说明跑空，输出"内容干巴巴"。
