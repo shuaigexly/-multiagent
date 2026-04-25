@@ -118,6 +118,24 @@ class AuditLog(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class AgentMemory(Base):
+    """Agent 长期记忆 — 跨任务召回相似案例。"""
+    __tablename__ = "agent_memory"
+    __table_args__ = (
+        Index("ix_agent_memory_tenant_agent", "tenant_id", "agent_id"),
+        Index("ix_agent_memory_created", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), nullable=False, default="default")
+    agent_id = Column(String(64), nullable=False)
+    task_hash = Column(String(64), nullable=False)
+    task_text = Column(Text, nullable=False)
+    summary = Column(Text, nullable=False)
+    embedding_json = Column(Text, nullable=False)  # JSON list of floats
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class FeishuBotEvent(Base):
     __tablename__ = "feishu_bot_events"
 

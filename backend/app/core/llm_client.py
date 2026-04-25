@@ -31,7 +31,9 @@ async def call_llm(
     *,
     temperature: float = 0.7,
     max_tokens: int = 2000,
+    tier: str | None = None,
 ) -> str:
+    """tier 可选 'fast' / 'standard' / 'deep'；缺省为 standard。"""
     # Budget 闸门：超额前直接拦截，避免空跑 LLM 请求再记账
     try:
         await check_budget(strict=True)
@@ -46,11 +48,19 @@ async def call_llm(
 
     if provider != "openai_compatible":
         logger.warning("Unknown LLM_PROVIDER=%r, falling back to openai_compatible", provider)
+
+    # 选档
+    from app.core.model_router import ModelTier, resolve_model
+
+    cfg = resolve_model(tier or ModelTier.STANDARD)
     return await _call_openai_compatible(
         system_prompt,
         user_prompt,
         temperature=temperature,
         max_tokens=max_tokens,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        model=cfg.model,
     )
 
 
@@ -59,19 +69,24 @@ async def _call_openai_compatible(
     user_prompt: str,
     temperature: float,
     max_tokens: int,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
 ) -> str:
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(
-        api_key=get_llm_api_key(),
-        base_url=get_llm_base_url(),
+        api_key=api_key or get_llm_api_key(),
+        base_url=base_url or get_llm_base_url(),
     )
+    use_model = model or get_llm_model()
     last_err: Exception | None = None
     for attempt in range(3):
         try:
             async with _get_llm_semaphore():
                 resp = await client.chat.completions.create(
-                    model=get_llm_model(),
+                    model=use_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -121,6 +136,7 @@ async def call_llm_streaming(
     temperature: float = 0.7,
     max_tokens: int = 2000,
     on_token: Any = None,
+    tier: str | None = None,
 ) -> str:
     """流式 LLM 调用：每个 token 通过 on_token(chunk:str) 增量回调，最终返回完整内容。
 
@@ -150,14 +166,17 @@ async def call_llm_streaming(
 
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=get_llm_api_key(), base_url=get_llm_base_url())
+    from app.core.model_router import ModelTier, resolve_model
+
+    cfg = resolve_model(tier or ModelTier.STANDARD)
+    client = AsyncOpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
     chunks: list[str] = []
     prompt_tokens = 0
     completion_tokens = 0
 
     async with _get_llm_semaphore():
         stream = await client.chat.completions.create(
-            model=get_llm_model(),
+            model=cfg.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -203,6 +222,7 @@ async def call_llm_with_tools(
     temperature: float = 0.7,
     max_tokens: int = 2000,
     max_tool_iterations: int = 4,
+    tier: str | None = None,
 ) -> str:
     """带工具调用的 LLM 入口（OpenAI function calling 兼容协议）。
 
@@ -223,6 +243,7 @@ async def call_llm_with_tools(
 
     from openai import AsyncOpenAI
     from app.agents.tools import dispatch_tool, get_openai_tools_schema
+    from app.core.model_router import ModelTier, resolve_model
 
     tools_schema = get_openai_tools_schema()
     if not tools_schema:
@@ -232,9 +253,11 @@ async def call_llm_with_tools(
             user_prompt=user_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            tier=tier,
         )
 
-    client = AsyncOpenAI(api_key=get_llm_api_key(), base_url=get_llm_base_url())
+    cfg = resolve_model(tier or ModelTier.STANDARD)
+    client = AsyncOpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -251,7 +274,7 @@ async def call_llm_with_tools(
         async with _get_llm_semaphore():
             try:
                 resp = await client.chat.completions.create(
-                    model=get_llm_model(),
+                    model=cfg.model,
                     messages=messages,
                     tools=tools_schema,
                     tool_choice="auto" if iteration < max_tool_iterations - 1 else "none",

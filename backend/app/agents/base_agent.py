@@ -110,6 +110,16 @@ class BaseAgent(ABC):
         feishu_context: Optional[dict] = None,
         user_instructions: Optional[str] = None,
     ) -> AgentResult:
+        # 召回长期记忆 — 同岗位过往相似任务的结论摘要
+        memory_block = ""
+        try:
+            from app.core.memory import format_memory_hits, query_memories
+
+            hits = await query_memories(agent_id=self.agent_id, task_text=task_description, k=3)
+            memory_block = format_memory_hits(hits)
+        except Exception as exc:
+            logger.debug("[%s] memory recall skipped: %s", self.agent_id, exc)
+
         prompt = await self._build_prompt(
             task_description,
             data_summary,
@@ -117,6 +127,9 @@ class BaseAgent(ABC):
             feishu_context,
             user_instructions,
         )
+        if memory_block:
+            prompt = memory_block + "\n\n" + prompt
+
         raw = await self._call_llm(prompt)
         if settings.reflection_enabled:
             verdict = await self._reflect_on_output(raw, task_description)
@@ -132,7 +145,56 @@ class BaseAgent(ABC):
                     raw = await self._call_llm(feedback_prompt)
                 except Exception as e:
                     logger.debug("[%s] reflection refinement call failed, keeping original output: %s", self.agent_id, e)
-        return self._parse_output(raw)
+
+        result = self._parse_output(raw)
+
+        # 自动质量重试 — confidence < 3 用 DEEP 档重跑一次（最多 1 次）
+        retry_threshold = int(os.getenv("LLM_QUALITY_RETRY_THRESHOLD", "3"))
+        if (
+            os.getenv("LLM_QUALITY_RETRY", "1") != "0"
+            and 0 < result.confidence_hint < retry_threshold
+        ):
+            logger.info(
+                "[%s] confidence=%s < %s — retrying with DEEP tier",
+                self.agent_id, result.confidence_hint, retry_threshold,
+            )
+            try:
+                deeper_prompt = (
+                    prompt
+                    + "\n\n<retry_hint>\n"
+                    f"你之前的输出自评 confidence={result.confidence_hint}/5，"
+                    "现请用更严密的逻辑、更具体的量化数据、更深的归因层级重新输出一次完整分析。\n"
+                    "</retry_hint>"
+                )
+                deeper_raw = await self._call_llm(deeper_prompt, force_tier="deep")
+                deeper = self._parse_output(deeper_raw)
+                # 只有 confidence 真的提高才采纳
+                if deeper.confidence_hint > result.confidence_hint:
+                    logger.info(
+                        "[%s] retry confidence %s → %s, accepted",
+                        self.agent_id, result.confidence_hint, deeper.confidence_hint,
+                    )
+                    result = deeper
+            except Exception as exc:
+                logger.warning("[%s] DEEP retry failed: %s", self.agent_id, exc)
+
+        # 落库长期记忆（首段 sections 作为 summary）
+        try:
+            from app.core.memory import store_memory
+
+            summary = ""
+            if result.sections:
+                summary = (result.sections[0].content or "")[:800]
+            if summary:
+                await store_memory(
+                    agent_id=self.agent_id,
+                    task_text=task_description,
+                    summary=summary,
+                )
+        except Exception as exc:
+            logger.debug("[%s] memory store skipped: %s", self.agent_id, exc)
+
+        return result
 
     async def _build_prompt(
         self,
@@ -211,9 +273,19 @@ class BaseAgent(ABC):
             base_prompt = skill_section + "\n\n" + base_prompt
         return base_prompt
 
-    async def _call_llm(self, user_prompt: str) -> str:
+    async def _call_llm(self, user_prompt: str, *, force_tier: str | None = None) -> str:
         from app.agents.tools import list_tool_names
         from app.core.llm_client import call_llm, call_llm_with_tools
+        from app.core.model_router import ModelTier, select_tier
+
+        tier = (
+            force_tier
+            or select_tier(
+                agent_id=self.agent_id,
+                prompt_len=len(user_prompt),
+                is_summarizer=self.agent_id == "ceo_assistant",
+            ).value
+        )
 
         SAFETY_PREFIX = (
             "你是一位专业分析师助手。"
@@ -281,6 +353,7 @@ class BaseAgent(ABC):
                 user_prompt=user_prompt,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                tier=tier,
             )
 
         # 流式：若当前 task_id 有 SSE 订阅者在监听，启用 token 增量推送
@@ -312,6 +385,7 @@ class BaseAgent(ABC):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 on_token=_push,
+                tier=tier,
             )
             # flush 残留 buffer
             if buffer:
@@ -326,6 +400,7 @@ class BaseAgent(ABC):
             user_prompt=user_prompt,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            tier=tier,
         )
 
     async def _reflect_on_output(self, raw: str, task_description: str) -> str:

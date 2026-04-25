@@ -533,7 +533,48 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.2（当前） — Agent 跨岗 Q&A + 图表渲染 + LLM token 流式
+### v7.3（当前） — 多模型路由 + 长期记忆 + 自动质量重试 + Arq/Alembic 骨架
+
+**🎯 多模型路由（`app/core/model_router.py`）**
+- 三档：FAST（GLM-4-flash 等成本档）/ STANDARD（默认）/ DEEP（GLM-4-plus / DeepSeek-R1 等深度档）
+- `select_tier(agent_id, prompt_len, retry_attempt, confidence, is_summarizer)` 启发式选档：
+  - confidence < 3 或 retry > 0 → DEEP（质量重试）
+  - CEO 助理 / 综合任务 → DEEP
+  - 短 prompt（< 800）非财务岗 → FAST
+- 环境变量 `LLM_FAST_MODEL` / `LLM_DEEP_MODEL` + 各自 `BASE_URL` / `API_KEY` 独立配置；缺省自动回退 STANDARD
+- llm_client.call_llm / call_llm_streaming / call_llm_with_tools 全部接受 `tier=` 参数
+
+**🧠 Agent 长期记忆（`app/core/memory.py` + `models.AgentMemory` 表）**
+- 同岗位过往任务召回：每次 `analyze` 自动检索最相似 top-3 案例注入 prompt
+- 嵌入：优先 OpenAI 兼容 embeddings 接口（设 `LLM_EMBEDDING_MODEL` 启用，如 `embedding-2`），缺失自动回退 hash-based BoW（128 维，中英混合，离线可用）
+- 相似度：纯 Python cosine，无 numpy/qdrant 依赖
+- 自动按 `tenant_id` 隔离；保留每岗最近 200 条扫描，min_similarity=0.25 过滤
+- analyze 完成后落库 task_text + summary + embedding；失败仅 warning
+
+**🔁 自动质量重试**
+- agent 输出后若 `confidence_hint < 3` → 自动用 DEEP 档 + retry_hint 重跑一次
+- 只有重试 confidence 真的提高才采纳；失败保留原版本
+- 环境变量 `LLM_QUALITY_RETRY=0` 关闭、`LLM_QUALITY_RETRY_THRESHOLD=N` 调阈值（默认 3）
+
+**📦 Arq 后台队列骨架（`app/core/arq_queue.py`）**
+- 通过 `USE_ARQ_QUEUE=1` 启用；`workflow_cycle_job` 即一次 `run_one_cycle`
+- 启动 worker：`python -m arq app.core.arq_queue.WorkerSettings`
+- 未启用时继续走 BackgroundTasks 路径，零侵入
+- 为多实例横向扩展做准备（当前单进程足够）
+
+**🗄️ Alembic 迁移骨架（`alembic/`）**
+- 配置 async SQLAlchemy 兼容的 env.py，从 `settings.database_url` 自动注入
+- 第一次：`alembic revision --autogenerate -m "init schema"` → `alembic upgrade head`
+- `init_db.create_all` 仍然兜底，迁移用于后续可控演进
+
+**🧪 测试**
+- 新增 `tests/test_router_memory.py`（12 cases）：tier 启发式选择、env 回退、hash embedding 一致性、相似度排序、prompt 渲染
+- 全套件 70 → **82 passing**
+
+**📦 依赖**
+- `alembic==1.13.3` + `arq==0.26.1`
+
+### v7.2 — Agent 跨岗 Q&A + 图表渲染 + LLM token 流式
 
 继续把 agent 推向"真实可用"：可互相追问、能产出可视化、思考过程实时透出。
 

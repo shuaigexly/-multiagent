@@ -17,3 +17,5 @@ sse-starlette==2.1.3
 cryptography>=44.0.0
 sentry-sdk[fastapi]
 matplotlib==3.9.2
+alembic==1.13.3
+arq==0.26.1
