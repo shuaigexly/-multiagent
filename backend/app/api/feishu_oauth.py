@@ -221,3 +221,32 @@ async def oauth_callback(
         return RedirectResponse(
             url=f"{frontend_origin}/settings?oauth=error&msg={quote(truncate_with_marker(e, 80), safe='')}"
         )
+
+
+@router.post("/oauth/apply-view-config", dependencies=[Depends(require_api_key)])
+async def apply_view_config(app_token: str = Query(..., description="多维表格 app_token")):
+    """v8.6.15：用已存的 user_access_token 给 app_token 的所有看板/画册视图配
+    group_field / cover_field（飞书 OpenAPI tenant token 不开放此能力，必须 user
+    token 走前端身份）。
+
+    前置条件：先走 /oauth/url 拿授权链接 → 用户授权 → callback 存 token。
+    然后调本端点：POST /oauth/apply-view-config?app_token=xxx
+    """
+    user_token = get_user_access_token()
+    if not user_token:
+        # 尝试用 refresh_token 刷新一次
+        try:
+            await refresh_user_token()
+            user_token = get_user_access_token()
+        except Exception as exc:
+            return {"ok": False, "message": f"无 user_access_token，请先走 OAuth 授权: {exc}"}
+        if not user_token:
+            return {"ok": False, "message": "无 user_access_token，请先走 OAuth 授权"}
+
+    try:
+        from app.feishu.user_token_view_setup import configure_view_groups
+        result = await configure_view_groups(app_token, user_token)
+        return {"ok": True, "applied": result["ok"], "failed": result["failed"]}
+    except Exception as exc:
+        logger.error("apply_view_config failed: %s", exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
