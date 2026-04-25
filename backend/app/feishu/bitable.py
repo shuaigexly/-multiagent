@@ -1,5 +1,6 @@
 """飞书多维表格：创建 App、表、字段和记录"""
 import asyncio
+import json
 import logging
 from typing import Optional, Sequence
 
@@ -68,13 +69,27 @@ async def create_view(
     table_id: str,
     view_name: str,
     view_type: str,
+    *,
+    filter_field: str | None = None,
+    filter_operator: str = "is",
+    filter_value: str | None = None,
 ) -> str:
     """创建额外视图（看板/画册/甘特/表单/网格）。返回 view_id。
 
     view_type: "grid" | "kanban" | "gallery" | "gantt" | "form"
-    首个看板视图会自动按第一个 SingleSelect 字段分组；画册视图按第一个附件/单选字段分组。
+    filter_field/filter_operator/filter_value: 可选的视图过滤条件，PATCH /views 后生效。
+      仅 filter_info 在飞书 OpenAPI 公开支持；group_info/cover_field_id 不支持，需 UI 配置。
+
+    v8.6.4 实证：飞书 POST /views 与 PATCH /views 都不接受 kanban group_info / gallery
+    cover_field_id（hidden_fields 在 kanban/gallery 上也被拒，错误码 1254019）。
+    GET /views 详情中也只暴露 filter_info / hidden_fields / hierarchy_config 三类
+    property。kanban 默认分组、画册封面只能由用户首次打开视图后在 UI 中手动选定，
+    或继承表的第一个 SingleSelect / Attachment 字段（飞书 UI 行为，非 API 保证）。
     """
-    return await with_retry(_create_view_impl, app_token, table_id, view_name, view_type)
+    return await with_retry(
+        _create_view_impl, app_token, table_id, view_name, view_type,
+        filter_field, filter_operator, filter_value,
+    )
 
 
 async def _create_view_impl(
@@ -82,6 +97,9 @@ async def _create_view_impl(
     table_id: str,
     view_name: str,
     view_type: str,
+    filter_field: str | None = None,
+    filter_operator: str = "is",
+    filter_value: str | None = None,
 ) -> str:
     token = await get_tenant_access_token()
     base = get_feishu_open_base_url()
@@ -101,9 +119,93 @@ async def _create_view_impl(
             f"创建视图失败: {view_name} code={data.get('code')} msg={data.get('msg')}"
         )
     try:
-        return data["data"]["view"]["view_id"]
+        view_id = data["data"]["view"]["view_id"]
     except (KeyError, TypeError) as exc:
         raise RuntimeError(f"创建视图响应结构异常: {data}") from exc
+
+    # 仅当传入过滤条件时才发 PATCH（filter_info 是飞书公开支持的 property key）
+    if filter_field and filter_value is not None and view_id:
+        await _patch_view_filter(
+            app_token=app_token, table_id=table_id, view_id=view_id, view_type=view_type,
+            filter_field=filter_field, filter_operator=filter_operator, filter_value=filter_value,
+        )
+    return view_id
+
+
+async def _patch_view_filter(
+    *, app_token: str, table_id: str, view_id: str, view_type: str,
+    filter_field: str, filter_operator: str, filter_value: str,
+) -> None:
+    """通过 PATCH /views/{view_id} 设置 filter_info（飞书唯一公开支持的 property 配置）。
+
+    kanban/gallery/grid 都接受 filter_info（实测）。
+
+    SingleSelect 字段（type=3）value 必须是 JSON 编码的 option_id 数组：
+      {"value": '["optXXX"]'}
+    其它类型（text/number/date）value 是普通字符串。
+    """
+    token = await get_tenant_access_token()
+    base = get_feishu_open_base_url()
+    rf = await _get_http_client().get(
+        f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    rf.raise_for_status()
+    fields = rf.json().get("data", {}).get("items", []) or []
+    field_obj = next((f for f in fields if f.get("field_name") == filter_field), None)
+    if not field_obj:
+        logger.warning("filter field %r not found in table %s", filter_field, table_id)
+        return
+    fid = field_obj.get("field_id")
+    ftype = field_obj.get("type")
+
+    # SingleSelect/MultiSelect: 把 value（选项名）转成 ["option_id"] 的 JSON 字符串
+    encoded_value: str
+    if ftype in (SINGLE_SELECT_FIELD_TYPE, 4):  # 3=SingleSelect 4=MultiSelect
+        opts = (field_obj.get("property") or {}).get("options") or []
+        opt_id = next((o.get("id") for o in opts if o.get("name") == filter_value), None)
+        if not opt_id:
+            logger.warning(
+                "filter option %r not found in field %r (avail=%s)",
+                filter_value, filter_field, [o.get("name") for o in opts],
+            )
+            return
+        encoded_value = json.dumps([opt_id], ensure_ascii=True)
+    else:
+        encoded_value = str(filter_value)
+
+    payload = {
+        "property": {
+            "filter_info": {
+                "conjunction": "and",
+                "conditions": [
+                    {"field_id": fid, "operator": filter_operator, "value": encoded_value}
+                ],
+            }
+        }
+    }
+    patch_url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view_id}"
+    r = await _get_http_client().patch(
+        patch_url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=payload,
+    )
+    try:
+        body = r.json()
+    except Exception:
+        body = {"raw": r.text[:300]}
+    if r.status_code >= 400 or body.get("code", 0) != 0:
+        logger.warning(
+            "view filter patch failed status=%s code=%s msg=%s body=%s view_type=%s payload=%s",
+            r.status_code, body.get("code"), body.get("msg"),
+            json.dumps(body, ensure_ascii=False)[:400], view_type,
+            json.dumps(payload, ensure_ascii=False)[:400],
+        )
+    else:
+        logger.info(
+            "Set filter on view %s: %s %s %r",
+            view_id, filter_field, filter_operator, filter_value,
+        )
 
 
 async def batch_add_records(app_token: str, table_id: str, records: list[dict]) -> int:

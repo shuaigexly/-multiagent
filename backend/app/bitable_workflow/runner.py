@@ -167,27 +167,46 @@ async def _create_extra_views(
     report_tid: str,
     performance_tid: str,
 ) -> None:
-    """为四张业务表创建看板/画册视图，提升多维表格视觉可读性。
+    """为四张业务表创建看板/画册/过滤视图，提升多维表格视觉可读性。
 
-    飞书在创建看板视图时会自动选中第一个 SingleSelect 字段作为分组，
-    因此 schema.py 中 SingleSelect 字段的排列顺序决定默认看板分组。
+    v8.6.4 真相：飞书 OpenAPI 不公开 kanban group_info / gallery cover_field_id
+    （PATCH /views 试 group_info、kanban_field_id、group_field_id 全部 200 OK
+    但被静默丢弃；hidden_fields 在 kanban/gallery 上 1254019 显式拒绝）。
+    可编程的 property 仅 filter_info / hierarchy_config / hidden_fields(grid)。
+
+    因此本版本：
+      - 仍创建 kanban / gallery（首次打开会被 UI 自动选第一个 SingleSelect/Attachment 字段）
+      - 额外提供「过滤型 grid 视图」做兜底 — 它们 100% 通过 API 配置成功，开箱即用
+      - 不再尝试 PATCH group/cover（避免误导日志）
+
     单次视图创建失败不应阻塞整体 setup — 静默降级即可。
     """
-    view_plan = [
-        # 分析任务表：按 状态 看板 + 任务画册
-        (task_tid, "📊 状态看板", "kanban"),
-        (task_tid, "📇 任务画册", "gallery"),
-        # 岗位分析表：按 岗位角色 看板 + 健康度画册
-        (output_tid, "👥 岗位看板", "kanban"),
-        (output_tid, "🩺 健康度画册", "gallery"),
-        # 综合报告表：按 综合健康度 看板
-        (report_tid, "🚦 健康度看板", "kanban"),
-        # 效能表：画册浏览
-        (performance_tid, "🏆 效能画册", "gallery"),
+    # (table_id, view_name, view_type, filter_field, filter_value)
+    # filter_field 为 None 时不设置过滤；kanban/gallery 仅靠 UI 自动归组
+    view_plan: list[tuple[str, str, str, str | None, str | None]] = [
+        # 分析任务表
+        (task_tid, "📊 状态看板", "kanban", None, None),
+        (task_tid, "📇 任务画册", "gallery", None, None),
+        (task_tid, "🔥 待分析任务", "grid", "状态", "待分析"),
+        (task_tid, "✅ 已完成任务", "grid", "状态", "已完成"),
+        # 岗位分析表
+        (output_tid, "👥 岗位看板", "kanban", None, None),
+        (output_tid, "🩺 健康度画册", "gallery", None, None),
+        (output_tid, "🔴 预警分析", "grid", "健康度评级", "🔴 预警"),
+        # 综合报告表（v8.6.4 新增报告画册 + 决策视图，原版本缺失画册视图）
+        (report_tid, "🚦 健康度看板", "kanban", None, None),
+        (report_tid, "📋 报告画册", "gallery", None, None),
+        (report_tid, "🚨 预警报告", "grid", "综合健康度", "🔴 预警"),
+        # 效能表
+        (performance_tid, "🏅 岗位看板", "kanban", None, None),
+        (performance_tid, "🏆 效能画册", "gallery", None, None),
     ]
-    for table_id, name, vtype in view_plan:
+    for table_id, name, vtype, filter_field, filter_value in view_plan:
         try:
-            await create_view(app_token, table_id, name, vtype)
+            await create_view(
+                app_token, table_id, name, vtype,
+                filter_field=filter_field, filter_value=filter_value,
+            )
         except Exception as exc:
             logger.warning("创建视图失败 table=%s name=%s: %s", table_id, name, exc)
 
