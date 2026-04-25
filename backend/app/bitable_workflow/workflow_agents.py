@@ -507,8 +507,8 @@ _HEALTH_MAP = {
 
 def _extract_health(result: AgentResult) -> str:
     """健康度评级：优先 LLM 自报（metadata.health），否则从正文 emoji 推断。"""
+    # v8.2 清理：删除未使用的 `emoji` 局部变量（旧实现遗留）
     if result.health_hint:
-        emoji = result.health_hint.strip()[:2] if len(result.health_hint.strip()) > 1 else result.health_hint.strip()
         for key, label in _HEALTH_MAP.items():
             if key in result.health_hint:
                 return label

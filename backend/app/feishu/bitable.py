@@ -34,12 +34,17 @@ SINGLE_SELECT_FIELD_TYPE = 3
 LINKED_RECORD_FIELD_TYPE = 18
 MAX_RECORDS_PER_REQUEST = 500
 _http_client: httpx.AsyncClient | None = None
+import threading as _threading
+_http_client_lock = _threading.Lock()
 
 
 def _get_http_client() -> httpx.AsyncClient:
+    """v8.2 修复：懒初始化 race — 并发请求各自创建 client → 资源泄漏。"""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=30)
+        with _http_client_lock:
+            if _http_client is None or _http_client.is_closed:
+                _http_client = httpx.AsyncClient(timeout=30)
     return _http_client
 
 

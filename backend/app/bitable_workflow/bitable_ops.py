@@ -13,12 +13,20 @@ from app.feishu.retry import with_retry
 
 logger = logging.getLogger(__name__)
 _http_client: httpx.AsyncClient | None = None
+import threading as _threading
+_http_client_lock = _threading.Lock()
 
 
 def _get_http_client() -> httpx.AsyncClient:
+    """v8.2 修复：懒初始化 race — 并发首次请求会各自创建 httpx client，
+    后建的覆盖前者 → 前者永不被 close → 资源泄漏（FD + connection pool）。
+    threading.Lock 双检保证只有一个实例。
+    """
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=30)
+        with _http_client_lock:
+            if _http_client is None or _http_client.is_closed:
+                _http_client = httpx.AsyncClient(timeout=30)
     return _http_client
 
 

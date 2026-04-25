@@ -16,12 +16,20 @@ from app.core.settings import (
 logger = logging.getLogger(__name__)
 
 _LLM_SEMAPHORE: asyncio.Semaphore | None = None
+import threading as _threading
+_LLM_SEMAPHORE_INIT = _threading.Lock()
 
 
 def _get_llm_semaphore() -> asyncio.Semaphore:
+    """v8.2 修复：懒初始化 race — 并发首次 LLM 调用各自创建独立 Semaphore，
+    并发限流彻底失效（实际可能 4-6 个 LLM 同时跑）→ 频繁 429。
+    threading.Lock 双检守护。
+    """
     global _LLM_SEMAPHORE
     if _LLM_SEMAPHORE is None:
-        _LLM_SEMAPHORE = asyncio.Semaphore(2)
+        with _LLM_SEMAPHORE_INIT:
+            if _LLM_SEMAPHORE is None:
+                _LLM_SEMAPHORE = asyncio.Semaphore(2)
     return _LLM_SEMAPHORE
 
 

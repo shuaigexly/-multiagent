@@ -533,7 +533,24 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v8.1（当前） — 第八 + 九轮审计（5 个真实 bug）
+### v8.2（当前） — 第十 ~ 十四轮审计（4 个真实 bug + 1 dead code）
+
+🔴 严重 — 全部都是同款"懒初始化 race"系统性问题：
+36. `bitable_ops._get_http_client` race — 并发 Bitable 请求各自创建 httpx client，winner 之外的 client 永不 close → FD + connection pool 泄漏（持续累积可耗尽 sockets）。
+37. `feishu/bitable._get_http_client` 同款 race — Feishu Bitable HTTP client 同样泄漏。
+38. **`llm_client._get_llm_semaphore` 同款 race** — 并发首次 LLM 调用各自创建独立 Semaphore(2)，**全局并发限流彻底失效**（实际可能 4-6 个 LLM 同时跑）→ 频繁触发 429 rate limit，是用户感知最强的 bug。
+
+修复：所有 4 个 module-level lazy singleton 全部统一为 `threading.Lock` 双检模式（与 v8.0/v8.1 相同的 idiom）：
+- `_init_lock = threading.Lock()` 守护"创建"步骤
+- 双检：外检 + 锁内检 → 仅一个线程构造，其余直接拿现有实例
+
+🟢 清理：
+- `_extract_health` 删除未使用的 `emoji` 局部变量（旧实现遗留）
+
+🧪 测试：
+- 全套件保持 **154/154 passing**（无新测试 — 修复为内部线程安全，行为不变；既有 test_audit_round4 等已覆盖懒初始化 race 通用模式）
+
+### v8.1 — 第八 + 九轮审计（5 个真实 bug）
 
 继续深扫，又找到 5 个真实 bug。
 
