@@ -547,6 +547,24 @@ pip install larksuite-oapi
 
 ## 变更日志
 
+### v8.6.16 — 数据源结构化 + 选择已有 base CLI/API
+
+**数据源结构化（B+C 组合）**
+- B：新建第 5 张表「📚 数据源库」（[`schema.TABLE_DATASOURCE`](backend/app/bitable_workflow/schema.py)），每行一个数据集（CSV + markdown 渲染版 + 字段说明 + 行数 + 附件位 + 类型标签），7 条 InsightHub 数据集开箱即用
+- C：分析任务的「数据源」字段升级为「**markdown 表格 + 原始 CSV 围栏**」组合 — 飞书 PC/Web 渲染上半部分为可视化表格，下半部分 ` ```csv ... ``` ` 围栏供 agent 解析
+- 新增工具：[`demo_data.csv_to_markdown`](backend/app/bitable_workflow/demo_data.py) 通用 CSV→md 转换
+- `workflow_agents.run_task_pipeline` 优先抽 ```围栏内 CSV，fallback `data_parser` 自识别
+
+**用户/企业 base 选择（CLI + REST API）**
+- 新增 [`app/feishu/base_picker.py`](backend/app/feishu/base_picker.py)：
+  - `list_user_bases(user_token, folder_token=None)` — drive/v1/files 翻页拉取 type=bitable，返回 `[{app_token, name, url, modified_time}]`
+  - `list_tables` / `list_fields` — 列表 / 字段查询（含 is_primary / options）
+  - `pick_base_interactive(user_token)` — CLI 交互式 base→table→fields 三层选择
+- REST 端点（前端调用）：
+  - `GET /api/v1/feishu/oauth/list-bases?folder_token=xxx`
+  - `GET /api/v1/feishu/oauth/list-tables?app_token=xxx`（顺手附带每张表的 fields 摘要）
+- 5 条单测覆盖：filter type、分页、API 错误兜底、tables/fields 返回结构
+
 ### v8.6.4 → v8.6.15 — 多维表格视图 / 权限 / 性能 / 演示数据集（用户实测驱动）
 
 每一项都是用户截图反馈 → 飞书 API 实测验证 → 修复 + 单测覆盖的产出，不是凭空臆测。

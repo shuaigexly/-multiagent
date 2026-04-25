@@ -223,6 +223,66 @@ async def oauth_callback(
         )
 
 
+@router.get("/oauth/list-bases", dependencies=[Depends(require_api_key)])
+async def list_user_bases_endpoint(
+    folder_token: str | None = Query(None, description="可选：指定文件夹下的 base"),
+):
+    """v8.6.16：列出当前 user_access_token 关联用户云空间下的所有多维表格。
+
+    前置：先走 OAuth 授权（GET /oauth/url + callback）让 user_access_token 入库。
+    返回 [{"app_token", "name", "url", "modified_time"}, ...]
+    """
+    user_token = get_user_access_token()
+    if not user_token:
+        try:
+            await refresh_user_token()
+            user_token = get_user_access_token()
+        except Exception as exc:
+            return {"ok": False, "message": f"无 user_access_token，请先走 OAuth 授权: {exc}"}
+        if not user_token:
+            return {"ok": False, "message": "无 user_access_token，请先走 OAuth 授权"}
+    try:
+        from app.feishu.base_picker import list_user_bases
+        bases = await list_user_bases(user_token, folder_token=folder_token)
+        return {"ok": True, "count": len(bases), "bases": bases}
+    except Exception as exc:
+        logger.error("list_user_bases failed: %s", exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+
+@router.get("/oauth/list-tables", dependencies=[Depends(require_api_key)])
+async def list_tables_endpoint(app_token: str = Query(..., description="多维表格 app_token")):
+    """v8.6.16：列出指定 base 下的所有表。"""
+    user_token = get_user_access_token()
+    if not user_token:
+        return {"ok": False, "message": "无 user_access_token"}
+    try:
+        from app.feishu.base_picker import list_tables, list_fields
+        tables = await list_tables(app_token, user_token)
+        # 顺手附带每张表的字段摘要（field_id / name / type / is_primary）
+        result = []
+        for t in tables:
+            fields = await list_fields(app_token, t["table_id"], user_token)
+            result.append({
+                "table_id": t["table_id"],
+                "name": t.get("name"),
+                "fields": [
+                    {
+                        "field_id": f.get("field_id"),
+                        "field_name": f.get("field_name"),
+                        "type": f.get("type"),
+                        "ui_type": f.get("ui_type"),
+                        "is_primary": bool(f.get("is_primary")),
+                    }
+                    for f in fields
+                ],
+            })
+        return {"ok": True, "tables": result}
+    except Exception as exc:
+        logger.error("list_tables_endpoint failed: %s", exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+
 @router.post("/oauth/apply-view-config", dependencies=[Depends(require_api_key)])
 async def apply_view_config(app_token: str = Query(..., description="多维表格 app_token")):
     """v8.6.15：用已存的 user_access_token 给 app_token 的所有看板/画册视图配
