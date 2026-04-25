@@ -99,6 +99,11 @@ class BaseAgent(ABC):
     max_tokens: int = 2000
     temperature: float = 0.7
 
+    # Plan-Execute 模式：仅复杂综合岗（CEO）默认启用
+    plan_execute_enabled: bool = False
+    # AB judge 双模型对比：仅决策性岗位启用
+    ab_judge_enabled: bool = False
+
     SYSTEM_PROMPT: str = ""
     USER_PROMPT_TEMPLATE: str = ""
 
@@ -130,7 +135,47 @@ class BaseAgent(ABC):
         if memory_block:
             prompt = memory_block + "\n\n" + prompt
 
-        raw = await self._call_llm(prompt)
+        # Plan-Execute 高级模式（CEO 类汇总岗启用）
+        plan_execute_enabled = (
+            self.plan_execute_enabled
+            and os.getenv("LLM_PLAN_EXECUTE", "1") != "0"
+        )
+        if plan_execute_enabled:
+            try:
+                from app.agents.plan_execute import run_plan_execute
+
+                upstream_block = self._format_upstream_block(upstream_results)
+                raw = await run_plan_execute(
+                    agent=self,
+                    task_description=task_description,
+                    upstream_block=upstream_block,
+                    max_steps=int(os.getenv("LLM_PLAN_MAX_STEPS", "5")),
+                )
+            except Exception as exc:
+                logger.warning("[%s] plan_execute failed, falling back to single-shot: %s", self.agent_id, exc)
+                raw = await self._call_llm(prompt)
+        else:
+            raw = await self._call_llm(prompt)
+
+        # AB judge 双模型对比（决策性岗位启用）
+        if (
+            self.ab_judge_enabled
+            and os.getenv("LLM_AB_JUDGE", "1") != "0"
+            and not plan_execute_enabled  # plan_execute 已经用了 deep，无需再 ab
+        ):
+            try:
+                deeper_raw = await self._call_llm(prompt, force_tier="deep")
+                from app.agents.judge import judge_best
+
+                best_idx = await judge_best(
+                    task_description=task_description,
+                    candidates=[raw, deeper_raw],
+                )
+                if best_idx == 1:
+                    logger.info("[%s] judge picked DEEP variant", self.agent_id)
+                    raw = deeper_raw
+            except Exception as exc:
+                logger.debug("[%s] AB judge skipped: %s", self.agent_id, exc)
         if settings.reflection_enabled:
             verdict = await self._reflect_on_output(raw, task_description)
             if verdict and not verdict.strip().upper().startswith("PASS"):
@@ -196,6 +241,22 @@ class BaseAgent(ABC):
 
         return result
 
+    def _format_upstream_block(self, upstream_results: Optional[list[AgentResult]]) -> str:
+        """把 upstream results 格式化为 plan_execute 所需的纯文本块（不带 XML 标签）。"""
+        if not upstream_results:
+            return ""
+        parts: list[str] = []
+        for r in upstream_results:
+            head = ""
+            if r.sections:
+                head = (r.sections[0].content or "").strip()
+            parts.append(
+                f"## {r.agent_name}\n"
+                f"{truncate_with_marker(head, 1200)}\n"
+                f"行动项：{', '.join((r.action_items or [])[:6])}"
+            )
+        return "\n\n".join(parts)
+
     async def _build_prompt(
         self,
         task_description: str,
@@ -204,9 +265,18 @@ class BaseAgent(ABC):
         feishu_context: Optional[dict],
         user_instructions: Optional[str] = None,
     ) -> str:
+        # Prompt injection 防护：消毒所有用户来源输入
+        from app.core.prompt_guard import sanitize
+
+        guard_task = sanitize(task_description, source="user_task")
+        task_description = guard_task.text
+        if user_instructions:
+            user_instructions = sanitize(user_instructions, source="user_instructions").text
+
         data_section = ""
         if data_summary:
             content_for_prompt = data_summary.full_text or data_summary.raw_preview
+            content_for_prompt = sanitize(content_for_prompt, source="data_input").text
             raw_preview = _escape_xml(
                 truncate_with_marker(content_for_prompt, 6000, "\n...[data input truncated]")
             )

@@ -533,7 +533,43 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.3（当前） — 多模型路由 + 长期记忆 + 自动质量重试 + Arq/Alembic 骨架
+### v7.4（当前） — Plan-Execute / LLM-Judge / 规则降级 / Prompt Injection 防护
+
+把 agent 推向真正的"分层思考 + 韧性 + 安全"。
+
+**🎯 Plan-and-Execute 模式（`app/agents/plan_execute.py`）**
+- 三阶段执行：**Plan**（LLM 列 3-5 个独立子问题 JSON）→ **Execute**（每个子问题单独调 LLM 可调工具）→ **Synthesize**（用 DEEP 档综合所有子答案）
+- 解决"一次性大 prompt 让 LLM 同时承担列结构 + 找数据 + 写结论"的质量问题
+- 通过类属性 `plan_execute_enabled = True` 启用；当前 CEO 助理默认启用
+- 任一阶段失败 → 自动回退普通单轮 prompt（不阻塞）
+
+**⚖️ LLM-as-Judge 双模型对比（`app/agents/judge.py`）**
+- `judge_best(task, candidates: list[str]) → idx`：DEEP 档模型按 4 维权重评判（量化 40% / 逻辑 30% / 完整度 20% / 行动可执行 10%）
+- `ab_judge_enabled = True` 的 agent 同时跑 STANDARD + DEEP 两版，judge 选优
+- judge LLM 失败 → 自动回退"选最长"启发式
+- 重要：plan_execute 已用 DEEP，不再叠加 ab_judge（避免成本翻倍）
+
+**🛡️ 规则引擎降级链路（`app/agents/fallback.py`）**
+- `_safe_analyze` 捕获 LLM 异常时，不再直接返 ERROR
+- `build_fallback_result` 基于 agent persona + upstream 输出骨架报告：包含 3+ sections / 1+ action_item / confidence=1 / health=⚪
+- raw_output 用 `FALLBACK:` 前缀；`_is_failed_result` 不视为硬失败，下游继续
+- 7 岗各有专属 persona（FALLBACK_FOCUS + DEFAULT_ACTION），CEO 拿到的"上游"也包含 fallback 结果时仍能产出可读报告
+
+**🔒 Prompt Injection 防护（`app/core/prompt_guard.py`）**
+- 11 种高危模式检测（中英）：
+  - `ignore previous instructions` / `disregard system` / `you are now ...` / `act as DAN`
+  - 中文：忽略以上指令 / 忘记之前对话 / 你现在是 root
+  - XML 标签注入：`</user_task><system>...`
+  - 控制字符
+- 命中 → 用 `[REDACTED:pattern_name]` 替换 + `logger.warning("prompt_injection.detected")` 审计
+- `_build_prompt` 自动消毒 `task_description` / `data_summary.full_text` / `user_instructions`
+- 攻击事件可在 `audit_log` 通过 correlation_id 追溯
+
+**🧪 测试**
+- 新增 `tests/test_advanced_agent.py`（13 cases）：4 路径覆盖中英 jailbreak / fallback persona / judge LLM 解析 / judge fallback
+- 全套件 82 → **95 passing**
+
+### v7.3 — 多模型路由 + 长期记忆 + 自动质量重试 + Arq/Alembic 骨架
 
 **🎯 多模型路由（`app/core/model_router.py`）**
 - 三档：FAST（GLM-4-flash 等成本档）/ STANDARD（默认）/ DEEP（GLM-4-plus / DeepSeek-R1 等深度档）

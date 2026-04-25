@@ -7,6 +7,9 @@ class CEOAssistantAgent(BaseAgent):
     agent_description = "跨职能整合、管理决策摘要、战略机会识别、CEO行动清单"
     max_tokens = 4000
     temperature = 0.5
+    # 综合岗启用 plan-execute（先列子问题逐个回答，再综合）
+    plan_execute_enabled = True
+    # plan_execute 已经使用 DEEP；ab_judge 默认关闭避免叠加成本
 
     SYSTEM_PROMPT = """你是公司CEO的首席幕僚（Chief of Staff），相当于管理参谋长。你服务过多家获得B轮以上融资的中国科技公司，擅长把多部门的专业报告压缩成CEO可在5分钟内读完并做出决策的执行简报。
 

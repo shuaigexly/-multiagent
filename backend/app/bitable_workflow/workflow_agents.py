@@ -74,7 +74,12 @@ def _error_result(agent_id: str, agent_name: str, exc: Exception) -> AgentResult
 
 
 def _is_failed_result(result: AgentResult) -> bool:
+    """硬失败（不含 FALLBACK 兜底）— FALLBACK 是有内容的降级，不算失败。"""
     return (result.raw_output or "").startswith("FAILED:")
+
+
+def _is_fallback_result(result: AgentResult) -> bool:
+    return (result.raw_output or "").startswith("FALLBACK:")
 
 
 def _raise_if_failed(results: list[AgentResult], stage: str) -> None:
@@ -132,7 +137,20 @@ async def _safe_analyze(
         )
     except Exception as exc:
         logger.error("[%s] analyze failed: %s", agent.agent_id, exc)
-        return _error_result(agent.agent_id, agent.agent_name, exc)
+        # 规则引擎降级：返回基于 persona + upstream 的骨架报告，避免任务全空
+        try:
+            from app.agents.fallback import build_fallback_result
+
+            return build_fallback_result(
+                agent_id=agent.agent_id,
+                agent_name=agent.agent_name,
+                task_description=task_description,
+                upstream=upstream,
+                error_reason=str(exc)[:200],
+            )
+        except Exception as fb_exc:
+            logger.warning("[%s] fallback build failed: %s", agent.agent_id, fb_exc)
+            return _error_result(agent.agent_id, agent.agent_name, exc)
 
     # Cache the successful result for crash recovery
     if task_id and not _is_failed_result(result):
