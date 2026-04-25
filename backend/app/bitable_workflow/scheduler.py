@@ -262,7 +262,14 @@ async def _create_followup_tasks(
     if task_title.startswith("[跟进]"):
         return
 
-    action_items = [item.strip() for item in (ceo_result.action_items or []) if item.strip()][:3]
+    # v8.6.4 修复：CEO 助理把"管理摘要"文本以 "[摘要] ..." 形式插入 action_items[0]
+    # （便于飞书消息推送）。如果直接拿来当跟进任务标题，会得到 "[跟进] [摘要] 当前公司面临..."
+    # 这种语义混乱的二级任务 — 用户在表里看到一堆"[跟进] [摘要]"开头的废任务。
+    # 这里显式过滤掉 [摘要] 前缀的元素。
+    action_items = [
+        item.strip() for item in (ceo_result.action_items or [])
+        if item.strip() and not item.strip().startswith("[摘要]")
+    ][:3]
     if not action_items:
         logger.debug("No action items for follow-up from task [%s]", task_title)
         return

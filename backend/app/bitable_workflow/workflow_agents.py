@@ -506,15 +506,35 @@ _HEALTH_MAP = {
 
 
 def _extract_health(result: AgentResult) -> str:
-    """健康度评级：优先 LLM 自报（metadata.health），否则从正文 emoji 推断。"""
+    """健康度评级判定（按可信度逐级降级）：
+      1. LLM metadata.health（最高可信）
+      2. "总体/整体/综合 评级/健康度" 行附近的 emoji（LLM 在正文显式自报）
+      3. 严重优先级扫描（兜底，可能高估风险）
+
+    v8.6.4 修复：之前 step 2 缺失，"🟡需关注" 的财务顾问报告因正文风险段含 🔴
+    被误判为"🔴 预警"。现在先按"总体评级"显式取 LLM 真意。
+    """
     # v8.2 清理：删除未使用的 `emoji` 局部变量（旧实现遗留）
     if result.health_hint:
         for key, label in _HEALTH_MAP.items():
             if key in result.health_hint:
                 return label
+
     text_blobs = [s.content or "" for s in result.sections]
     text_blobs.append(result.raw_output or "")
     combined = "\n".join(text_blobs)[:5000]
+
+    import re as _re
+    rating_match = _re.search(
+        r"(?:总体|整体|综合|核心|本期)\s*(?:评级|健康度|健康|状态|评估)[：:]\s*\**\s*(.{0,20})",
+        combined,
+    )
+    if rating_match:
+        rating_window = rating_match.group(1)
+        for key, label in _HEALTH_MAP.items():
+            if key in rating_window:
+                return label
+
     if "🔴" in combined:
         return "🔴 预警"
     if "🟡" in combined:
