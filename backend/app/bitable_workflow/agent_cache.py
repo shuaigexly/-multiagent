@@ -7,6 +7,7 @@ KEY 格式: agent_cache:{task_id}:{agent_id}
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -21,28 +22,45 @@ _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
 _redis_client = None
 _redis_retry_at = 0.0
 _REDIS_RETRY_SECONDS = 60.0
+_init_lock: asyncio.Lock | None = None
+
+
+def _get_init_lock() -> asyncio.Lock:
+    global _init_lock
+    if _init_lock is None:
+        _init_lock = asyncio.Lock()
+    return _init_lock
 
 
 async def _get_redis():
-    """Lazy singleton Redis client; returns None if unavailable."""
+    """Lazy singleton Redis client; returns None if unavailable.
+
+    v8.0 修复：双检锁 — 之前两个并发 cache miss 会各自连接 Redis，winner 之外的连接泄漏。
+    """
     global _redis_client, _redis_retry_at
     if _redis_client is not None:
         return _redis_client
     now = time.monotonic()
     if now < _redis_retry_at:
         return None
-    try:
-        import redis.asyncio as aioredis
+    async with _get_init_lock():
+        # double-check：拿到锁后可能另一个并发已经初始化好了
+        if _redis_client is not None:
+            return _redis_client
+        if time.monotonic() < _redis_retry_at:
+            return None
+        try:
+            import redis.asyncio as aioredis
 
-        client = aioredis.from_url(settings.redis_url, decode_responses=True)
-        await client.ping()
-        _redis_client = client
-        logger.info("Redis agent cache ready: %s", settings.redis_url)
-        return client
-    except Exception as exc:
-        _redis_retry_at = now + _REDIS_RETRY_SECONDS
-        logger.info("Redis unavailable, agent cache disabled: %s", exc)
-        return None
+            client = aioredis.from_url(settings.redis_url, decode_responses=True)
+            await client.ping()
+            _redis_client = client
+            logger.info("Redis agent cache ready: %s", settings.redis_url)
+            return client
+        except Exception as exc:
+            _redis_retry_at = time.monotonic() + _REDIS_RETRY_SECONDS
+            logger.info("Redis unavailable, agent cache disabled: %s", exc)
+            return None
 
 
 def _task_key(task_id: str) -> str:

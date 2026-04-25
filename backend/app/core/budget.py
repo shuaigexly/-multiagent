@@ -67,26 +67,40 @@ _in_memory = _InMemoryBudget()
 _redis_client = None
 _redis_retry_at = 0.0
 _REDIS_RETRY_SECONDS = 60.0
+_init_lock: asyncio.Lock | None = None
+
+
+def _get_init_lock() -> asyncio.Lock:
+    global _init_lock
+    if _init_lock is None:
+        _init_lock = asyncio.Lock()
+    return _init_lock
 
 
 async def _get_redis():
+    """v8.0 修复：双检锁防止并发首次访问产生多个 Redis 连接（winner 之外都会泄漏）。"""
     global _redis_client, _redis_retry_at
     if _redis_client is not None:
         return _redis_client
     now = time.monotonic()
     if now < _redis_retry_at:
         return None
-    try:
-        import redis.asyncio as aioredis
+    async with _get_init_lock():
+        if _redis_client is not None:
+            return _redis_client
+        if time.monotonic() < _redis_retry_at:
+            return None
+        try:
+            import redis.asyncio as aioredis
 
-        client = aioredis.from_url(settings.redis_url, decode_responses=True)
-        await client.ping()
-        _redis_client = client
-        return client
-    except Exception as exc:
-        _redis_retry_at = now + _REDIS_RETRY_SECONDS
-        logger.debug("Budget Redis unavailable: %s", exc)
-        return None
+            client = aioredis.from_url(settings.redis_url, decode_responses=True)
+            await client.ping()
+            _redis_client = client
+            return client
+        except Exception as exc:
+            _redis_retry_at = time.monotonic() + _REDIS_RETRY_SECONDS
+            logger.debug("Budget Redis unavailable: %s", exc)
+            return None
 
 
 def _day_key() -> str:

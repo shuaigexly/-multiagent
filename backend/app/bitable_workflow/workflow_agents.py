@@ -325,13 +325,15 @@ async def run_task_pipeline(
     task_description = await _enrich_with_vision(task_description, task_fields)
 
     # 解析用户粘贴的数据源（CSV / markdown / 文本），注入到每个 agent 的 data_summary
+    # v8.0 修复：parse_content 用了 pandas（同步 + 重 import），大 CSV (> 1万行) 解析
+    # 会阻塞事件循环数百毫秒。放进线程池避免拖延 SSE 推送 / 健康检查 / 其他并行任务。
     data_summary = None
     data_source_text = (task_fields.get("数据源") or "").strip()
     if data_source_text:
         try:
             from app.core.data_parser import parse_content
 
-            data_summary = parse_content(data_source_text)
+            data_summary = await asyncio.to_thread(parse_content, data_source_text)
             logger.info(
                 "Data source parsed: type=%s rows=%d cols=%d",
                 data_summary.content_type, data_summary.row_count, len(data_summary.columns),

@@ -362,13 +362,15 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             logger.error("Failed to recover ANALYZING record=%s: %s", rid, exc)
 
     # Phase 1: 领取待分析任务，按优先级排序后逐条执行
-    # 拉取多于 _MAX_PER_CYCLE 的候选，本地按优先级排序后只取前 _MAX_PER_CYCLE
-    pending_pool_size = _MAX_PER_CYCLE * 4
+    # v8.0 修复：之前 pool=_MAX_PER_CYCLE×4=12 太小 — 若有 50 条 PENDING 而前 12 条
+    # 都是 P3，排序后 top N 仍是 P3，第 13 条之后的 P0 紧急任务被永远忽略。
+    # 改为拉取最多 200 条做全表排序（_MAX_PER_CYCLE 通常 ≤ 5，对内存压力可忽略）。
+    pending_pool_size = int(os.getenv("WORKFLOW_PENDING_POOL_SIZE", "200"))
     pending = await bitable_ops.list_records(
         app_token,
         task_tid,
         filter_expr=f'CurrentValue.[状态]="{Status.PENDING}"',
-        page_size=min(50, pending_pool_size),
+        page_size=min(100, pending_pool_size),
         max_records=pending_pool_size,
     )
 

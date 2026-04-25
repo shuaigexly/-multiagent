@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections import defaultdict
 from datetime import datetime
 from typing import AsyncIterator
@@ -21,12 +22,20 @@ logger = logging.getLogger(__name__)
 # task_id → list of subscriber Queues（允许多个前端同时订阅同一任务）
 _subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
 _lock: asyncio.Lock | None = None
+# 用 threading.Lock 守护 asyncio.Lock 的懒创建，防止并发首次访问产生两把锁
+_init_lock = threading.Lock()
 
 
 def _get_lock() -> asyncio.Lock:
+    """v8.0 修复：懒初始化 race — 两个 coroutine 并发首次访问会各自创建 Lock，
+    publish 用 A 锁、subscribe 用 B 锁，订阅列表完全无同步。
+    用 threading.Lock 串行化"创建"这一步，asyncio.Lock 自身仍由单一实例提供异步同步。
+    """
     global _lock
     if _lock is None:
-        _lock = asyncio.Lock()
+        with _init_lock:
+            if _lock is None:
+                _lock = asyncio.Lock()
     return _lock
 
 

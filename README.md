@@ -533,7 +533,31 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.9（当前） — 第三轮审计修复（再清 5 个 bug）
+### v8.0（当前） — 第四 + 五 + 六 + 七轮审计（9 个真实 bug）
+
+**🔴 严重**
+22. `progress_broker._get_lock` 懒初始化 race — 两个 coroutine 并发首次访问各自创建 Lock，publish 用 A 锁、subscribe 用 B 锁 → 订阅者列表无同步。修：threading.Lock 双检守护 asyncio.Lock 的"创建"步骤。
+23. `agent_cache._get_redis` 同款懒初始化 race → winner 之外的连接全部泄漏。修：asyncio.Lock 双检锁。
+24. `budget._get_redis` 同款 race。修：asyncio.Lock 双检锁。
+25. **优先级排序 pool 太小** — `_MAX_PER_CYCLE × 4 = 12` 候选过少：50 个 PENDING 任务，前 12 都是 P3 → 后面的 P0 任务永远不会被领取。修：bump 到 200 + `WORKFLOW_PENDING_POOL_SIZE` env 可调。
+27. **流式还是有死代码 v2** — `is_final_iter` 仅在 LLM 耗尽 4 轮工具迭代时触发流式。多数任务 LLM 第一轮就给内容，永远走不到流式分支。修：当 LLM 给出最终 content 且 `on_token` 在场时，把内容作为一条事件通过 callback 推送出去。
+29. **流式中途异常丢失已累积 chunks** — `async for event in stream` 在 try 块内，网络抖动让所有累积 token 全丢。修：内层 try/except 保留 partial 内容，仅在 partial 为空时 raise。
+30. `call_llm_streaming` 同款问题。修：同样的 partial-保留逻辑。
+
+**🟡 中**
+26. `parse_content` 大 CSV 阻塞事件循环（pandas 同步 + 重 import）→ 同时阻塞 SSE / 健康检查。修：`asyncio.to_thread` 包装。
+28. `METADATA_REQUIREMENT` 重复定义 — 第一版 20+ 行 prompt 每次构造后被覆盖丢弃，GC 压力 + 维护陷阱（人改第一版无效）。修：删除被覆盖版本。
+
+**🧪 测试**
+- 新增 `tests/test_audit_round4.py`（6 cases）：
+  - progress_broker 并发 _get_lock 单例
+  - agent_cache + budget 双检锁防泄漏
+  - Redis 失败 retry_at 守卫
+  - 优先级 pool size ≥ 100
+  - parse_content 在线程池而非主循环执行
+- 全套件 143 → **149 passing**（+1 skipped 是 FastAPI 版本兼容跳过项）
+
+### v7.9 — 第三轮审计修复（再清 5 个 bug）
 
 🔴 严重：
 17. `_extract_first_json_array` 转义符在字符串外被处理 → `\]` 之类的字符让深度计数错乱。修：把转义/引号判定限定在 `in_str=True` 分支内，字符串外只看 `[`/`]`/`"`。

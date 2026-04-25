@@ -186,25 +186,36 @@ async def call_llm_streaming(
             stream=True,
             stream_options={"include_usage": True},
         )
-        async for event in stream:
-            # usage 仅在最后一个 chunk 上出现（include_usage=True）
-            if getattr(event, "usage", None):
-                prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
-                completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
-            if not event.choices:
-                continue
-            delta = event.choices[0].delta
-            piece = getattr(delta, "content", None)
-            if not piece:
-                continue
-            chunks.append(piece)
-            if on_token:
-                try:
-                    res = on_token(piece)
-                    if asyncio.iscoroutine(res):
-                        await res
-                except Exception as cb_exc:
-                    logger.debug("on_token callback failed: %s", cb_exc)
+        # v8.0 修复 #30：流式中途断开（网络抖动）chunks 已累积内容必须保留，
+        # 否则用户看到不完整的"半句话"流然后整段返回空，体验比一次性返回更差。
+        try:
+            async for event in stream:
+                # usage 仅在最后一个 chunk 上出现（include_usage=True）
+                if getattr(event, "usage", None):
+                    prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
+                    completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
+                if not event.choices:
+                    continue
+                delta = event.choices[0].delta
+                piece = getattr(delta, "content", None)
+                if not piece:
+                    continue
+                chunks.append(piece)
+                if on_token:
+                    try:
+                        res = on_token(piece)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception as cb_exc:
+                        logger.debug("on_token callback failed: %s", cb_exc)
+        except Exception as stream_exc:
+            partial = "".join(chunks).strip()
+            logger.warning(
+                "call_llm_streaming interrupted after %d chars: %s",
+                len(partial), stream_exc,
+            )
+            if not partial:
+                raise
 
     if prompt_tokens or completion_tokens:
         try:
@@ -280,6 +291,10 @@ async def call_llm_with_tools(
         async with _get_llm_semaphore():
             try:
                 if use_stream:
+                    # v8.0 修复 #29：流式中途异常不丢已累积 chunks
+                    # 之前 async for 在 try 块内，网络抖动 → 已累积内容全丢，落到 except 返回空。
+                    # 现在：stream 创建在 try 内（开 stream 失败抛错由 outer except 处理），
+                    # 但 async for 部分用独立 try/except 拿到部分内容也算成功返回。
                     chunks: list[str] = []
                     final_prompt_tokens = 0
                     final_completion_tokens = 0
@@ -293,23 +308,33 @@ async def call_llm_with_tools(
                         stream=True,
                         stream_options={"include_usage": True},
                     )
-                    async for event in stream:
-                        if getattr(event, "usage", None):
-                            final_prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
-                            final_completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
-                        if not event.choices:
-                            continue
-                        delta = event.choices[0].delta
-                        piece = getattr(delta, "content", None)
-                        if not piece:
-                            continue
-                        chunks.append(piece)
-                        try:
-                            res = on_token(piece)
-                            if asyncio.iscoroutine(res):
-                                await res
-                        except Exception as cb_exc:
-                            logger.debug("on_token callback failed: %s", cb_exc)
+                    try:
+                        async for event in stream:
+                            if getattr(event, "usage", None):
+                                final_prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
+                                final_completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
+                            if not event.choices:
+                                continue
+                            delta = event.choices[0].delta
+                            piece = getattr(delta, "content", None)
+                            if not piece:
+                                continue
+                            chunks.append(piece)
+                            try:
+                                res = on_token(piece)
+                                if asyncio.iscoroutine(res):
+                                    await res
+                            except Exception as cb_exc:
+                                logger.debug("on_token callback failed: %s", cb_exc)
+                    except Exception as stream_exc:
+                        partial = "".join(chunks).strip()
+                        logger.warning(
+                            "stream interrupted at iter=%s after %d chars: %s",
+                            iteration, len(partial), stream_exc,
+                        )
+                        # 至少保留已收到的内容；为空才让 outer except 接管
+                        if not partial:
+                            raise
                     if final_prompt_tokens or final_completion_tokens:
                         try:
                             await record_usage(
@@ -348,6 +373,18 @@ async def call_llm_with_tools(
         tool_calls = getattr(msg, "tool_calls", None) or []
 
         if not tool_calls:
+            # v8.0 修复：之前 streaming 仅在 is_final_iter（最后一轮）触发 →
+            # 多数任务 LLM 第一轮就给内容（不调工具），永远走不到流式。
+            # 现在：若 on_token 在场且 LLM 给出内容，把内容作为一条事件推送出去。
+            # 这不是真 token streaming（OpenAI tools+stream 协议较复杂），但
+            # 至少让前端 SSE 通道收到 agent.token 事件不再是死代码。
+            if on_token and last_content:
+                try:
+                    res = on_token(last_content)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception as cb_exc:
+                    logger.debug("on_token (final content push) failed: %s", cb_exc)
             return last_content or "(LLM returned empty content after tool loop)"
 
         # 把 assistant 的 tool_calls 加入对话历史
