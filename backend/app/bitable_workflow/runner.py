@@ -44,6 +44,15 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     # 每张表的第一个视图是默认网格视图（创建表时自动生成），这里追加额外视图
     await _create_extra_views(app_token, task_tid, output_tid, report_tid, performance_tid)
 
+    # v8.6.2 修复：飞书新建多维表格 App 时会自动创建一张「数据表」作为默认表，
+    # 用户打开 base URL 默认进的就是这张空表 → 看到一片空白以为整个 Bitable 没数据。
+    # 同时各业务表里也会保留默认主字段「多行文本」（rename 没生效或 Feishu API 行为变化），
+    # 看起来像一列空数据。统一在 setup 末尾把这些清理掉。
+    await _cleanup_auto_created_artifacts(
+        app_token,
+        keep_table_ids={task_tid, output_tid, report_tid, performance_tid},
+    )
+
     for title, dimension, background in schema.SEED_TASKS:
         await bitable_ops.create_record(
             app_token,
@@ -69,6 +78,83 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
             "performance": performance_tid,
         },
     }
+
+
+async def _cleanup_auto_created_artifacts(app_token: str, keep_table_ids: set[str]) -> None:
+    """删除飞书自动创建的「数据表」+ 各业务表的「多行文本」垃圾字段。
+
+    飞书行为：
+      1. 新建多维表格 App 时自动创建一张默认表（名称通常为"数据表"）
+      2. 业务表创建后保留默认主字段（名称通常为"多行文本"）—— 即使 SDK rename 调用成功，
+         有时也会留下这条字段（与 Feishu API 行为变化有关）
+
+    这两类"自动产物"会让 UI 显示一堆空字段/空表，让 base URL 进去看到一片空白。
+    keep_table_ids: 我们刚建的 4 张业务表 id；不在这个集合的表都视为飞书自动产物，删除。
+    """
+    import httpx
+
+    from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
+
+    base = get_feishu_open_base_url()
+    try:
+        token = await get_tenant_access_token()
+    except Exception as exc:
+        logger.warning("cleanup skipped — token fetch failed: %s", exc)
+        return
+
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(timeout=15.0) as http:
+        # 第 1 步：列出所有表，删除非业务表（飞书自动建的「数据表」）
+        try:
+            r = await http.get(
+                f"{base}/open-apis/bitable/v1/apps/{app_token}/tables",
+                headers=headers,
+            )
+            tables = r.json().get("data", {}).get("items", []) or []
+        except Exception as exc:
+            logger.warning("cleanup tables list failed: %s", exc)
+            tables = []
+
+        for tb in tables:
+            tid = tb.get("table_id")
+            tname = tb.get("name", "")
+            if not tid or tid in keep_table_ids:
+                continue
+            try:
+                rd = await http.delete(
+                    f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}",
+                    headers=headers,
+                )
+                logger.info("Cleaned up auto-created table: %s (%s) status=%s", tname, tid, rd.status_code)
+            except Exception as exc:
+                logger.warning("Failed to delete table %s: %s", tid, exc)
+
+        # 第 2 步：每张业务表删除「多行文本」垃圾字段
+        for tid in keep_table_ids:
+            try:
+                rf = await http.get(
+                    f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields",
+                    headers=headers,
+                )
+                fields = rf.json().get("data", {}).get("items", []) or []
+            except Exception as exc:
+                logger.warning("cleanup fields list failed table=%s: %s", tid, exc)
+                continue
+
+            for f in fields:
+                fname = f.get("field_name", "")
+                fid = f.get("field_id")
+                # 飞书默认主字段名是「多行文本」；如果 schema 没用到这个名字，就是垃圾字段
+                if fname == "多行文本" and fid:
+                    try:
+                        rd = await http.delete(
+                            f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields/{fid}",
+                            headers=headers,
+                        )
+                        logger.info("Cleaned up 多行文本 garbage field: table=%s field=%s status=%s",
+                                    tid, fid, rd.status_code)
+                    except Exception as exc:
+                        logger.warning("Failed to delete 多行文本 field: %s", exc)
 
 
 async def _create_extra_views(
