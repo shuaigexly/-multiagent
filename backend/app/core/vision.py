@@ -21,10 +21,9 @@ import logging
 import os
 from typing import Optional
 
-import httpx
-
 from app.core.budget import BudgetExceeded, check_budget, record_usage
 from app.core.settings import get_llm_api_key, get_llm_base_url
+from app.core.url_safety import UnsafeURL, fetch_public_url_bytes, validate_public_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +56,16 @@ def _is_url(text: str) -> bool:
 
 async def _fetch_as_base64(url: str) -> Optional[str]:
     try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-        return base64.b64encode(r.content).decode("ascii")
+        content, _headers, _final_url = await fetch_public_url_bytes(
+            url,
+            max_bytes=5 * 1024 * 1024,
+            timeout=20.0,
+            allowed_content_prefixes=("image/",),
+        )
+        return base64.b64encode(content).decode("ascii")
+    except UnsafeURL as exc:
+        logger.warning("vision: unsafe image url rejected url=%s err=%s", url[:80], exc)
+        return None
     except Exception as exc:
         logger.warning("vision: fetch image failed url=%s err=%s", url[:80], exc)
         return None
@@ -96,7 +101,11 @@ async def analyze_image(
 
     # 统一为 data URI
     if _is_url(image):
-        image_url_block: dict = {"url": image}
+        try:
+            image_url_block: dict = {"url": validate_public_http_url(image)}
+        except UnsafeURL as exc:
+            logger.warning("vision: unsafe image url rejected: %s", exc)
+            return None
     elif image.startswith("data:image"):
         image_url_block = {"url": image}
     else:

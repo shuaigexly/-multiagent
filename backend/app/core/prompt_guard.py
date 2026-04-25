@@ -31,7 +31,7 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("zh_ignore", re.compile(r"忽略\s*(?:以上|上述|之前|前面)\s*(?:所有)?\s*(?:指令|提示|规则)")),
     ("zh_forget", re.compile(r"忘记\s*(?:之前|以上|所有)\s*(?:的)?\s*(?:指令|对话|提示)")),
     ("zh_role_change", re.compile(r"(?:你现在|从现在开始)\s*是\s*(?:一个|一名)?\s*[^\s]{1,20}(?:开发者|管理员|root|sudo)")),
-    ("xml_break", re.compile(r"</\s*(?:user_task|data_input|upstream_analysis|feishu_context|system|instruction)\s*>", re.IGNORECASE)),
+    ("xml_break", re.compile(r"</\s*(?:user_task|data_input|upstream_analysis|feishu_context|long_term_memory|previous_analysis|question|user_instructions|system|instruction)\s*>", re.IGNORECASE)),
     ("control_chars", re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+")),
 ]
 

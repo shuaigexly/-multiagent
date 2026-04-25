@@ -43,9 +43,35 @@ _JUDGE_PROMPT = (
 )
 
 
+def _sanitize_hint_text(text: str, *, source: str) -> tuple[str, bool]:
+    try:
+        from app.core.prompt_guard import sanitize
+
+        result = sanitize(text or "", source=source)
+        return result.text, result.injection_detected
+    except Exception:
+        return text or "", False
+
+
+def _escape_prompt_text(text: str) -> str:
+    return (
+        (text or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 async def maybe_promote(*, agent_id: str, reflection_text: str) -> Optional[int]:
     """对一条反思打分，达标则 promote 入库。返回新 hint 的 id 或 None。"""
     if not agent_id or not reflection_text:
+        return None
+    reflection_text, reflection_injected = _sanitize_hint_text(
+        reflection_text,
+        source="prompt_evolution.reflection",
+    )
+    if reflection_injected:
+        logger.info("reflection.not_promoted agent=%s reason=prompt_injection", agent_id)
         return None
     try:
         from app.core.llm_client import call_llm
@@ -79,7 +105,10 @@ async def maybe_promote(*, agent_id: str, reflection_text: str) -> Optional[int]
         )
         return None
 
-    rule_text = rule_text[:300]
+    rule_text, rule_injected = _sanitize_hint_text(rule_text[:300], source="prompt_evolution.rule")
+    if rule_injected:
+        logger.info("reflection.not_promoted agent=%s reason=unsafe_rule", agent_id)
+        return None
     tenant = get_tenant_id() or "default"
 
     try:
@@ -172,6 +201,7 @@ def format_hints_block(hints: list[str]) -> str:
         return ""
     lines = ["\n=== 经验内化（来自过往反思的高分 promote 规则）===\n"]
     for i, h in enumerate(hints, 1):
-        lines.append(f"  {i}. {h}")
+        safe_hint, _ = _sanitize_hint_text(h, source="prompt_evolution.prompt_hint")
+        lines.append(f"  {i}. {_escape_prompt_text(safe_hint)}")
     lines.append("")
     return "\n".join(lines)

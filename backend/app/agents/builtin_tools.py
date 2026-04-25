@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import csv
 import io
@@ -18,6 +19,7 @@ from typing import Any
 import httpx
 
 from app.agents.tools import register_tool
+from app.core.url_safety import UnsafeURL, fetch_public_url_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +29,32 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
+_FETCH_MAX_BYTES = 512 * 1024
+_TEXT_CONTENT_TYPES = (
+    "text/",
+    "application/json",
+    "application/xml",
+    "application/xhtml+xml",
+    "application/rss+xml",
+    "application/csv",
+)
 
 
 def _strip_html(text: str) -> str:
     text = _HTML_TAG_RE.sub(" ", text)
     text = _WHITESPACE_RE.sub(" ", text)
     return text.strip()
+
+
+def _decode_response_text(content: bytes, headers: httpx.Headers) -> str:
+    ctype = headers.get("content-type", "")
+    charset = "utf-8"
+    if "charset=" in ctype.lower():
+        charset = ctype.lower().rsplit("charset=", 1)[-1].split(";", 1)[0].strip() or charset
+    try:
+        return content.decode(charset, errors="replace")
+    except LookupError:
+        return content.decode("utf-8", errors="replace")
 
 
 @register_tool(
@@ -51,17 +73,20 @@ def _strip_html(text: str) -> str:
     },
 )
 async def fetch_url(url: str) -> str:
-    if not url.startswith(("http://", "https://")):
-        return "ERROR: url must start with http:// or https://"
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers={"User-Agent": "FeishuAIBot/1.0"})
-            resp.raise_for_status()
-        ctype = resp.headers.get("content-type", "")
-        body = resp.text
+        content, headers, _final_url = await fetch_public_url_bytes(
+            url,
+            max_bytes=_FETCH_MAX_BYTES,
+            timeout=15.0,
+            allowed_content_prefixes=_TEXT_CONTENT_TYPES,
+        )
+        ctype = headers.get("content-type", "")
+        body = _decode_response_text(content, headers)
         if "html" in ctype.lower():
             body = _strip_html(body)
         return body[:8000]
+    except UnsafeURL as exc:
+        return f"ERROR: unsafe url: {exc}"
     except httpx.HTTPError as exc:
         return f"ERROR: fetch failed: {exc}"
 
@@ -91,10 +116,11 @@ async def bitable_query(app_token: str, table_id: str, filter: str = "", max_rec
     from app.bitable_workflow import bitable_ops
 
     try:
+        safe_filter = _validate_bitable_filter(filter)
         rows = await bitable_ops.list_records(
             app_token,
             table_id,
-            filter_expr=filter or None,
+            filter_expr=safe_filter or None,
             max_records=max(1, min(int(max_records), 50)),
         )
     except Exception as exc:
@@ -215,6 +241,168 @@ _SAFE_GLOBALS = {
 }
 
 
+def _validate_bitable_filter(filter_expr: str) -> str:
+    expr = (filter_expr or "").strip()
+    if not expr:
+        return ""
+    if len(expr) > 500:
+        raise ValueError("filter too long")
+    if any(ch in expr for ch in ("\r", "\n", ";", "{", "}")):
+        raise ValueError("filter contains forbidden characters")
+    if not expr.startswith(("CurrentValue.", "AND(", "OR(", "NOT(")):
+        raise ValueError("filter must start with CurrentValue., AND(, OR(, or NOT(")
+    return expr
+
+
+class _SafeCalcValidator(ast.NodeVisitor):
+    _allowed_binops = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
+    _allowed_unary = (ast.UAdd, ast.USub)
+    _allowed_compare = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE)
+
+    def __init__(self) -> None:
+        self.node_count = 0
+
+    def generic_visit(self, node: ast.AST) -> None:
+        self.node_count += 1
+        if self.node_count > 120:
+            raise ValueError("expression too complex")
+        super().generic_visit(node)
+
+    def visit_Expression(self, node: ast.Expression) -> None:
+        self.visit(node.body)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        value = node.value
+        if isinstance(value, (int, float)):
+            if abs(value) > 1_000_000_000:
+                raise ValueError("numeric literal too large")
+        elif isinstance(value, str):
+            if len(value) > 200:
+                raise ValueError("string literal too long")
+        elif value is not None and not isinstance(value, bool):
+            raise ValueError("literal type is not allowed")
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id not in _SAFE_BUILTINS and node.id != "math":
+            raise ValueError(f"name is not allowed: {node.id}")
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if not isinstance(node.value, ast.Name) or node.value.id != "math" or node.attr.startswith("_"):
+            raise ValueError("only math.<function> attributes are allowed")
+        if not hasattr(math, node.attr):
+            raise ValueError(f"math attribute is not allowed: {node.attr}")
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if node.keywords:
+            raise ValueError("keyword arguments are not allowed")
+        if len(node.args) > 20:
+            raise ValueError("too many arguments")
+        if isinstance(node.func, ast.Name):
+            if node.func.id not in _SAFE_BUILTINS:
+                raise ValueError(f"function is not allowed: {node.func.id}")
+            if node.func.id == "range":
+                self._validate_range(node)
+            if node.func.id == "pow":
+                self._validate_pow(node)
+        elif isinstance(node.func, ast.Attribute):
+            self.visit_Attribute(node.func)
+        else:
+            raise ValueError("call target is not allowed")
+        for arg in node.args:
+            self.visit(arg)
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        if not isinstance(node.op, self._allowed_binops):
+            raise ValueError("operator is not allowed")
+        if isinstance(node.op, ast.Pow):
+            exponent = node.right.value if isinstance(node.right, ast.Constant) else None
+            if not isinstance(exponent, (int, float)) or abs(exponent) > 1000:
+                raise ValueError("exponent too large")
+        if isinstance(node.op, ast.Mult):
+            self._validate_repeat(node.left, node.right)
+            self._validate_repeat(node.right, node.left)
+        self.visit(node.left)
+        self.visit(node.right)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> None:
+        if not isinstance(node.op, self._allowed_unary):
+            raise ValueError("unary operator is not allowed")
+        self.visit(node.operand)
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> None:
+        if not isinstance(node.op, (ast.And, ast.Or)):
+            raise ValueError("boolean operator is not allowed")
+        for value in node.values:
+            self.visit(value)
+
+    def visit_Compare(self, node: ast.Compare) -> None:
+        self.visit(node.left)
+        for op in node.ops:
+            if not isinstance(op, self._allowed_compare):
+                raise ValueError("comparison operator is not allowed")
+        for comparator in node.comparators:
+            self.visit(comparator)
+
+    def visit_List(self, node: ast.List) -> None:
+        self._visit_sequence(node.elts)
+
+    def visit_Tuple(self, node: ast.Tuple) -> None:
+        self._visit_sequence(node.elts)
+
+    def visit_Set(self, node: ast.Set) -> None:
+        self._visit_sequence(node.elts)
+
+    def visit_Dict(self, node: ast.Dict) -> None:
+        if len(node.keys) > 100:
+            raise ValueError("literal too large")
+        for key, value in zip(node.keys, node.values):
+            if key is not None:
+                self.visit(key)
+            self.visit(value)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        raise ValueError("comprehensions are not allowed")
+
+    visit_SetComp = visit_ListComp
+    visit_DictComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+    visit_Lambda = visit_ListComp
+    visit_Subscript = visit_ListComp
+
+    def _visit_sequence(self, elts: list[ast.AST]) -> None:
+        if len(elts) > 100:
+            raise ValueError("literal too large")
+        for elt in elts:
+            self.visit(elt)
+
+    def _validate_range(self, node: ast.Call) -> None:
+        for arg in node.args:
+            if not isinstance(arg, ast.Constant) or not isinstance(arg.value, int):
+                raise ValueError("range arguments must be integer literals")
+            if abs(arg.value) > 10_000:
+                raise ValueError("range argument too large")
+
+    def _validate_pow(self, node: ast.Call) -> None:
+        if len(node.args) >= 2:
+            exponent = node.args[1].value if isinstance(node.args[1], ast.Constant) else None
+            if not isinstance(exponent, (int, float)) or abs(exponent) > 1000:
+                raise ValueError("exponent too large")
+
+    def _validate_repeat(self, maybe_count: ast.AST, repeated: ast.AST) -> None:
+        if not isinstance(maybe_count, ast.Constant) or not isinstance(maybe_count.value, int):
+            return
+        if not isinstance(repeated, (ast.Constant, ast.List, ast.Tuple, ast.Set)):
+            return
+        if abs(maybe_count.value) > 10_000:
+            raise ValueError("repeat count too large")
+
+
+def _validate_calc_expression(expression: str) -> ast.Expression:
+    tree = ast.parse(expression, mode="eval")
+    _SafeCalcValidator().visit(tree)
+    return tree
+
+
 @register_tool(
     name="inspect_image",
     description=(
@@ -273,11 +461,16 @@ async def python_calc(expression: str) -> str:
         return "ERROR: forbidden token detected"
     if len(expression) > 500:
         return "ERROR: expression too long (>500 chars)"
+    try:
+        tree = _validate_calc_expression(expression)
+        code = compile(tree, "<python_calc>", "eval")
+    except Exception as exc:
+        return f"ERROR: unsafe expression: {exc}"
 
     loop = asyncio.get_event_loop()
     try:
         result = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: eval(expression, _SAFE_GLOBALS, {})),
+            loop.run_in_executor(None, lambda: eval(code, _SAFE_GLOBALS, {})),
             timeout=2.0,
         )
     except asyncio.TimeoutError:

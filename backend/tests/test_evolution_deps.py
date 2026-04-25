@@ -61,18 +61,21 @@ async def test_maybe_promote_writes_high_score_rule(tmp_path, monkeypatch):
     monkeypatch.setattr("app.core.prompt_evolution.AsyncSessionLocal", db_mod.AsyncSessionLocal)
     monkeypatch.setattr("app.core.prompt_evolution.AgentPromptHint", db_mod.AgentPromptHint)
 
-    with patch(
-        "app.core.llm_client.call_llm",
-        new=AsyncMock(return_value="SCORE=9\nRULE=遇到 LTV/CAC 时优先调 python_calc 而非估算"),
-    ):
-        new_id = await maybe_promote(
-            agent_id="data_analyst",
-            reflection_text="上次我估算了 LTV，应该用 python_calc",
-        )
+    try:
+        with patch(
+            "app.core.llm_client.call_llm",
+            new=AsyncMock(return_value="SCORE=9\nRULE=遇到 LTV/CAC 时优先调 python_calc 而非估算"),
+        ):
+            new_id = await maybe_promote(
+                agent_id="data_analyst",
+                reflection_text="上次我估算了 LTV，应该用 python_calc",
+            )
 
-    assert new_id is not None
-    hints = await fetch_active_hints("data_analyst")
-    assert any("python_calc" in h for h in hints)
+        assert new_id is not None
+        hints = await fetch_active_hints("data_analyst")
+        assert any("python_calc" in h for h in hints)
+    finally:
+        await db_mod.engine.dispose()
 
 
 def test_format_hints_block_renders_numbered_list():

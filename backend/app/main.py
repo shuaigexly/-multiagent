@@ -1,6 +1,7 @@
 """FastAPI 应用入口"""
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 
@@ -22,6 +23,7 @@ from app.core.event_emitter import EventEmitter
 # 安装结构化日志（JSON / plain 切换由 LOG_FORMAT 决定）
 configure_logging()
 logger = logging.getLogger(__name__)
+_TENANT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 # 注册 agent 工具（fetch_url / bitable_query / feishu_sheet / python_calc / ask_peer）
 # 装饰器在导入时自动注册到 app.agents.tools._REGISTRY
@@ -163,6 +165,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def _normalize_tenant_id(raw: str | None) -> str:
+    tenant = (raw or "default").strip()[:64]
+    if not tenant or not _TENANT_ID_RE.fullmatch(tenant):
+        return "default"
+    return tenant
+
+
 @app.middleware("http")
 async def correlation_middleware(request: Request, call_next):
     """为每个请求绑定 correlation_id，自动注入到日志上下文。
@@ -172,7 +182,7 @@ async def correlation_middleware(request: Request, call_next):
     """
     incoming = request.headers.get("X-Correlation-ID") or request.headers.get("X-Request-ID")
     cid = (incoming or uuid.uuid4().hex[:12])[:64]
-    tenant = (request.headers.get("X-Tenant-ID") or "default")[:64]
+    tenant = _normalize_tenant_id(request.headers.get("X-Tenant-ID"))
     async with correlation_scope(cid):
         # tenant_id 贯穿到 budget / audit / cache key
         set_task_context(tenant_id=tenant)

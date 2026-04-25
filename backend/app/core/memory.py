@@ -108,6 +108,25 @@ def _task_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
 
 
+def _escape_prompt_text(text: str) -> str:
+    return (
+        (text or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _sanitize_memory_text(text: str, *, source: str) -> tuple[str, bool]:
+    try:
+        from app.core.prompt_guard import sanitize
+
+        result = sanitize(text or "", source=source)
+        return result.text, result.injection_detected
+    except Exception:
+        return text or "", False
+
+
 async def store_memory(
     *,
     agent_id: str,
@@ -125,6 +144,11 @@ async def store_memory(
         return
     if "[REDACTED:" in task_text:
         logger.info("store_memory skip — task contains injection redaction marks")
+        return
+    task_text, task_injected = _sanitize_memory_text(task_text, source=f"memory.{kind}.task")
+    summary, summary_injected = _sanitize_memory_text(summary, source=f"memory.{kind}.summary")
+    if task_injected or summary_injected:
+        logger.info("store_memory skip — memory text contains prompt-injection markers")
         return
     tenant = get_tenant_id() or "default"
     try:
@@ -211,17 +235,29 @@ def format_memory_hits(hits: list[MemoryHit]) -> str:
     if reflections:
         lines.append("（以下是该岗位过往任务的自我反思 — 优先参考其中的经验教训）")
         for i, h in enumerate(reflections, 1):
+            safe_summary, _ = _sanitize_memory_text(
+                h.summary[:400],
+                source="memory.prompt.reflection",
+            )
             lines.append(
                 f"  [反思{i}] 相似度={h.similarity:.2f} 时间={h.created_at[:10]}\n"
-                f"    {h.summary[:400]}"
+                f"    {_escape_prompt_text(safe_summary)}"
             )
     if cases:
         lines.append("（以下是该岗位过往相似任务结论摘要 — 仅供参考，不要照搬）")
         for i, h in enumerate(cases, 1):
+            safe_task, _ = _sanitize_memory_text(
+                h.task_text[:200],
+                source="memory.prompt.task",
+            )
+            safe_summary, _ = _sanitize_memory_text(
+                h.summary[:400],
+                source="memory.prompt.summary",
+            )
             lines.append(
                 f"  [案例{i}] 相似度={h.similarity:.2f} 时间={h.created_at[:10]}\n"
-                f"    任务：{h.task_text[:200]}\n"
-                f"    结论摘要：{h.summary[:400]}"
+                f"    任务：{_escape_prompt_text(safe_task)}\n"
+                f"    结论摘要：{_escape_prompt_text(safe_summary)}"
             )
     lines.append("</long_term_memory>")
     return "\n".join(lines)

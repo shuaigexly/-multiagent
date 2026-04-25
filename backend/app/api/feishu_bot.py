@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import os
+import time
 import uuid
 from typing import Any, Optional
 
@@ -27,6 +28,8 @@ from app.models.database import AsyncSessionLocal, FeishuBotEvent, Task, TaskRes
 
 router = APIRouter(prefix="/api/v1/feishu/bot", tags=["feishu-bot"])
 logger = logging.getLogger(__name__)
+_MAX_EVENT_BODY_BYTES = int(os.getenv("FEISHU_BOT_MAX_BODY_BYTES", str(256 * 1024)))
+_SIGNATURE_SKEW_SECONDS = int(os.getenv("FEISHU_BOT_SIGNATURE_SKEW_SECONDS", "300"))
 
 
 def _get_bot_settings() -> dict[str, str]:
@@ -54,6 +57,12 @@ def _verify_signature(request: Request, raw_body: bytes, encrypt_key: str) -> bo
     nonce = request.headers.get("X-Lark-Request-Nonce")
     signature = request.headers.get("X-Lark-Signature")
     if not timestamp or not nonce or not signature:
+        return False
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False
+    if abs(int(time.time()) - ts) > _SIGNATURE_SKEW_SECONDS:
         return False
     digest = hashlib.sha256((timestamp + nonce + encrypt_key).encode("utf-8") + raw_body).hexdigest()
     return hmac.compare_digest(signature, digest)
@@ -86,7 +95,12 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
         logger.warning("Bot event: verification_token/encrypt_key 未配置，已拒绝")
         return JSONResponse({"ok": False}, status_code=401)
     try:
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > _MAX_EVENT_BODY_BYTES:
+            return JSONResponse({"ok": False}, status_code=413)
         raw_body = await request.body()
+        if len(raw_body) > _MAX_EVENT_BODY_BYTES:
+            return JSONResponse({"ok": False}, status_code=413)
         raw_payload = json.loads(raw_body.decode("utf-8"))
         is_encrypted = bool(raw_payload.get("encrypt"))
     except Exception as exc:

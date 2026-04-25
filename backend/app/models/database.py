@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from typing import Optional
 from sqlalchemy import (
     Column, String, Integer, Text, DateTime, JSON,
@@ -10,6 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 import uuid
 
 from app.core.settings import settings
+
+
+_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DDL_TYPE_RE = re.compile(r"^(TEXT|INTEGER|JSON|DATETIME|BOOLEAN|VARCHAR\(\d+\))$", re.IGNORECASE)
+_DDL_DEFAULT_RE = re.compile(r"^('[^']*'|-?\d+|NULL)$", re.IGNORECASE)
 
 
 def generate_id() -> str:
@@ -218,6 +224,15 @@ async def _ensure_task_user_instructions_column(conn):
 
 async def _ensure_column(conn, table_name: str, column_name: str, ddl_type: str, default: str = ""):
     """通用幂等 ALTER ADD COLUMN — create_all 不会给已存在表加新列，需手动迁移。"""
+    if not _SQL_IDENTIFIER_RE.fullmatch(table_name):
+        raise ValueError(f"invalid table name: {table_name!r}")
+    if not _SQL_IDENTIFIER_RE.fullmatch(column_name):
+        raise ValueError(f"invalid column name: {column_name!r}")
+    if not _DDL_TYPE_RE.fullmatch(ddl_type):
+        raise ValueError(f"invalid DDL type: {ddl_type!r}")
+    if default and not _DDL_DEFAULT_RE.fullmatch(default):
+        raise ValueError(f"invalid DDL default: {default!r}")
+
     def has_column(sync_conn) -> bool:
         inspector = inspect(sync_conn)
         try:

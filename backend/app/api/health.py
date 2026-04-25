@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
 
 
+def _detailed_health_enabled() -> bool:
+    return os.getenv("HEALTH_DETAILED", "").lower() in {"1", "true", "yes"}
+
+
 async def _check_db() -> dict[str, Any]:
     """v8.3 修复：探针不能因 DB 锁/磁盘满而挂起，加 3s 超时。
     K8s liveness/readiness 默认 timeout 1-5s，探针卡住会让 pod 被反复重启。
@@ -40,7 +44,8 @@ async def _check_db() -> dict[str, Any]:
     except asyncio.TimeoutError:
         return {"ok": False, "error": "DB ping timeout (3s)"}
     except Exception as exc:
-        return {"ok": False, "error": str(exc)[:200]}
+        logger.debug("DB health check failed: %s", exc)
+        return {"ok": False, "error": "DB ping failed"}
 
 
 async def _check_redis() -> dict[str, Any]:
@@ -53,7 +58,8 @@ async def _check_redis() -> dict[str, Any]:
         await asyncio.wait_for(client.ping(), timeout=2.0)
         return {"ok": True, "latency_ms": round((time.monotonic() - start) * 1000, 1)}
     except Exception as exc:
-        return {"ok": False, "optional": True, "error": str(exc)[:200]}
+        logger.debug("Redis health check failed: %s", exc)
+        return {"ok": False, "optional": True, "error": "Redis ping failed"}
     finally:
         # 关键修复：ping 超时/异常时之前不会执行 aclose → 健康探针每次失败都泄漏一个 Redis 连接
         if client is not None:
@@ -76,14 +82,20 @@ async def _check_llm() -> dict[str, Any]:
     base = get_llm_base_url()
     if not base:
         return {"ok": False, "error": "LLM_BASE_URL not configured"}
-    return {"ok": True, "provider": provider, "base_url": base}
+    result = {"ok": True, "provider": provider}
+    if _detailed_health_enabled():
+        result["base_url"] = base
+    return result
 
 
 async def _check_feishu() -> dict[str, Any]:
     """检查飞书凭据是否就绪 + tenant token 缓存命中。"""
     if not settings.feishu_app_id or not settings.feishu_app_secret:
         return {"ok": False, "error": "FEISHU_APP_ID/FEISHU_APP_SECRET not configured"}
-    return {"ok": True, "region": settings.feishu_region, "app_id": settings.feishu_app_id[:12] + "..."}
+    result = {"ok": True, "region": settings.feishu_region}
+    if _detailed_health_enabled():
+        result["app_id"] = settings.feishu_app_id[:12] + "..."
+    return result
 
 
 @router.get("/healthz")
