@@ -26,6 +26,7 @@ from app.bitable_workflow.workflow_agents import (
     write_ceo_report,
 )
 from app.agents.base_agent import AgentResult
+from app.core.observability import set_task_context
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -299,6 +300,9 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
         rid = record.get("record_id", "?")
         fields = record.get("fields", {})
         task_title = fields.get("任务标题", f"任务_{rid[:8]}")
+
+        # 绑定 task_id 上下文 — 此后所有 logger.* 调用自动带上 task_id，便于聚合查询
+        set_task_context(task_id=rid)
 
         try:
             # 标记为「分析中」并回读校验 owner，降低多实例重复领取概率。

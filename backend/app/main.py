@@ -1,15 +1,17 @@
 """FastAPI 应用入口"""
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as aioredis
 from sqlalchemy import select, update
 
 from app.api import config as config_api
-from app.api import events, feishu, feishu_bot as feishu_bot_api, feishu_context as feishu_context_api, feishu_oauth as feishu_oauth_api, results, tasks, workflow as workflow_api
+from app.api import events, feishu, feishu_bot as feishu_bot_api, feishu_context as feishu_context_api, feishu_oauth as feishu_oauth_api, health as health_api, results, tasks, workflow as workflow_api
+from app.core.observability import configure_logging, correlation_scope
 from app.core.settings import apply_db_config, settings
 from app.feishu.client import reset_feishu_client
 from app.feishu import mcp_client
@@ -17,7 +19,8 @@ from app.feishu.token_crypto import decrypt_token
 from app.models.database import AsyncSessionLocal, Task, UserConfig, init_db
 from app.core.event_emitter import EventEmitter
 
-logging.basicConfig(level=logging.INFO)
+# 安装结构化日志（JSON / plain 切换由 LOG_FORMAT 决定）
+configure_logging()
 logger = logging.getLogger(__name__)
 
 _sentry_dsn = os.getenv("SENTRY_DSN", "")
@@ -155,6 +158,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def correlation_middleware(request: Request, call_next):
+    """为每个请求绑定 correlation_id，自动注入到日志上下文。
+
+    优先使用 X-Correlation-ID 请求头（便于跨服务追踪），否则生成新 uuid4 短码。
+    响应同样回写该 header，便于前端关联日志。
+    """
+    incoming = request.headers.get("X-Correlation-ID") or request.headers.get("X-Request-ID")
+    cid = (incoming or uuid.uuid4().hex[:12])[:64]
+    async with correlation_scope(cid):
+        response = await call_next(request)
+        response.headers["X-Correlation-ID"] = cid
+        return response
+
+
+app.include_router(health_api.router)  # /healthz, /readyz, /health 别名
 app.include_router(tasks.router)
 app.include_router(events.router)
 app.include_router(results.router)
@@ -164,8 +183,3 @@ app.include_router(feishu_context_api.router)
 app.include_router(feishu_oauth_api.router)
 app.include_router(config_api.router)
 app.include_router(workflow_api.router)
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "service": "feishu-ai-workbench"}

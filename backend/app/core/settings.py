@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # 对 GLM-4-flash 等免费额度较紧的模型成本翻倍。生产环境默认关闭，必要时手动打开。
     reflection_enabled: bool = False
 
+    # LLM 成本管控（0 表示不限制）
+    daily_token_budget: int = 0          # 每个租户每日 token 上限
+    per_task_token_budget: int = 0       # 单条任务 token 上限
+
     def __getattribute__(self, name: str):
         if name in _OVERRIDABLE_FIELDS:
             override = _db_overrides.get(name)

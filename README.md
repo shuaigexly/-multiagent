@@ -533,7 +533,41 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v6.2（当前） — 二轮审计修复（鲁棒性 + 边界 + 重构）
+### v7.0（当前） — 企业级基础设施层（可观测性 + 成本管控 + 审计）
+
+为提升项目的运维与生产就绪程度，引入四项基础设施能力：
+
+**🔍 结构化日志 + correlation_id 全链路追踪（`app/core/observability.py`）**
+- ContextVar 实现 correlation_id / task_id / agent_id / tenant_id 跨 await 传播
+- `LOG_FORMAT=json` 启用 JSON 输出（兼容 Loki / Datadog / CloudWatch 直接消费）；`plain` 为本地开发友好格式
+- `correlation_middleware` 自动从 `X-Correlation-ID` / `X-Request-ID` 请求头读取，否则生成 uuid4 短码并写回响应
+- scheduler 每条任务进入流水线时自动 `set_task_context(task_id=rid)` —— 此后所有 `logger.*` 调用自动带任务标识
+- 抑制 `httpx` / `httpcore` / `openai._base_client` 等三方库的 INFO 噪声
+
+**💰 LLM 成本管控（`app/core/budget.py`）**
+- 双层预算闸门：`per_task_token_budget`（单任务上限）+ `daily_token_budget`（租户每日上限）
+- 调用前 `check_budget(strict=True)` 拦截，超额抛 `BudgetExceeded`，调用方可降级（关 reflection / 截短 prompt）
+- 调用后 `record_usage(prompt_tokens, completion_tokens)` 记账
+- 后端：Redis `INCRBY` + TTL 自动归档（task=24h，daily=36h），不可用时进程内 dict fallback
+- 三个维度可查：当前任务、当前租户当日、全局当日（运维大盘）
+
+**🩺 K8s 风格健康/就绪探针（`app/api/health.py`）**
+- `GET /healthz` —— 仅确认 Python 进程响应（liveness 探针）
+- `GET /readyz` —— 并发检查 DB / Redis（optional）/ LLM 配置 / 飞书凭证；critical 失败返回 503
+- 每项检查带延迟数据，便于排查依赖慢点
+- 旧 `/health` 端点保留为 `/healthz` 别名
+
+**📋 审计日志（`app/core/audit.py` + `models.AuditLog`）**
+- Append-only 表 `audit_log`：action / actor / target / tenant_id / correlation_id / payload / result
+- `app/api/workflow.py` 关键端点埋点：setup / start / stop / seed
+- 写入失败仅 warning，绝不阻塞业务
+- 索引覆盖 `(action, created_at)` + `(tenant_id, created_at)`，便于按时间窗 / 租户聚合查询
+
+**🧪 测试**
+- 新增 `tests/test_observability_budget.py`：covers correlation_scope / record_usage 累加 / strict 超额 / status 视图（6 cases）
+- 全套件 51 → 57 passing
+
+### v6.2 — 二轮审计修复（鲁棒性 + 边界 + 重构）
 
 **🔒 安全 / 并发**
 - `scheduler.py` 新增 `_claim_pending_record`：标记 ANALYZING 后回读校验，防止多实例并发"双领取"同一任务

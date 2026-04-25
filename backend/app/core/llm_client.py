@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from app.core.budget import BudgetExceeded, check_budget, record_usage
 from app.core.settings import (
     get_llm_api_key,
     get_llm_base_url,
@@ -30,6 +31,13 @@ async def call_llm(
     temperature: float = 0.7,
     max_tokens: int = 2000,
 ) -> str:
+    # Budget 闸门：超额前直接拦截，避免空跑 LLM 请求再记账
+    try:
+        await check_budget(strict=True)
+    except BudgetExceeded as exc:
+        logger.warning("LLM call refused — budget exceeded: %s", exc)
+        raise
+
     provider = get_llm_provider().strip().lower()
     if provider == "feishu_aily":
         async with _get_llm_semaphore():
@@ -73,6 +81,16 @@ async def _call_openai_compatible(
             content = (resp.choices[0].message.content or "").strip()
             if not content:
                 raise RuntimeError("LLM returned empty content")
+            # 记账：把本次调用 token 消耗写入 budget tracker
+            try:
+                usage = getattr(resp, "usage", None)
+                if usage is not None:
+                    await record_usage(
+                        prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                        completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                    )
+            except Exception as record_exc:
+                logger.debug("Budget record_usage failed (non-fatal): %s", record_exc)
             return content
         except Exception as exc:
             last_err = exc

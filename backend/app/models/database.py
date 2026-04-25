@@ -99,6 +99,25 @@ class UserConfig(Base):
     )
 
 
+class AuditLog(Base):
+    """Append-only 审计日志：记录敏感操作 who / what / when / outcome。"""
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_log_action_created", "action", "created_at"),
+        Index("ix_audit_log_tenant_created", "tenant_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    action = Column(String(64), nullable=False)
+    actor = Column(String(128), nullable=False, default="system")
+    target = Column(String(256), nullable=False, default="")
+    tenant_id = Column(String(64), nullable=False, default="")
+    correlation_id = Column(String(64), nullable=False, default="")
+    payload = Column(JSON, nullable=True)
+    result = Column(String(32), nullable=False, default="ok")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class FeishuBotEvent(Base):
     __tablename__ = "feishu_bot_events"
 

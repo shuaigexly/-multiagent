@@ -10,6 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.bitable_workflow import bitable_ops, progress_broker, runner
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
+from app.core.audit import record_audit
 from app.core.auth import issue_stream_token, require_api_key, verify_stream_token
 
 _VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
@@ -72,6 +73,11 @@ async def workflow_setup(req: SetupRequest):
         )
     result = await runner.setup_workflow(req.name)
     _state.update(result)
+    await record_audit(
+        "workflow.setup",
+        target=result.get("app_token", ""),
+        payload={"name": req.name, "url": result.get("url", "")},
+    )
     return result
 
 
@@ -88,6 +94,11 @@ async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
         req.interval,
         req.analysis_every,
     )
+    await record_audit(
+        "workflow.start",
+        target=req.app_token,
+        payload={"interval": req.interval},
+    )
     return {"status": "started", "interval": req.interval}
 
 
@@ -95,6 +106,7 @@ async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
 async def workflow_stop():
     """停止调度循环。"""
     runner.stop_workflow()
+    await record_audit("workflow.stop", target=_state.get("app_token", ""))
     return {"status": "stopped"}
 
 
@@ -117,6 +129,11 @@ async def workflow_seed(req: SeedRequest):
             "状态": Status.PENDING,
             "创建时间": datetime.now().strftime("%Y-%m-%d %H:%M"),
         },
+    )
+    await record_audit(
+        "workflow.seed",
+        target=record_id,
+        payload={"title": req.title, "dimension": req.dimension, "app_token": req.app_token},
     )
     return {"record_id": record_id}
 
