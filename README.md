@@ -533,7 +533,42 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v6.0（当前） — 视觉化字段 + 真实数据源 + 实时进度流
+### v6.2（当前） — 二轮审计修复（鲁棒性 + 边界 + 重构）
+
+**🔒 安全 / 并发**
+- `scheduler.py` 新增 `_claim_pending_record`：标记 ANALYZING 后回读校验，防止多实例并发"双领取"同一任务
+- `scheduler.py` cycle lock 新增续租协程 `_renew_cycle_lock` + 生产环境强制 Redis 锁（`WORKFLOW_ALLOW_LOCAL_LOCK` 显式允许才回退到本地锁）
+- `settings.py` 注释强化：`token_encryption_key` 必填，除非显式允许明文存储
+
+**📐 文本边界**
+- 新增 `core/text_utils.py::truncate_with_marker`：以字符为单位安全截断 + 追加截断标记，避免在 emoji / 中文边界切坏字节
+- 全栈替换散落的 `[:N]` 切片：`base_agent` / `scheduler` / `bitable` / `publisher` / `reader` / `cardkit` / `slides` / `task` / `cli_bridge` / `data_parser` 等 14 文件
+
+**🔄 流水线一致性**
+- `workflow_agents` 拆分 `cleanup_prior_task_outputs` 为两段：`collect_prior_task_output_ids` + `cleanup_prior_task_output_ids`，避免清理时遗漏 / 删错
+- `base_agent._build_prompt` 改为 async，skill_loader 通过 `asyncio.to_thread` 调用，不再阻塞事件循环
+
+**🧹 重构**
+- `feishu/publisher.py` 整体重写（301 行）：统一 doc/bitable/slides/message 的 token 选择 + 错误归一化
+- `api/feishu_context.py` 上下文聚合加入超时 + 并发上限
+- `api/tasks.py` / `config.py` / `feishu_bot.py` / `feishu_oauth.py` 错误响应规范化
+
+**🧪 测试**
+- 新增 `tests/test_security_utils.py`：覆盖 `truncate_with_marker` emoji / 中文 / 边界长度
+
+### v6.1 — 审计阻断项修复
+
+- `core/auth.py` 新增：HMAC stream token（短时签发）替代 query string 传 API key
+- `api/workflow.py` 加 `Depends(require_api_key)`；新增 `POST /stream-token/{record_id}` 签发 SSE 短时 token
+- `bitable_workflow/scheduler.py` 加分布式 cycle lock（Redis SETNX）+ 仅恢复 stale ANALYZING 记录
+- `agent_cache.py` cache key 加输入 hash，避免数据源变更后命中旧结果；Redis 失败 60s 退避重试
+- `bitable.py` / `feishu/*` 复用 `httpx.AsyncClient`；先校验 HTTP 状态码再解析 JSON
+- `retry.py` 拆分 `_is_non_retryable_value_error`：仅"未配置 / 不支持 / 不能为空 / 缺少 / 需要提供"快速失败
+- `runner.py` `_state_lock = threading.Lock()` 守护 `_running` 状态翻转
+- 前端：`services/http.ts` 共享 axios 实例统一注入 API key；`subscribeTaskProgress` 改为先取 stream token 再建 EventSource
+- 前端依赖 CVE 升级；新增 `test/workflow.test.ts` 覆盖 SSE token 流程
+
+### v6.0 — 视觉化字段 + 真实数据源 + 实时进度流
 
 本轮聚焦"让多维表格像仪表盘一样能一眼看懂"以及"让分析基于真数据"：
 
