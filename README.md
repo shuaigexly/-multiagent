@@ -533,7 +533,56 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v8.3（当前） — 第十五~十六轮审计（7 个真实 bug，含 1 个 meta-race）
+### v8.4（当前） — 第十七轮深度安全审计（SSRF / AST sandbox / 持久化注入 / DDL 注入）
+
+本轮把审计从"并发竞态"上升到"安全攻击面"。新增 1 个安全模块、修补 8 类攻击面。
+
+**🛡️ SSRF 防护（新增 `app/core/url_safety.py`）**
+- 统一闸口拦截所有 LLM 工具的外链：`fetch_url` / `inspect_image` / vision 全部走该模块
+- 阻断 localhost / 私网（10/192.168/172.16/）/ link-local（169.254/）/ 非 http(s) scheme / 危险跳转
+- 超大响应字节数限制 + 非预期 content-type 拒绝
+- DNS 解析后再校验 IP，防止 DNS rebinding 绕过
+
+**🔒 `python_calc` AST 白名单沙箱**
+- 之前是 token blacklist（"import" / "open(" 等关键词检测），可被 `__class__` / `getattr` 绕过
+- 升级为 `ast.parse` + `NodeVisitor` 白名单：仅允许 `BinOp` / `Compare` / `Call`(白名单函数) / `Subscript` / 字面量
+- 阻断 DoS：大指数（`9**99**99`）/ 大重复（`"a"*10**8`）/ comprehension / 危险调用
+
+**🩺 持久化路径 prompt injection 全链路消毒**
+- `store_memory` 写入前消毒 task_text + summary，injection 命中即拒写
+- `format_memory_hits` 渲染时再消毒 + XML 转义
+- `peer_qa.ask_peer` 对 sections / actions / question 全部消毒后才注入 LLM
+- `prompt_evolution.maybe_promote` 对 reflection + rule_text 双重检查
+- `format_hints_block` 渲染时再消毒，防止持久化的恶意规则被注入到下次 prompt
+
+**🚧 `prompt_guard` 扩展 xml_break 模式**
+- 新增覆盖：`long_term_memory` / `previous_analysis` / `question` / `user_instructions` 标签的伪造关闭
+
+**🔐 公开探针信息脱敏**
+- `/readyz` 默认不再暴露 LLM base_url / Feishu app_id / 原始 DB/Redis 异常堆栈
+- `HEALTH_DETAILED=1` 启用详细字段（内网运维模式）
+- 异常路径仅返回通用错误信息，避免 fingerprinting
+
+**🤖 Feishu bot webhook 加固**
+- 请求体大小限制 → 缓解大包 DoS
+- 签名时间窗口校验 → 缓解重放攻击
+
+**💉 DDL 注入防护**
+- `_ensure_column` ALTER TABLE 拼接 4 维白名单：
+  - 表名 / 列名：`^[A-Za-z_][A-Za-z0-9_]*$`
+  - DDL type：`^(TEXT|INTEGER|JSON|DATETIME|BOOLEAN|VARCHAR\(\d+\))$`
+  - default：`^('[^']*'|-?\d+|NULL)$`
+
+**🏢 Tenant 头部白名单**
+- `_TENANT_ID_RE = ^[A-Za-z0-9_.:-]{1,64}$`
+- 非法值自动归为 `default`，避免被注入到日志 / cache key / Redis 通道名
+
+**🧪 测试**
+- 新增 `tests/test_security_utils.py`：SSRF 闸口 / AST 沙箱 / 持久化注入路径回归
+- 修复 `tests/test_evolution_deps.py` reload DB engine 后未 dispose 导致 pytest 进程不退出
+- 全套件 154 → **163 passing**
+
+### v8.3 — 第十五~十六轮审计（7 个真实 bug，含 1 个 meta-race）
 
 🔴 严重 — 持续清理懒初始化 race 系统性问题：
 39. `feishu/client.get_feishu_client` race — 并发首次创建 lark Client 各自构造 connection pool。修：threading.Lock 双检 + 把构造放进 lock 内部（之前误漏 `with` 块包围范围）。
