@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 
-from app.core.settings import get_llm_api_key, get_llm_base_url, get_llm_model
+from app.core.settings import get_llm_api_key, get_llm_base_url, get_llm_model, settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,14 @@ class ModelConfig:
 
 
 def _env_or_default(env_name: str, default: str) -> str:
-    return os.getenv(env_name, "").strip() or default
+    """先 os.environ，再 settings（pydantic 读 .env 字段），都空则用 default。"""
+    raw = os.getenv(env_name, "").strip()
+    if raw:
+        return raw
+    # 兜底：从 pydantic settings 读 .env 字段（v8.6.11）
+    settings_attr = env_name.lower()
+    raw = (getattr(settings, settings_attr, "") or "").strip()
+    return raw or default
 
 
 def resolve_model(tier: ModelTier | str) -> ModelConfig:

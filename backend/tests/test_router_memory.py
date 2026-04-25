@@ -39,12 +39,24 @@ def test_select_tier_long_prompt_is_standard():
 
 
 def test_resolve_model_falls_back_to_standard_when_tier_env_missing(monkeypatch):
+    """v8.6.11：env 和 settings 字段都为空时，三档应回退到 STANDARD（同一 model）。"""
+    from app.core import model_router as _mr
     monkeypatch.delenv("LLM_FAST_MODEL", raising=False)
     monkeypatch.delenv("LLM_DEEP_MODEL", raising=False)
+    monkeypatch.delenv("LLM_FAST_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_DEEP_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_FAST_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_DEEP_API_KEY", raising=False)
+    # 同时清掉 settings 字段（pydantic 从 .env 加载的值）
+    for attr in (
+        "llm_fast_model", "llm_deep_model",
+        "llm_fast_base_url", "llm_deep_base_url",
+        "llm_fast_api_key", "llm_deep_api_key",
+    ):
+        monkeypatch.setattr(_mr.settings, attr, "")
     fast = resolve_model(ModelTier.FAST)
     deep = resolve_model(ModelTier.DEEP)
     standard = resolve_model(ModelTier.STANDARD)
-    # 缺省时三档使用同一 model
     assert fast.model == standard.model
     assert deep.model == standard.model
 

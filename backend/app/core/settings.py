@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     # feishu_aily = 通过飞书 Aily 会话 API 调用（需企业开通飞书 AI）
     llm_provider: str = "openai_compatible"
 
+    # v8.6.11 — 三档模型路由（model_router.resolve_model 用）
+    llm_fast_api_key: str = ""
+    llm_fast_base_url: str = ""
+    llm_fast_model: str = ""
+    llm_deep_api_key: str = ""
+    llm_deep_base_url: str = ""
+    llm_deep_model: str = ""
+
     # Feishu / Lark
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
