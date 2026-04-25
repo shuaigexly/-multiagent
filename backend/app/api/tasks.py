@@ -19,6 +19,7 @@ from app.core.event_emitter import EventEmitter
 from app.core.orchestrator import orchestrate
 from app.core.settings import settings
 from app.core.task_planner import plan_task
+from app.core.text_utils import truncate_with_marker
 from app.models.database import PublishedAsset, Task, TaskEvent, TaskResult, get_db
 from app.models.schemas import (
     TaskConfirm,
@@ -137,7 +138,7 @@ async def create_task(
     # 拼接用于规划的文本
     planning_text = input_text or ""
     if file_content:
-        planning_text += f"\n\n[附件内容片段]\n{file_content[:500]}"
+        planning_text += f"\n\n[附件内容片段]\n{truncate_with_marker(file_content, 500)}"
 
     # TaskPlanner 识别
     import json as _json
@@ -256,7 +257,7 @@ async def list_tasks(
             id=t.id,
             status=t.status,
             task_type_label=t.task_type_label,
-            input_text=t.input_text[:100] if t.input_text else None,
+            input_text=truncate_with_marker(t.input_text, 100) if t.input_text else None,
             created_at=t.created_at,
         )
         for t in tasks
@@ -446,7 +447,6 @@ async def _execute_task(
                     status="failed",
                     error_message=error_message,
                 )
-                await _remove_upload_file(input_file_path)
                 return
 
             if await _is_task_cancelled(db, task_id):
@@ -469,10 +469,14 @@ async def _execute_task(
             summary = ""
             for ar in agent_results:
                 if ar.agent_id == "ceo_assistant" and ar.sections:
-                    summary = (ar.sections[0].content or "")[:500]
+                    summary = truncate_with_marker(ar.sections[0].content or "", 500)
                     break
             if not summary and agent_results:
-                summary = (agent_results[-1].sections[0].content or "")[:300] if agent_results[-1].sections else "分析完成"
+                summary = (
+                    truncate_with_marker(agent_results[-1].sections[0].content or "", 300)
+                    if agent_results[-1].sections
+                    else "分析完成"
+                )
 
             if not await _update_task_unless_cancelled(
                 db,
@@ -504,7 +508,6 @@ async def _execute_task(
                     await emitter2.emit_task_error(str(e))
             except Exception as exc:
                 logger.warning("任务失败状态更新或错误事件发送失败: %s", exc)
-            await _remove_upload_file(input_file_path)
 
 
 async def _enrich_from_feishu_context(
@@ -534,7 +537,7 @@ async def _enrich_from_feishu_context(
             await emitter.emit("context.retrieved", payload={"doc_count": 0, "summary": f"正在读取飞书文档：{name}"})
             content = await read_doc_content(token)
             if content and content.strip():
-                parts.append(f"【飞书文档：{name}】\n{content[:4000]}")
+                parts.append(f"【飞书文档：{name}】\n{truncate_with_marker(content, 4000)}")
                 logger.info(f"[task={task_id}] 读取文档成功: {name}，{len(content)} 字")
             else:
                 logger.info(f"[task={task_id}] 文档内容为空: {name}")
@@ -566,10 +569,10 @@ async def _enrich_from_feishu_context(
 
     combined = "\n\n---\n\n".join(parts)
     return DataSummary(
-        raw_preview=combined[:6000],
+        raw_preview=truncate_with_marker(combined, 6000),
         columns=[],
         row_count=len(parts),
         basic_stats={},
         content_type="text",
-        full_text=combined[:8000],
+        full_text=truncate_with_marker(combined, 8000),
     )

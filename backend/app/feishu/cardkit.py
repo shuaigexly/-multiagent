@@ -7,6 +7,7 @@ import httpx
 
 from app.agents.base_agent import AgentResult
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret, get_feishu_region
+from app.core.text_utils import truncate_with_marker
 from app.feishu.client import get_feishu_base_url
 from app.feishu.retry import with_retry
 from app.feishu.user_token import get_user_access_token
@@ -254,7 +255,9 @@ def _parse_json_response(resp: httpx.Response, context: str) -> dict:
     try:
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        raise RuntimeError(f"{context}: HTTP {resp.status_code}: {resp.text[:500]}") from exc
+        raise RuntimeError(
+            f"{context}: HTTP {resp.status_code}: {truncate_with_marker(resp.text, 500)}"
+        ) from exc
     try:
         data = resp.json()
     except json.JSONDecodeError as exc:

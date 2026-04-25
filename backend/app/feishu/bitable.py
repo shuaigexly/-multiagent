@@ -25,6 +25,7 @@ from app.agents.base_agent import AgentResult
 from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 from app.feishu.client import get_feishu_base_url, get_feishu_client
 from app.feishu.retry import with_retry
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -421,14 +422,14 @@ def _build_summary_records(agent_results: Sequence[AgentResult]) -> list[dict]:
     for result in agent_results:
         summary = "暂无摘要"
         if result.sections:
-            summary = (result.sections[0].content or "").strip()[:300] or summary
+            summary = truncate_with_marker((result.sections[0].content or "").strip(), 300) or summary
 
         findings = _build_findings(result)
         records.append(
             {
                 "模块名称": result.agent_name or "未命名模块",
                 "摘要": summary,
-                "关键发现": "；".join(findings)[:500] if findings else "暂无关键发现",
+                "关键发现": truncate_with_marker("；".join(findings), 500) if findings else "暂无关键发现",
             }
         )
     return records
@@ -445,7 +446,7 @@ def _build_findings(result: AgentResult) -> list[str]:
         for line in (section.content or "").splitlines():
             clean_line = line.strip().lstrip("-•*0123456789.、 ")
             if clean_line:
-                text_lines.append(clean_line[:120])
+                text_lines.append(truncate_with_marker(clean_line, 120))
             if len(text_lines) >= 3:
                 return text_lines
     return text_lines[:3]

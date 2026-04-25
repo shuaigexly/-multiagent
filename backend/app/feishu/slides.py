@@ -17,6 +17,7 @@ from app.feishu.doc import (
     build_ordered_block,
     create_structured_document,
 )
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +177,7 @@ async def _populate_presentation(
                             "shape_type": "text_box",
                             "position": {"x": 36, "y": 130, "width": 648, "height": 360},
                             "text": {
-                                "elements": [{"text_run": {"content": body_text[:800]}}],
+                                "elements": [{"text_run": {"content": truncate_with_marker(body_text, 800)}}],
                             },
                         },
                     },
@@ -237,7 +238,7 @@ def _build_slide_bullets(result: AgentResult) -> list[str]:
         for item in result.action_items:
             clean_item = item.strip()
             if clean_item and not clean_item.startswith("[摘要]"):
-                bullets.append(clean_item[:180])
+                bullets.append(truncate_with_marker(clean_item, 180))
             if len(bullets) >= 5:
                 return bullets
 
@@ -245,7 +246,7 @@ def _build_slide_bullets(result: AgentResult) -> list[str]:
         for line in section.content.splitlines():
             clean_line = line.strip().lstrip("-•*0123456789.、 ")
             if clean_line:
-                bullets.append(clean_line[:180])
+                bullets.append(truncate_with_marker(clean_line, 180))
             if len(bullets) >= 5:
                 return bullets
 
@@ -261,7 +262,7 @@ def _build_cli_slides_xml(agent_results: Sequence[AgentResult]) -> list[str]:
         title = result.agent_name or "未命名模块"
         bullets = _build_slide_bullets(result)
         key_content = "\n".join(bullets) or "暂无可展示内容。"
-        slides_xml.append(_build_slide_xml(title, key_content[:900]))
+        slides_xml.append(_build_slide_xml(title, truncate_with_marker(key_content, 900)))
     return slides_xml
 
 

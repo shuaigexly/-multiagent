@@ -11,6 +11,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from app.core.event_emitter import EventEmitter
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -21,19 +22,19 @@ def normalize_metagpt_report(name: str, value: Any, extra: Optional[dict]) -> tu
 
     if name in ("thought", "plan"):
         event_type = "agent.thought"
-        payload["content"] = str(value)[:500]
+        payload["content"] = truncate_with_marker(value, 500)
     elif name in ("action", "tool_call"):
         event_type = "agent.action"
-        payload["action"] = str(value)[:200]
+        payload["action"] = truncate_with_marker(value, 200)
     elif name in ("result", "observation"):
         event_type = "agent.result"
-        payload["result"] = str(value)[:500]
+        payload["result"] = truncate_with_marker(value, 500)
     elif name == "message":
         event_type = "agent.message"
-        payload["message"] = str(value)[:500]
+        payload["message"] = truncate_with_marker(value, 500)
     else:
         event_type = f"agent.{name}"
-        payload["value"] = str(value)[:300]
+        payload["value"] = truncate_with_marker(value, 300)
 
     return event_type, payload
 

@@ -12,6 +12,7 @@ from lark_oapi.api.im.v1 import (
 from app.feishu.client import get_feishu_client
 from app.feishu.retry import with_retry
 from app.core.settings import settings
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ async def _send_card_message_impl(title: str, content: str, chat_id: Optional[st
             "elements": [
                 {
                     "tag": "div",
-                    "text": {"tag": "lark_md", "content": content[:3000]},
+                    "text": {"tag": "lark_md", "content": truncate_with_marker(content, 3000)},
                 }
             ]
         },
@@ -115,7 +116,7 @@ async def send_dm_card(open_id: str, title: str, content: str) -> dict:
             "elements": [
                 {
                     "tag": "div",
-                    "text": {"tag": "lark_md", "content": content[:3000]},
+                    "text": {"tag": "lark_md", "content": truncate_with_marker(content, 3000)},
                 }
             ]
         },

@@ -10,7 +10,23 @@ from lark_oapi.api.im.v1 import ListChatRequest, ListMessageRequest
 from lark_oapi.api.task.v2 import ListTaskRequest
 from lark_oapi.api.wiki.v2 import ListSpaceNodeRequest, ListSpaceRequest
 
+from app.core.text_utils import truncate_with_marker
+
 logger = logging.getLogger(__name__)
+
+
+class FeishuReaderError(RuntimeError):
+    """Raised when Feishu data could not be read; distinct from an empty result."""
+
+
+def _response_error(action: str, resp) -> FeishuReaderError:
+    return FeishuReaderError(f"{action}失败: {getattr(resp, 'msg', '')} (code={getattr(resp, 'code', '')})")
+
+
+def _wrap_reader_exception(action: str, exc: Exception) -> FeishuReaderError:
+    if isinstance(exc, FeishuReaderError):
+        return exc
+    return FeishuReaderError(f"{action}异常: {exc}")
 
 
 def _ts_to_readable(ts) -> str | None:
@@ -32,14 +48,14 @@ def _message_preview(content: str | None) -> str:
     try:
         parsed = json.loads(content)
     except (TypeError, json.JSONDecodeError):
-        return str(content)[:200]
+        return truncate_with_marker(content, 200)
 
     if isinstance(parsed, dict):
         for key in ("text", "title", "content"):
             value = parsed.get(key)
             if isinstance(value, str) and value.strip():
-                return value[:200]
-    return json.dumps(parsed, ensure_ascii=False)[:200]
+                return truncate_with_marker(value, 200)
+    return truncate_with_marker(json.dumps(parsed, ensure_ascii=False), 200)
 
 
 async def list_drive_files(page_size: int = 20) -> list[dict]:
@@ -61,10 +77,10 @@ async def list_drive_files(page_size: int = 20) -> list[dict]:
             resp = await asyncio.wait_for(
                 asyncio.to_thread(client.drive.v1.file.list, req),
                 timeout=30.0,
-            )
+        )
         if not resp.success():
             logger.error(f"列出飞书云盘文件失败: {resp.msg} (code={resp.code})")
-            return []
+            raise _response_error("列出飞书云盘文件", resp)
 
         files = resp.data.files if resp.data and resp.data.files else []
         return [
@@ -80,7 +96,7 @@ async def list_drive_files(page_size: int = 20) -> list[dict]:
         ]
     except Exception as e:
         logger.error(f"读取飞书云盘文件异常: {e}", exc_info=True)
-        return []
+        raise _wrap_reader_exception("读取飞书云盘文件", e) from e
 
 
 async def list_wiki_spaces(page_size: int = 20) -> list[dict]:
@@ -95,7 +111,7 @@ async def list_wiki_spaces(page_size: int = 20) -> list[dict]:
         )
         if not resp.success():
             logger.error(f"列出知识库空间失败: {resp.msg} (code={resp.code})")
-            return []
+            raise _response_error("列出知识库空间", resp)
 
         spaces = resp.data.items if resp.data and resp.data.items else []
         return [
@@ -108,7 +124,7 @@ async def list_wiki_spaces(page_size: int = 20) -> list[dict]:
         ]
     except Exception as e:
         logger.error(f"读取知识库空间异常: {e}", exc_info=True)
-        return []
+        raise _wrap_reader_exception("读取知识库空间", e) from e
 
 
 async def list_wiki_nodes(space_id: str, page_size: int = 50) -> list[dict]:
@@ -128,7 +144,7 @@ async def list_wiki_nodes(space_id: str, page_size: int = 50) -> list[dict]:
         )
         if not resp.success():
             logger.error(f"列出知识库节点失败: {resp.msg} (code={resp.code})")
-            return []
+            raise _response_error("列出知识库节点", resp)
 
         nodes = resp.data.items if resp.data and resp.data.items else []
         return [
@@ -143,7 +159,7 @@ async def list_wiki_nodes(space_id: str, page_size: int = 50) -> list[dict]:
         ]
     except Exception as e:
         logger.error(f"读取知识库节点异常: {e}", exc_info=True)
-        return []
+        raise _wrap_reader_exception("读取知识库节点", e) from e
 
 
 async def list_chats(page_size: int = 20) -> list[dict]:
@@ -158,7 +174,7 @@ async def list_chats(page_size: int = 20) -> list[dict]:
         )
         if not resp.success():
             logger.error(f"列出群聊失败: {resp.msg} (code={resp.code})")
-            return []
+            raise _response_error("列出群聊", resp)
 
         chats = resp.data.items if resp.data and resp.data.items else []
         return [
@@ -172,7 +188,7 @@ async def list_chats(page_size: int = 20) -> list[dict]:
         ]
     except Exception as e:
         logger.error(f"读取群聊列表异常: {e}", exc_info=True)
-        return []
+        raise _wrap_reader_exception("读取群聊列表", e) from e
 
 
 async def list_chat_messages(chat_id: str, page_size: int = 20) -> list[dict]:
@@ -193,7 +209,7 @@ async def list_chat_messages(chat_id: str, page_size: int = 20) -> list[dict]:
         )
         if not resp.success():
             logger.error(f"列出群消息失败: {resp.msg} (code={resp.code})")
-            return []
+            raise _response_error("列出群消息", resp)
 
         messages = resp.data.items if resp.data and resp.data.items else []
         return [
@@ -208,7 +224,7 @@ async def list_chat_messages(chat_id: str, page_size: int = 20) -> list[dict]:
         ]
     except Exception as e:
         logger.error(f"读取群消息异常(chat_id={chat_id}): {e}", exc_info=True)
-        return []
+        raise _wrap_reader_exception("读取群消息", e) from e
 
 
 async def list_calendar_events(start_time: str, end_time: str, page_size: int = 50) -> list[dict]:
@@ -237,10 +253,10 @@ async def list_calendar_events(start_time: str, end_time: str, page_size: int = 
             resp = await asyncio.wait_for(
                 asyncio.to_thread(client.calendar.v4.calendar_event.list, req),
                 timeout=30.0,
-            )
+        )
         if not resp.success():
             logger.error(f"列出日历事件失败: {resp.msg} (code={resp.code})")
-            return []
+            raise _response_error("列出日历事件", resp)
 
         events = resp.data.items if resp.data and resp.data.items else []
         return [
@@ -257,7 +273,7 @@ async def list_calendar_events(start_time: str, end_time: str, page_size: int = 
         ]
     except Exception as e:
         logger.error(f"读取日历事件异常: {e}", exc_info=True)
-        return []
+        raise _wrap_reader_exception("读取日历事件", e) from e
 
 
 async def list_tasks(page_size: int = 50) -> list[dict]:
@@ -269,7 +285,7 @@ async def list_tasks(page_size: int = 50) -> list[dict]:
         user_token = get_user_access_token()
         if not user_token:
             logger.info("飞书任务 API 需要用户授权，请在「设置」页面点击「授权飞书任务」")
-            return []
+            raise FeishuReaderError("飞书任务 API 需要用户授权")
 
         client = get_feishu_client()
         req = ListTaskRequest.builder().page_size(page_size).build()
@@ -282,9 +298,10 @@ async def list_tasks(page_size: int = 50) -> list[dict]:
             if resp.code == 99991668:
                 logger.warning("飞书用户 token 已过期，请重新授权（code=99991668）")
                 set_user_access_token(None)  # 清除过期 token
+                raise FeishuReaderError("飞书用户 token 已过期，请重新授权")
             else:
                 logger.error(f"列出任务失败: {resp.msg} (code={resp.code})")
-            return []
+                raise _response_error("列出任务", resp)
 
         tasks = resp.data.items if resp.data and resp.data.items else []
         return [
@@ -301,7 +318,7 @@ async def list_tasks(page_size: int = 50) -> list[dict]:
         ]
     except Exception as e:
         logger.error(f"读取任务列表异常: {e}", exc_info=True)
-        return []
+        raise _wrap_reader_exception("读取任务列表", e) from e
 
 
 async def read_doc_content(document_id: str) -> str:
@@ -326,8 +343,8 @@ async def read_doc_content(document_id: str) -> str:
             )
         if not resp.success():
             logger.error(f"读取文档内容失败: {resp.msg} (code={resp.code})")
-            return ""
+            raise _response_error("读取文档内容", resp)
         return resp.data.content if resp.data and resp.data.content else ""
     except Exception as e:
         logger.error(f"读取文档内容异常(document_id={document_id}): {e}", exc_info=True)
-        return ""
+        raise _wrap_reader_exception("读取文档内容", e) from e

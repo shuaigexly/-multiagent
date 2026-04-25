@@ -21,6 +21,7 @@ from app.core.settings import (
     get_feishu_bot_verification_token,
 )
 from app.core.task_planner import plan_task
+from app.core.text_utils import truncate_with_marker
 from app.feishu import bot_handler
 from app.models.database import AsyncSessionLocal, FeishuBotEvent, Task, TaskResult
 
@@ -214,9 +215,12 @@ async def _handle_bot_task(
                 error_message = task.error_message or f"任务执行未成功，当前状态: {task.status}"
                 if bot_event:
                     bot_event.status = "failed"
-                    bot_event.error_message = error_message[:500]
+                    bot_event.error_message = truncate_with_marker(error_message, 500)
                 await db.commit()
-                await bot_handler.reply_text_in_thread(source_message_id, f"分析失败：{error_message[:100]}")
+                await bot_handler.reply_text_in_thread(
+                    source_message_id,
+                    f"分析失败：{truncate_with_marker(error_message, 100)}",
+                )
                 return
 
             if bot_event:
@@ -229,7 +233,7 @@ async def _handle_bot_task(
             report_url = f"{frontend_base_url}/results/{task_id}"
             reply_text = (
                 f"分析完成，共 {len(selected_modules)} 个模块参与。\n\n"
-                f"{summary[:500]}\n\n"
+                f"{truncate_with_marker(summary, 500)}\n\n"
                 f"完整报告：{report_url}"
             )
 
@@ -245,15 +249,18 @@ async def _handle_bot_task(
         )
     except Exception as exc:
         logger.error("Bot pipeline 执行失败 event_id=%s: %s", event_id, exc, exc_info=True)
-        await bot_handler.reply_text_in_thread(source_message_id, f"分析失败：{str(exc)[:100]}")
+        await bot_handler.reply_text_in_thread(
+            source_message_id,
+            f"分析失败：{truncate_with_marker(exc, 100)}",
+        )
         async with AsyncSessionLocal() as db:
             bot_event = await db.get(FeishuBotEvent, event_id)
             if bot_event:
                 bot_event.status = "failed"
-                bot_event.error_message = str(exc)[:500]
+                bot_event.error_message = truncate_with_marker(exc, 500)
             if task_id:
                 task = await db.get(Task, task_id)
                 if task and task.status != "done":
                     task.status = "failed"
-                    task.error_message = str(exc)[:500]
+                    task.error_message = truncate_with_marker(exc, 500)
             await db.commit()

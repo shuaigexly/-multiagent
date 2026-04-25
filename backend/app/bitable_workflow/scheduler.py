@@ -18,13 +18,15 @@ from datetime import datetime, timedelta, timezone
 from app.bitable_workflow import bitable_ops
 from app.bitable_workflow.schema import Status
 from app.bitable_workflow.workflow_agents import (
-    cleanup_prior_task_outputs,
+    cleanup_prior_task_output_ids,
+    collect_prior_task_output_ids,
     run_task_pipeline,
     update_performance,
     write_agent_outputs,
     write_ceo_report,
 )
 from app.agents.base_agent import AgentResult
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +35,19 @@ _MAX_PER_CYCLE = 3
 _LOCAL_CYCLE_LOCK: asyncio.Lock | None = None
 _LOCK_TTL_SECONDS = int(os.getenv("WORKFLOW_CYCLE_LOCK_TTL_SECONDS", "900"))
 _RECOVER_STALE_MINUTES = int(os.getenv("WORKFLOW_RECOVER_STALE_MINUTES", "30"))
+_ALLOW_LOCAL_WORKFLOW_LOCK = os.getenv("WORKFLOW_ALLOW_LOCAL_LOCK", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 def _owner_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+
+
+def _cycle_lock_key(app_token: str, task_tid: str) -> str:
+    return f"workflow:cycle-lock:{app_token}:{task_tid}"
 
 
 async def _acquire_cycle_lock(app_token: str, task_tid: str) -> tuple[object | None, str | None]:
@@ -51,7 +62,7 @@ async def _acquire_cycle_lock(app_token: str, task_tid: str) -> tuple[object | N
 
         client = aioredis.from_url(settings.redis_url, decode_responses=True)
         ok = await client.set(
-            f"workflow:cycle-lock:{app_token}:{task_tid}",
+            _cycle_lock_key(app_token, task_tid),
             owner,
             nx=True,
             ex=_LOCK_TTL_SECONDS,
@@ -62,6 +73,10 @@ async def _acquire_cycle_lock(app_token: str, task_tid: str) -> tuple[object | N
             return None, None
         return client, owner
     except Exception as exc:
+        env = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
+        if env in {"prod", "production"} and not _ALLOW_LOCAL_WORKFLOW_LOCK:
+            _LOCAL_CYCLE_LOCK.release()
+            raise RuntimeError("Redis workflow lock is required in production") from exc
         logger.warning("Redis workflow lock unavailable; using in-process lock only: %s", exc)
         return None, owner
 
@@ -69,7 +84,7 @@ async def _acquire_cycle_lock(app_token: str, task_tid: str) -> tuple[object | N
 async def _release_cycle_lock(lock_client: object | None, owner: str | None, app_token: str, task_tid: str) -> None:
     try:
         if lock_client is not None and owner:
-            key = f"workflow:cycle-lock:{app_token}:{task_tid}"
+            key = _cycle_lock_key(app_token, task_tid)
             current = await lock_client.get(key)
             if current == owner:
                 await lock_client.delete(key)
@@ -77,6 +92,18 @@ async def _release_cycle_lock(lock_client: object | None, owner: str | None, app
     finally:
         if _LOCAL_CYCLE_LOCK is not None and _LOCAL_CYCLE_LOCK.locked():
             _LOCAL_CYCLE_LOCK.release()
+
+
+async def _renew_cycle_lock(lock_client: object, owner: str, app_token: str, task_tid: str) -> None:
+    """Keep the distributed workflow lock alive while a long analysis cycle runs."""
+    key = _cycle_lock_key(app_token, task_tid)
+    interval = max(5, min(60, _LOCK_TTL_SECONDS // 3))
+    while True:
+        await asyncio.sleep(interval)
+        current = await lock_client.get(key)
+        if current != owner:
+            raise RuntimeError("Lost Redis workflow lock ownership")
+        await lock_client.expire(key, _LOCK_TTL_SECONDS)
 
 
 def _parse_feishu_time(value) -> datetime | None:
@@ -108,11 +135,30 @@ def _is_stale_analyzing(fields: dict) -> bool:
     return datetime.now(timezone.utc) - updated_at > timedelta(minutes=_RECOVER_STALE_MINUTES)
 
 
+async def _claim_pending_record(
+    app_token: str,
+    task_tid: str,
+    record_id: str,
+    owner: str,
+) -> bool:
+    """Best-effort claim verification for Bitable rows that lack a true CAS API."""
+    claim_stage = f"🔒 已领取：{owner}"
+    await bitable_ops.update_record(
+        app_token,
+        task_tid,
+        record_id,
+        {"状态": Status.ANALYZING, "当前阶段": claim_stage, "进度": 0.01},
+    )
+    claimed = await bitable_ops.get_record(app_token, task_tid, record_id)
+    fields = claimed.get("fields") or {}
+    return fields.get("状态") == Status.ANALYZING and fields.get("当前阶段") == claim_stage
+
+
 async def _send_completion_message(task_title: str, ceo_result: AgentResult) -> None:
     """任务完成后向飞书群推送摘要卡片。未配置 chat_id 时静默跳过。"""
     try:
         from app.feishu.im import send_card_message
-        summary = (ceo_result.raw_output or "七岗多智能体分析已完成")[:2000]
+        summary = truncate_with_marker(ceo_result.raw_output or "七岗多智能体分析已完成", 2000)
         await send_card_message(title=f"分析完成：{task_title}", content=summary)
         logger.info("Feishu notification sent for task [%s]", task_title)
     except ValueError:
@@ -156,7 +202,7 @@ async def _create_followup_tasks(
                 app_token,
                 task_tid,
                 {
-                    "任务标题": f"[跟进] {item[:50]}",
+                    "任务标题": f"[跟进] {truncate_with_marker(item, 50, '...[截断]')}",
                     "分析维度": "综合分析",
                     "优先级": "P2 中",
                     "状态": Status.PENDING,
@@ -164,7 +210,11 @@ async def _create_followup_tasks(
                     "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成",
                 },
             )
-            logger.info("Follow-up task created from [%s]: %s", task_title, item[:50])
+            logger.info(
+                "Follow-up task created from [%s]: %s",
+                task_title,
+                truncate_with_marker(item, 50, "...[截断]"),
+            )
         except Exception as exc:
             logger.warning("Failed to create follow-up task from [%s]: %s", task_title, exc)
 
@@ -175,9 +225,22 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
     if lock_owner is None:
         logger.info("Workflow cycle skipped because another instance holds the lock")
         return 0
+    renew_task: asyncio.Task | None = None
+    if lock_client is not None and lock_owner:
+        renew_task = asyncio.create_task(
+            _renew_cycle_lock(lock_client, lock_owner, app_token, task_tid)
+        )
     try:
         return await _run_one_cycle_locked(app_token, table_ids)
     finally:
+        if renew_task is not None:
+            renew_task.cancel()
+            try:
+                await renew_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning("Workflow lock renewal stopped with error: %s", exc)
         await _release_cycle_lock(lock_client, lock_owner, app_token, task_tid)
 
 
@@ -238,10 +301,15 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
         task_title = fields.get("任务标题", f"任务_{rid[:8]}")
 
         try:
-            # 标记为「分析中」防止并发重复领取
+            # 标记为「分析中」并回读校验 owner，降低多实例重复领取概率。
+            claim_owner = _owner_id()
+            if not await _claim_pending_record(app_token, task_tid, rid, claim_owner):
+                logger.warning("Workflow claim lost for record=%s owner=%s", rid, claim_owner)
+                continue
+
             await bitable_ops.update_record(
                 app_token, task_tid, rid,
-                {"状态": Status.ANALYZING, "当前阶段": "▶ Wave1 启动：五岗并行分析中…", "进度": 0.1}
+                {"当前阶段": "▶ Wave1 启动：五岗并行分析中…", "进度": 0.1}
             )
 
             from app.bitable_workflow import progress_broker
@@ -271,8 +339,10 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                 fields, progress_callback=_on_wave, task_id=rid
             )
 
-            # 清理此任务可能遗留的历史输出（重试或崩溃恢复场景）
-            await cleanup_prior_task_outputs(app_token, task_title, output_tid, report_tid)
+            # 先记录历史输出 ID；新输出和报告全部写入成功后再清理旧记录，避免重试失败丢失上次好结果。
+            prior_output_ids = await collect_prior_task_output_ids(
+                app_token, task_title, output_tid, report_tid
+            )
 
             # 写入各岗分析输出（含关联字段；写入不完整会使整条任务重试）
             if output_tid:
@@ -296,6 +366,17 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             if performance_tid:
                 await update_performance(
                     app_token, performance_tid, all_results + [ceo_result]
+                )
+
+            try:
+                await cleanup_prior_task_output_ids(
+                    app_token, output_tid, report_tid, prior_output_ids
+                )
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "Prior output cleanup failed after successful replacement for task=%s: %s",
+                    task_title,
+                    cleanup_exc,
                 )
 
             # 标记为已完成，进度置为 100%
@@ -335,7 +416,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             try:
                 await bitable_ops.update_record(
                     app_token, task_tid, rid,
-                    {"状态": Status.PENDING, "当前阶段": f"❌ 执行失败，将重试：{str(exc)[:100]}"}
+                    {"状态": Status.PENDING, "当前阶段": f"❌ 执行失败，将重试：{truncate_with_marker(exc, 100, '...[截断]')}"}
                 )
             except Exception as reset_exc:
                 logger.error(
@@ -346,7 +427,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             try:
                 from app.bitable_workflow import progress_broker
                 await progress_broker.publish(
-                    rid, "task.error", {"reason": str(exc)[:200]},
+                    rid, "task.error", {"reason": truncate_with_marker(exc, 200, "...[截断]")},
                 )
             except Exception:
                 pass

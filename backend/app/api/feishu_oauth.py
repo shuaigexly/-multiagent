@@ -18,6 +18,7 @@ from app.core.settings import (
     settings as _settings,
 )
 from app.core.auth import require_api_key
+from app.core.text_utils import truncate_with_marker
 from app.feishu.token_crypto import encrypt_token
 from app.feishu.user_token import (
     get_user_access_token,
@@ -217,4 +218,6 @@ async def oauth_callback(
 
     except Exception as e:
         logger.error(f"OAuth 回调异常: {e}", exc_info=True)
-        return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(str(e)[:80], safe='')}")
+        return RedirectResponse(
+            url=f"{frontend_origin}/settings?oauth=error&msg={quote(truncate_with_marker(e, 80), safe='')}"
+        )

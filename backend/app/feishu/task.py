@@ -14,6 +14,7 @@ from lark_oapi.api.task.v2 import (
 
 from app.feishu.client import get_applink_base_url, get_feishu_client
 from app.feishu.retry import with_retry
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ async def _create_task_impl(title: str, notes: Optional[str] = None, due_ms: Opt
 
     task_builder = InputTask.builder().summary(title)
     if notes:
-        task_builder = task_builder.description(notes[:1000])
+        task_builder = task_builder.description(truncate_with_marker(notes, 1000))
     if due_ms:
         due = Due.builder().timestamp(str(due_ms)).is_all_day(False).build()
         task_builder = task_builder.due(due)

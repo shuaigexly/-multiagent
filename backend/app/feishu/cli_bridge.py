@@ -7,6 +7,7 @@ import shutil
 from typing import Optional
 
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 CLI_AVAILABLE: Optional[bool] = None
@@ -79,8 +80,11 @@ async def _run_cli(args: list[str]) -> dict:
         await proc.wait()
         raise RuntimeError("lark-cli timed out after 120s") from exc
     if proc.returncode != 0:
-        raise RuntimeError(f"lark-cli failed (rc={proc.returncode}): {stderr.decode()[:500]}")
+        raise RuntimeError(
+            f"lark-cli failed (rc={proc.returncode}): "
+            f"{truncate_with_marker(stderr.decode(), 500)}"
+        )
     try:
         return json.loads(stdout.decode())
     except json.JSONDecodeError:
-        return {"raw": stdout.decode()[:200]}
+        return {"raw": truncate_with_marker(stdout.decode(), 200)}

@@ -11,6 +11,7 @@ from app.agents.base_agent import AgentResult, ResultSection
 from app.agents.registry import AGENT_DEPENDENCIES, AGENT_REGISTRY, SEQUENTIAL_LAST
 from app.core.data_parser import DataSummary
 from app.core.event_emitter import EventEmitter
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,11 @@ async def run_agent_safe(
                 feishu_context=feishu_context,
                 user_instructions=user_instructions,
             )
-            summary = (result.sections[0].content or "")[:100] if result.sections else "完成"
+            summary = (
+                truncate_with_marker(result.sections[0].content or "", 100)
+                if result.sections
+                else "完成"
+            )
             await emitter.emit_module_completed(agent.agent_id, agent.agent_name, summary)
             return result
         except Exception as e:

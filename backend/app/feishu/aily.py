@@ -26,6 +26,7 @@ from typing import Optional
 import httpx
 
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret
+from app.core.text_utils import truncate_with_marker
 from app.feishu.client import get_feishu_base_url, get_feishu_region
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,16 @@ async def call_aily(
                 "input": [
                     {
                         "role": "user",
-                        "content": [{"type": "text", "text": user_message[:8000]}],
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": truncate_with_marker(
+                                    user_message,
+                                    8000,
+                                    "\n...[Aily input truncated]",
+                                ),
+                            }
+                        ],
                     }
                 ],
             },

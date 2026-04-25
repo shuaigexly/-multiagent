@@ -106,6 +106,25 @@ async def _create_record_impl(app_token: str, table_id: str, fields: dict) -> st
         raise RuntimeError(f"create record response schema invalid: {data}") from exc
 
 
+async def get_record(app_token: str, table_id: str, record_id: str) -> dict:
+    return await with_retry(_get_record_impl, app_token, table_id, record_id)
+
+
+async def _get_record_impl(app_token: str, table_id: str, record_id: str) -> dict:
+    token = await _get_token()
+    base = _get_base_url()
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}"
+    resp = await _get_http_client().get(url, headers={"Authorization": f"Bearer {token}"})
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"get record failed: code={data.get('code')} msg={data.get('msg')}")
+    try:
+        return data["data"]["record"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError(f"get record response schema invalid: {data}") from exc
+
+
 async def update_record(app_token: str, table_id: str, record_id: str, fields: dict) -> None:
     await with_retry(_update_record_impl, app_token, table_id, record_id, fields)
 

@@ -108,11 +108,17 @@ async def _load_runtime_config():
         apply_db_config(rows)
         # 启动时恢复用户 OAuth token
         if user_token := rows.get("feishu_user_access_token"):
-            set_user_access_token(decrypt_token(user_token))
-            logger.info("已从数据库恢复飞书用户 OAuth token")
+            try:
+                set_user_access_token(decrypt_token(user_token))
+                logger.info("已从数据库恢复飞书用户 OAuth token")
+            except RuntimeError as exc:
+                logger.warning("飞书用户 OAuth token 未加载: %s", exc)
         if refresh_token := rows.get("feishu_user_refresh_token"):
-            set_user_refresh_token(decrypt_token(refresh_token))
-            logger.info("已从数据库恢复飞书用户 refresh token")
+            try:
+                set_user_refresh_token(decrypt_token(refresh_token))
+                logger.info("已从数据库恢复飞书用户 refresh token")
+            except RuntimeError as exc:
+                logger.warning("飞书用户 refresh token 未加载: %s", exc)
         if open_id := rows.get("feishu_user_open_id"):
             set_user_open_id(open_id)
             logger.info(f"已从数据库恢复飞书用户 open_id: {open_id}")

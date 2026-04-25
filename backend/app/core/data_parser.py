@@ -3,6 +3,8 @@ import io
 from typing import Optional
 from pydantic import BaseModel
 
+from app.core.text_utils import truncate_with_marker
+
 try:
     import pandas as pd
     HAS_PANDAS = True
@@ -22,12 +24,12 @@ class DataSummary(BaseModel):
 def parse_csv(content: str) -> DataSummary:
     if not HAS_PANDAS:
         return DataSummary(
-            raw_preview=content[:1000],
+            raw_preview=truncate_with_marker(content, 1000),
             columns=[],
             row_count=content.count("\n"),
             basic_stats={},
             content_type="csv",
-            full_text=content[:8000],
+            full_text=truncate_with_marker(content, 8000),
         )
     df = pd.read_csv(io.StringIO(content))
     preview = df.head(10).to_string(index=False)
@@ -47,7 +49,7 @@ def parse_csv(content: str) -> DataSummary:
         row_count=len(df),
         basic_stats=stats,
         content_type="csv",
-        full_text=content[:8000],
+        full_text=truncate_with_marker(content, 8000),
     )
 
 
@@ -60,7 +62,7 @@ def parse_text(content: str, content_type: str = "text") -> DataSummary:
         row_count=len(paragraphs),
         basic_stats={},
         content_type=content_type,
-        full_text=content[:8000],
+        full_text=truncate_with_marker(content, 8000),
     )
 
 

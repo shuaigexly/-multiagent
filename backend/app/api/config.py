@@ -23,6 +23,7 @@ from app.core.settings import (
     get_llm_model,
     get_llm_provider,
 )
+from app.core.text_utils import truncate_with_marker
 from app.feishu.client import reset_feishu_client
 from app.models.database import UserConfig, get_db
 
@@ -301,4 +302,4 @@ async def test_bot():
             "message": "Bot 配置正常：" + "，".join(config_summary),
         }
     except Exception as exc:
-        return {"ok": False, "message": f"Bot 配置异常: {str(exc)[:200]}"}
+        return {"ok": False, "message": f"Bot 配置异常: {truncate_with_marker(exc, 200)}"}

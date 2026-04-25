@@ -11,8 +11,9 @@ _fernet_cache: Fernet | None | bool = False
 
 
 def _requires_token_encryption() -> bool:
-    env = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
-    return env in {"prod", "production"}
+    if os.getenv("TOKEN_ENCRYPTION_ALLOW_PLAINTEXT", "").lower() in {"1", "true", "yes"}:
+        return False
+    return True
 
 
 def _get_fernet() -> Fernet | None:
@@ -23,7 +24,7 @@ def _get_fernet() -> Fernet | None:
     key = settings.token_encryption_key.strip()
     if not key:
         if _requires_token_encryption():
-            raise RuntimeError("TOKEN_ENCRYPTION_KEY is required in production")
+            raise RuntimeError("TOKEN_ENCRYPTION_KEY is required to store OAuth tokens")
         _fernet_cache = None
         return None
     try:
@@ -32,7 +33,7 @@ def _get_fernet() -> Fernet | None:
     except Exception as exc:
         if _requires_token_encryption():
             raise RuntimeError("TOKEN_ENCRYPTION_KEY is invalid") from exc
-        logger.warning("TOKEN_ENCRYPTION_KEY 无效，已禁用 token 加密")
+        logger.warning("TOKEN_ENCRYPTION_KEY 无效，已按显式配置回退为明文 token")
         _fernet_cache = None
         return None
 
@@ -54,7 +55,7 @@ def encrypt_token(plaintext: str) -> str:
     except Exception as exc:
         if _requires_token_encryption():
             raise RuntimeError("Token encryption failed") from exc
-        logger.warning("Token 加密失败，已回退为原样存储")
+        logger.warning("Token 加密失败，已按显式配置回退为原样存储")
         return plaintext
 
 
@@ -69,10 +70,10 @@ def decrypt_token(stored: str) -> str:
     except (InvalidToken, ValueError, TypeError) as exc:
         if _requires_token_encryption():
             raise RuntimeError("Token decryption failed") from exc
-        logger.warning("Token 解密失败，已回退为原样使用")
+        logger.warning("Token 解密失败，已按显式配置回退为原样使用")
         return stored
     except Exception as exc:
         if _requires_token_encryption():
             raise RuntimeError("Token decryption failed") from exc
-        logger.warning("Token 解密异常，已回退为原样使用")
+        logger.warning("Token 解密异常，已按显式配置回退为原样使用")
         return stored

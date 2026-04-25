@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.auth import require_api_key
 from app.feishu.reader import (
+    FeishuReaderError,
     list_calendar_events,
     list_chat_messages,
     list_chats,
@@ -29,34 +30,53 @@ def _default_calendar_range() -> tuple[str, str]:
     return str(start), str(end)
 
 
+def _empty_list_error(exc: Exception) -> dict:
+    return {"data": [], "total": 0, "error": str(exc)}
+
+
 @router.get("/drive")
 async def get_drive_files(page_size: int = Query(20, ge=1, le=200)):
-    data = await list_drive_files(page_size=page_size)
-    return {"data": data, "total": len(data)}
+    try:
+        data = await list_drive_files(page_size=page_size)
+        return {"data": data, "total": len(data)}
+    except FeishuReaderError as exc:
+        return _empty_list_error(exc)
 
 
 @router.get("/wiki/spaces")
 async def get_wiki_spaces(page_size: int = Query(20, ge=1, le=200)):
-    data = await list_wiki_spaces(page_size=page_size)
-    return {"data": data, "total": len(data)}
+    try:
+        data = await list_wiki_spaces(page_size=page_size)
+        return {"data": data, "total": len(data)}
+    except FeishuReaderError as exc:
+        return _empty_list_error(exc)
 
 
 @router.get("/wiki/nodes/{space_id}")
 async def get_wiki_nodes(space_id: str, page_size: int = Query(50, ge=1, le=200)):
-    data = await list_wiki_nodes(space_id=space_id, page_size=page_size)
-    return {"data": data, "total": len(data)}
+    try:
+        data = await list_wiki_nodes(space_id=space_id, page_size=page_size)
+        return {"data": data, "total": len(data)}
+    except FeishuReaderError as exc:
+        return _empty_list_error(exc)
 
 
 @router.get("/chats")
 async def get_chats(page_size: int = Query(20, ge=1, le=200)):
-    data = await list_chats(page_size=page_size)
-    return {"data": data, "total": len(data)}
+    try:
+        data = await list_chats(page_size=page_size)
+        return {"data": data, "total": len(data)}
+    except FeishuReaderError as exc:
+        return _empty_list_error(exc)
 
 
 @router.get("/chats/{chat_id}/messages")
 async def get_chat_messages(chat_id: str, page_size: int = Query(20, ge=1, le=200)):
-    data = await list_chat_messages(chat_id=chat_id, page_size=page_size)
-    return {"data": data, "total": len(data)}
+    try:
+        data = await list_chat_messages(chat_id=chat_id, page_size=page_size)
+        return {"data": data, "total": len(data)}
+    except FeishuReaderError as exc:
+        return _empty_list_error(exc)
 
 
 @router.get("/calendar")
@@ -66,24 +86,33 @@ async def get_calendar_events(
     page_size: int = Query(50, ge=1, le=200),
 ):
     default_start, default_end = _default_calendar_range()
-    data = await list_calendar_events(
-        start_time=start or default_start,
-        end_time=end or default_end,
-        page_size=page_size,
-    )
-    return {"data": data, "total": len(data)}
+    try:
+        data = await list_calendar_events(
+            start_time=start or default_start,
+            end_time=end or default_end,
+            page_size=page_size,
+        )
+        return {"data": data, "total": len(data)}
+    except FeishuReaderError as exc:
+        return _empty_list_error(exc)
 
 
 @router.get("/tasks")
 async def get_tasks(page_size: int = Query(50, ge=1, le=200)):
-    data = await list_tasks(page_size=page_size)
-    return {"data": data, "total": len(data)}
+    try:
+        data = await list_tasks(page_size=page_size)
+        return {"data": data, "total": len(data)}
+    except FeishuReaderError as exc:
+        return _empty_list_error(exc)
 
 
 @router.get("/doc/{token}/content")
 async def get_doc_content(token: str):
-    content = await read_doc_content(token)
-    return {"content": content}
+    try:
+        content = await read_doc_content(token)
+        return {"content": content}
+    except FeishuReaderError as exc:
+        return {"content": "", "error": str(exc)}
 
 
 @router.get("/context")
@@ -93,10 +122,24 @@ async def get_feishu_context():
         list_drive_files(page_size=10),
         list_calendar_events(start_time=start, end_time=end, page_size=50),
         list_tasks(page_size=20),
+        return_exceptions=True,
     )
+    errors = {}
+    if isinstance(drive, Exception):
+        errors["drive"] = str(drive)
+        drive = []
+    if isinstance(calendar, Exception):
+        errors["calendar"] = str(calendar)
+        calendar = []
+    if isinstance(tasks, Exception):
+        errors["tasks"] = str(tasks)
+        tasks = []
     pending_tasks = [item for item in tasks if not item.get("completed")][:20]
-    return {
+    payload = {
         "drive": drive,
         "calendar": calendar,
         "tasks": pending_tasks,
     }
+    if errors:
+        payload["errors"] = errors
+    return payload

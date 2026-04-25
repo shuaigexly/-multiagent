@@ -1,4 +1,5 @@
 """Agent 基类：所有分析模块继承此类"""
+import asyncio
 import json as _json
 import logging
 import re
@@ -8,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.core.data_parser import DataSummary
 from app.core.settings import settings
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +109,7 @@ class BaseAgent(ABC):
         feishu_context: Optional[dict] = None,
         user_instructions: Optional[str] = None,
     ) -> AgentResult:
-        prompt = self._build_prompt(
+        prompt = await self._build_prompt(
             task_description,
             data_summary,
             upstream_results,
@@ -131,7 +133,7 @@ class BaseAgent(ABC):
                     logger.debug("[%s] reflection refinement call failed, keeping original output: %s", self.agent_id, e)
         return self._parse_output(raw)
 
-    def _build_prompt(
+    async def _build_prompt(
         self,
         task_description: str,
         data_summary: Optional[DataSummary],
@@ -142,7 +144,9 @@ class BaseAgent(ABC):
         data_section = ""
         if data_summary:
             content_for_prompt = data_summary.full_text or data_summary.raw_preview
-            raw_preview = _escape_xml(content_for_prompt[:6000])
+            raw_preview = _escape_xml(
+                truncate_with_marker(content_for_prompt, 6000, "\n...[data input truncated]")
+            )
             data_section = (
                 "\n<data_input>\n"
                 f"类型：{data_summary.content_type}\n"
@@ -169,7 +173,11 @@ class BaseAgent(ABC):
                 parts.append(f"【{agent_name}的分析】\n{section_text}{action_text}")
             upstream_content = "\n\n".join(parts)
             if len(upstream_content) > 8000:
-                upstream_content = upstream_content[:8000] + "\n...[上游分析内容已截断，仅显示前8000字]"
+                upstream_content = truncate_with_marker(
+                    upstream_content,
+                    8000,
+                    "\n...[上游分析内容已截断，仅显示前8000字]",
+                )
             upstream_section = (
                 "\n<upstream_analysis>\n"
                 + upstream_content
@@ -178,7 +186,7 @@ class BaseAgent(ABC):
 
         # Load and inject matching skills
         from app.core.skill_loader import format_skills_for_prompt, get_skills_for_agent
-        skills = get_skills_for_agent(self.agent_id)
+        skills = await asyncio.to_thread(get_skills_for_agent, self.agent_id)
         skill_section = format_skills_for_prompt(skills)
 
         feishu_section = _format_feishu_context(feishu_context)
@@ -262,8 +270,8 @@ class BaseAgent(ABC):
         from app.core.llm_client import call_llm
 
         critique_prompt = (
-            f"以下是一个AI分析助手对任务的输出：\n<output>\n{raw[:2000]}\n</output>\n\n"
-            f"任务要求：{task_description[:300]}\n\n"
+            f"以下是一个AI分析助手对任务的输出：\n<output>\n{truncate_with_marker(raw, 2000)}\n</output>\n\n"
+            f"任务要求：{truncate_with_marker(task_description, 300)}\n\n"
             "请快速评估：这个输出是否覆盖了任务的主要方面，并包含具体可操作的建议？\n"
             "如果质量合格，只回复：PASS\n"
             "如果有重大缺失（如缺少关键分析或建议为空），回复：FAIL: <缺失点，30字以内>"
@@ -369,7 +377,7 @@ class BaseAgent(ABC):
 
         # 如果解析失败，整体作为一个段落
         if not sections:
-            sections = [ResultSection(title="分析结果", content=raw[:3000])]
+            sections = [ResultSection(title="分析结果", content=truncate_with_marker(raw, 3000))]
 
         # 若 metadata.actions 存在且比文本解析更完整，优先采用
         # 拼接格式："<summary> | 负责方向：<owner> | 交付物：<success_metric> | 截止：<due>"

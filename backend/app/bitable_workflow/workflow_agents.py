@@ -32,6 +32,7 @@ from app.agents.operations_manager import operations_manager_agent
 from app.agents.product_manager import product_manager_agent
 from app.agents.seo_advisor import seo_advisor_agent
 from app.bitable_workflow import bitable_ops
+from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -240,42 +241,70 @@ async def cleanup_prior_task_outputs(
     output_table_id: Optional[str],
     report_table_id: Optional[str],
 ) -> None:
-    """Remove any 岗位分析 / 综合报告 rows already present for this task title.
+    """Deprecated unsafe cleanup path.
 
-    Called before writing new outputs so that a task recovered from ANALYZING
-    (e.g., after a crash or manual re-run) does not leave duplicate records
-    with mismatched timestamps in the output tables.
+    Deleting old rows before replacement writes succeed can lose the last good
+    results. Use collect_prior_task_output_ids() before writing, then
+    cleanup_prior_task_output_ids() after all replacement writes succeed.
     """
+    raise RuntimeError(
+        "cleanup_prior_task_outputs is unsafe; use collect_prior_task_output_ids "
+        "before writes and cleanup_prior_task_output_ids after successful writes"
+    )
+
+
+async def collect_prior_task_output_ids(
+    app_token: str,
+    task_title: str,
+    output_table_id: Optional[str],
+    report_table_id: Optional[str],
+) -> dict[str, list[str]]:
+    """Collect existing output/report record IDs so cleanup can happen after new writes succeed."""
     safe_title = bitable_ops.quote_filter_value(task_title)
     filter_expr = f"CurrentValue.[任务标题]={safe_title}"
     report_filter = f"CurrentValue.[报告标题]={safe_title}"
-
-    cleanup_errors = []
-
+    prior = {"output": [], "report": []}
     if output_table_id:
-        try:
-            n = await bitable_ops.delete_records_by_filter(
-                app_token, output_table_id, filter_expr
-            )
-            if n:
-                logger.info("Cleaned up %d prior 岗位分析 rows for task [%s]", n, task_title)
-        except Exception as exc:
-            logger.warning("Cleanup 岗位分析 failed for task [%s]: %s", task_title, exc)
-            cleanup_errors.append(f"岗位分析: {exc}")
-
+        records = await bitable_ops.list_records(
+            app_token,
+            output_table_id,
+            filter_expr=filter_expr,
+            max_records=500,
+        )
+        prior["output"] = [r["record_id"] for r in records if r.get("record_id")]
     if report_table_id:
-        try:
-            n = await bitable_ops.delete_records_by_filter(
-                app_token, report_table_id, report_filter
-            )
-            if n:
-                logger.info("Cleaned up %d prior 综合报告 rows for task [%s]", n, task_title)
-        except Exception as exc:
-            logger.warning("Cleanup 综合报告 failed for task [%s]: %s", task_title, exc)
-            cleanup_errors.append(f"综合报告: {exc}")
+        records = await bitable_ops.list_records(
+            app_token,
+            report_table_id,
+            filter_expr=report_filter,
+            max_records=500,
+        )
+        prior["report"] = [r["record_id"] for r in records if r.get("record_id")]
+    return prior
 
+
+async def cleanup_prior_task_output_ids(
+    app_token: str,
+    output_table_id: Optional[str],
+    report_table_id: Optional[str],
+    prior_ids: dict[str, list[str]],
+) -> None:
+    """Best-effort cleanup of old rows collected before the successful replacement write."""
+    cleanup_errors: list[str] = []
+    for table_id, record_ids, label in [
+        (output_table_id, prior_ids.get("output", []), "岗位分析"),
+        (report_table_id, prior_ids.get("report", []), "综合报告"),
+    ]:
+        if not table_id:
+            continue
+        for record_id in record_ids:
+            try:
+                await bitable_ops.delete_record(app_token, table_id, record_id)
+            except Exception as exc:
+                logger.warning("Cleanup prior %s record=%s failed: %s", label, record_id, exc)
+                cleanup_errors.append(f"{label}:{record_id}: {exc}")
     if cleanup_errors:
-        raise RuntimeError("清理历史输出失败: " + "；".join(cleanup_errors))
+        raise RuntimeError("清理历史输出失败: " + "；".join(cleanup_errors[:3]))
 
 
 _AGENT_ROLE_EMOJI_MAP = {
@@ -373,7 +402,7 @@ def _format_sections(result: AgentResult, max_chars: int = 2000) -> str:
     serialising the full output when only the first few sections fit.
     """
     if not result.sections:
-        return result.raw_output[:max_chars]
+        return truncate_with_marker(result.raw_output, max_chars, "\n...[已截断]")
     parts: list[str] = []
     total = 0
     for s in result.sections:
@@ -381,9 +410,9 @@ def _format_sections(result: AgentResult, max_chars: int = 2000) -> str:
         if total + len(chunk) + 2 > max_chars:
             remaining = max_chars - total - 20
             if remaining > 0 and parts:
-                parts.append(chunk[:remaining] + "\n...[已截断]")
+                parts.append(truncate_with_marker(chunk, remaining + len("\n...[已截断]"), "\n...[已截断]"))
             elif remaining > 0:
-                parts.append(chunk[:remaining] + "\n...[已截断]")
+                parts.append(truncate_with_marker(chunk, remaining + len("\n...[已截断]"), "\n...[已截断]"))
             break
         parts.append(chunk)
         total += len(chunk) + 2  # +2 for "\n\n" separator
@@ -417,11 +446,11 @@ async def write_agent_outputs(
             "岗位角色": _role_with_emoji(result.agent_name),
             "健康度评级": _extract_health(result),
             "分析摘要": summary,
-            "行动项": action_text[:2000],
+            "行动项": truncate_with_marker(action_text, 2000, "\n...[已截断]"),
             "行动项数": len(result.action_items),
             "置信度": _estimate_confidence(result),
-            "分析思路": result.thinking_process[:3000] if result.thinking_process else "",
-            "图表数据": _json.dumps(result.chart_data, ensure_ascii=False)[:3000] if result.chart_data else "",
+            "分析思路": truncate_with_marker(result.thinking_process, 3000, "\n...[已截断]") if result.thinking_process else "",
+            "图表数据": truncate_with_marker(_json.dumps(result.chart_data, ensure_ascii=False), 3000, "\n...[已截断]") if result.chart_data else "",
         }
         if task_record_id:
             fields["关联任务"] = [{"record_id": task_record_id}]
@@ -453,7 +482,7 @@ async def write_ceo_report(
     def _find_section(keyword: str) -> str:
         for s in ceo_result.sections:
             if keyword in s.title:
-                return (s.content or "")[:1000]
+                return truncate_with_marker(s.content or "", 1000, "\n...[已截断]")
         return ""
 
     record_fields: dict = {
