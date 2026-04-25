@@ -222,46 +222,83 @@ async def _ensure_table_fields(
     fields: Sequence[dict],
     existing_field_ids: Sequence[str],
 ) -> None:
+    """v8.6.3 重写：根本修复「多行文本」主字段问题。
+
+    旧实现的 bug:
+      - 用 SDK 返回的 existing_field_ids[0] 当主字段 ID rename
+      - 但 SDK 在某些版本对此 PATCH 请求会"找不到字段就建一个"
+      - 结果：原主字段「多行文本」纹丝不动，新建了重复的「任务标题」字段
+      - 飞书画册/看板用主字段做卡片标题 → 全部显示"未命名记录"
+
+    新实现:
+      1. 建表后立即 HTTP GET fields，找 is_primary=True 的字段（飞书保证只有一个）
+      2. 用 HTTP PATCH 直接改名（绕过 SDK 行为问题）
+      3. schema[0] 不再走 _create_field，因为主字段已 rename 占用其名字
+    """
     if not fields:
         return
 
-    remaining_fields = list(fields)
-    if existing_field_ids:
-        await _rename_primary_field(
-            client=client,
+    primary_id, primary_name, primary_type = await _find_primary_field(app_token, table_id)
+    target_first = fields[0]
+    target_first_name = target_first.get("field_name")
+
+    if primary_id and primary_name != target_first_name:
+        await _rename_field_via_http(
             app_token=app_token,
             table_id=table_id,
-            field_id=existing_field_ids[0],
-            field_name=remaining_fields[0]["field_name"],
+            field_id=primary_id,
+            new_name=target_first_name,
+            field_type=target_first.get("type", primary_type),
         )
-        remaining_fields = remaining_fields[1:]
 
-    for field in remaining_fields:
+    # schema[0] 已被 rename 到主字段；剩余字段逐个 create
+    for field in fields[1:]:
         await _create_field(client, app_token, table_id, field)
 
 
-async def _rename_primary_field(
-    client,
-    app_token: str,
-    table_id: str,
-    field_id: str,
-    field_name: str,
+async def _find_primary_field(app_token: str, table_id: str) -> tuple[str | None, str | None, int | None]:
+    """GET fields 找 is_primary=True 的字段，返回 (field_id, field_name, type)。"""
+    token = await get_tenant_access_token()
+    base = get_feishu_open_base_url()
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
+    r = await _get_http_client().get(url, headers={"Authorization": f"Bearer {token}"})
+    r.raise_for_status()
+    data = r.json()
+    if data.get("code") != 0:
+        return None, None, None
+    items = data.get("data", {}).get("items", []) or []
+    for f in items:
+        if f.get("is_primary"):
+            return f.get("field_id"), f.get("field_name"), f.get("type")
+    return None, None, None
+
+
+async def _rename_field_via_http(
+    *, app_token: str, table_id: str, field_id: str, new_name: str, field_type: int = 1,
 ) -> None:
-    req_body = AppTableField.builder().field_name(field_name).build()
-    req = (
-        UpdateAppTableFieldRequest.builder()
-        .app_token(app_token)
-        .table_id(table_id)
-        .field_id(field_id)
-        .request_body(req_body)
-        .build()
+    """直接用 HTTP PATCH /fields/{field_id} 改名。
+
+    同时传 type 字段（保持原 type）— 飞书要求 PATCH 必须带 type，否则报错。
+    """
+    if not new_name:
+        return
+    token = await get_tenant_access_token()
+    base = get_feishu_open_base_url()
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields/{field_id}"
+    payload = {"field_name": new_name, "type": int(field_type)}
+    r = await _get_http_client().put(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=payload,
     )
-    resp = await asyncio.wait_for(
-        asyncio.to_thread(client.bitable.v1.app_table_field.update, req),
-        timeout=30.0,
-    )
-    if not resp.success():
-        raise RuntimeError(f"更新默认字段失败: {resp.msg}")
+    r.raise_for_status()
+    data = r.json()
+    if data.get("code") != 0:
+        raise RuntimeError(
+            f"rename primary field failed: code={data.get('code')} msg={data.get('msg')} "
+            f"field_id={field_id} new_name={new_name}"
+        )
+    logger.info("Renamed primary field %s → %r in table %s", field_id, new_name, table_id)
 
 
 async def _create_field(

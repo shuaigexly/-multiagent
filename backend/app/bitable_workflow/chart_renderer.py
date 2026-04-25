@@ -28,6 +28,25 @@ def _safe_label(s: Any) -> str:
     return str(s) if s is not None else ""
 
 
+def _draw_bar_group(ax, names: list[str], values: list[float], units: list[str], title: str) -> None:
+    """绘一组柱状图到 ax 上，含单位标注。"""
+    bars = ax.bar(names, values, color="#5B8DEF")
+    ax.set_title(title, fontsize=11, pad=8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.tick_params(axis="x", labelrotation=20, labelsize=9)
+    for bar, val, unit in zip(bars, values, units):
+        label = f"{val:g}{unit}" if unit else f"{val:g}"
+        ax.annotate(
+            label,
+            xy=(bar.get_x() + bar.get_width() / 2, val),
+            xytext=(0, 3),
+            textcoords="offset points",
+            ha="center", va="bottom",
+            fontsize=8,
+        )
+
+
 def render_chart_to_png(chart_data: list[dict], title: str = "") -> Optional[bytes]:
     """把 chart_data 数组渲染为 PNG bytes。
 
@@ -47,8 +66,20 @@ def render_chart_to_png(chart_data: list[dict], title: str = "") -> Optional[byt
         logger.debug("matplotlib not installed, skipping chart render")
         return None
 
-    # 用 DejaVu Sans 兜底中文（matplotlib 默认无中文，会出豆腐）
-    matplotlib.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial Unicode MS", "Microsoft YaHei", "SimHei"]
+    # v8.6.3 修复中文字体缺失：DejaVu Sans 不支持中文（之前柱状图标签被替换成豆腐方框）。
+    # 优先使用系统真实可用的中文字体，按 Windows / macOS / Linux 常见字体顺序探测。
+    # matplotlib 找不到字体也不会抛错（warning 后用 fallback），所以排序从最常见到最少见。
+    matplotlib.rcParams["font.sans-serif"] = [
+        "Microsoft YaHei",       # Windows 默认
+        "SimHei",                 # Windows 黑体
+        "PingFang SC",           # macOS 默认
+        "Hiragino Sans GB",      # macOS 备用
+        "Noto Sans CJK SC",      # Linux 默认
+        "WenQuanYi Micro Hei",   # Linux 文泉驿
+        "Source Han Sans CN",    # 思源黑体
+        "Arial Unicode MS",      # 通用 Unicode
+        "DejaVu Sans",           # 最后兜底
+    ]
     matplotlib.rcParams["axes.unicode_minus"] = False
 
     names: list[str] = []
@@ -68,24 +99,46 @@ def render_chart_to_png(chart_data: list[dict], title: str = "") -> Optional[byt
     if len(names) < 2:
         return None  # 1 个数据点不画图
 
+    # v8.6.3 修量纲混杂：MAU=11.2万、留存=38%、LTV=212元 用同一 Y 轴 → 大值一柱独大
+    # 解决：按 unit 分组（％/万/元/比例…），各组绘制成一组子图（每组共享 Y 轴尺度）
+    # 单一 unit 时仍然单图。复杂 unit 组合（>3 组）退化为按 max 归一化展示相对值。
+    from collections import defaultdict
+    groups: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
+    for n, v, u in zip(names, values, units):
+        groups[u or "无单位"].append((n, v, u))
+
     try:
-        fig, ax = plt.subplots(figsize=(8, 4.5), dpi=110)
-        bars = ax.bar(names, values, color="#5B8DEF")
-        ax.set_title(title or "Agent Metrics", fontsize=12, pad=10)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.tick_params(axis="x", labelrotation=20)
-        # 在柱子顶部标注单位
-        for bar, val, unit in zip(bars, values, units):
-            label = f"{val:g}{unit}" if unit else f"{val:g}"
-            ax.annotate(
-                label,
-                xy=(bar.get_x() + bar.get_width() / 2, val),
-                xytext=(0, 3),
-                textcoords="offset points",
-                ha="center", va="bottom",
-                fontsize=9,
+        if len(groups) <= 1:
+            # 单一量纲：单子图
+            fig, ax = plt.subplots(figsize=(8, 4.5), dpi=110)
+            _draw_bar_group(ax, names, values, units, title or "关键指标")
+        elif len(groups) <= 4:
+            # 2-4 组量纲：纵向多子图（每子图独立 Y 轴）
+            fig, axes = plt.subplots(
+                len(groups), 1,
+                figsize=(8, 2.4 * len(groups)),
+                dpi=110,
+                squeeze=False,
             )
+            fig.suptitle(title or "关键指标", fontsize=12)
+            for ax, (unit_key, items) in zip(axes.flatten(), groups.items()):
+                ns = [it[0] for it in items]
+                vs = [it[1] for it in items]
+                us = [it[2] for it in items]
+                _draw_bar_group(ax, ns, vs, us, f"按 {unit_key} 分组")
+        else:
+            # >4 组量纲极少出现，按 max 归一化（百分比）合并展示
+            normalized = []
+            for n, v, u in zip(names, values, units):
+                grp_max = max(it[1] for it in groups[u or "无单位"]) or 1
+                normalized.append((n, v / grp_max * 100, f"{v:g}{u}"))
+            fig, ax = plt.subplots(figsize=(8, 4.5), dpi=110)
+            ax.bar([x[0] for x in normalized], [x[1] for x in normalized], color="#5B8DEF")
+            ax.set_title((title or "关键指标") + "（组内归一化 %）")
+            ax.set_ylabel("组内相对值 %")
+            for i, (n, _v_norm, lbl) in enumerate(normalized):
+                ax.annotate(lbl, xy=(i, normalized[i][1]), ha="center", va="bottom", fontsize=8)
+
         fig.tight_layout()
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")

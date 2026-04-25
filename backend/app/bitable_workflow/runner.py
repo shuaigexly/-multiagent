@@ -129,7 +129,9 @@ async def _cleanup_auto_created_artifacts(app_token: str, keep_table_ids: set[st
             except Exception as exc:
                 logger.warning("Failed to delete table %s: %s", tid, exc)
 
-        # 第 2 步：每张业务表删除「多行文本」垃圾字段
+        # 第 2 步：删除非主字段的「多行文本」遗留（v8.6.3 起 _ensure_table_fields 已正确
+        # rename 主字段，本步骤主要兜底处理可能残留的非主字段同名条目，例如某些环境下
+        # rename 失败导致同时存在主字段和重复字段。注意：飞书禁止删除 is_primary=True 的字段。
         for tid in keep_table_ids:
             try:
                 rf = await http.get(
@@ -144,14 +146,15 @@ async def _cleanup_auto_created_artifacts(app_token: str, keep_table_ids: set[st
             for f in fields:
                 fname = f.get("field_name", "")
                 fid = f.get("field_id")
-                # 飞书默认主字段名是「多行文本」；如果 schema 没用到这个名字，就是垃圾字段
-                if fname == "多行文本" and fid:
+                is_primary = f.get("is_primary", False)
+                # 只删非主字段的「多行文本」（主字段无法删除，且现在已被 rename）
+                if fname == "多行文本" and fid and not is_primary:
                     try:
                         rd = await http.delete(
                             f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields/{fid}",
                             headers=headers,
                         )
-                        logger.info("Cleaned up 多行文本 garbage field: table=%s field=%s status=%s",
+                        logger.info("Cleaned up non-primary 多行文本 field: table=%s field=%s status=%s",
                                     tid, fid, rd.status_code)
                     except Exception as exc:
                         logger.warning("Failed to delete 多行文本 field: %s", exc)
