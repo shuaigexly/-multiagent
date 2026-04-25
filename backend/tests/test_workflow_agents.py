@@ -92,18 +92,23 @@ class TestFormatSections:
 
 class TestWriteAgentOutputs:
     @pytest.mark.asyncio
-    async def test_linked_field_populated_when_record_id_given(self, ok_result):
-        with patch("app.bitable_workflow.workflow_agents.bitable_ops.create_record") as mock_create:
+    async def test_no_linked_field_written_due_to_platform_limit(self, ok_result):
+        """v8.6.1 实测确认：飞书 records 写接口都不支持 LinkedRecord（POST/PUT/batch
+        均返回 1254067）。从源头不写关联字段，避免 4xx 噪声。
+        逻辑关联通过任务标题 / 任务编号 文本字段维护。"""
+        with patch("app.bitable_workflow.workflow_agents.bitable_ops.create_record") as mock_create, \
+             patch("app.bitable_workflow.workflow_agents.bitable_ops.update_record") as mock_update:
             mock_create.return_value = "rec_new"
             from app.bitable_workflow.workflow_agents import write_agent_outputs
             count = await write_agent_outputs(
                 "app_token", "tbl_out", "测试任务", [ok_result], task_record_id="rec_task123"
             )
         assert count == 1
-        # create_record(app_token, table_id, fields) → positional index 2 is fields
-        call_fields = mock_create.call_args[0][2]
-        assert "关联任务" in call_fields
-        assert call_fields["关联任务"] == [{"record_id": "rec_task123"}]
+        # 即使提供了 task_record_id，create 也不应包含 关联任务 字段
+        create_fields = mock_create.call_args[0][2]
+        assert "关联任务" not in create_fields
+        # 不再调 update_record 补关联字段（PUT 接口同样不支持）
+        assert not mock_update.called
 
     @pytest.mark.asyncio
     async def test_no_linked_field_when_no_record_id(self, ok_result):
@@ -138,8 +143,10 @@ class TestWriteAgentOutputs:
 
 class TestWriteCeoReport:
     @pytest.mark.asyncio
-    async def test_linked_field_populated(self, ceo_result):
-        with patch("app.bitable_workflow.workflow_agents.bitable_ops.create_record") as mock_create:
+    async def test_no_linked_field_due_to_platform_limit(self, ceo_result):
+        """v8.6.1: CEO 报告同样不写 LinkedRecord 字段（飞书 API 平台限制）。"""
+        with patch("app.bitable_workflow.workflow_agents.bitable_ops.create_record") as mock_create, \
+             patch("app.bitable_workflow.workflow_agents.bitable_ops.update_record") as mock_update:
             mock_create.return_value = "rec_report"
             from app.bitable_workflow.workflow_agents import write_ceo_report
             rid = await write_ceo_report(
@@ -147,9 +154,9 @@ class TestWriteCeoReport:
                 participant_count=7, task_record_id="rec_task_abc"
             )
         assert rid == "rec_report"
-        call_fields = mock_create.call_args[0][2]
-        assert "关联任务" in call_fields
-        assert call_fields["关联任务"] == [{"record_id": "rec_task_abc"}]
+        create_fields = mock_create.call_args[0][2]
+        assert "关联任务" not in create_fields
+        assert not mock_update.called
 
     @pytest.mark.asyncio
     async def test_sections_extracted_correctly(self, ceo_result):

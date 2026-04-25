@@ -141,14 +141,16 @@ TASK_FIELDS = [
 
 
 def agent_output_fields(task_table_id: str) -> list[dict]:
-    """岗位分析表字段：每个 agent 一条，关联到分析任务表。"""
+    """岗位分析表字段：每个 agent 一条。
+
+    v8.6.1: 删除「关联任务」LinkedRecord 字段 — 飞书 records POST/PUT/batch
+    三个写接口实测全部不接受 LinkedRecord 字段写入（code=1254067），属于
+    Feishu Bitable 平台硬限制。改用「任务标题」文本字段做逻辑关联。
+    task_table_id 参数保留以兼容 setup_workflow 调用签名。
+    """
+    _ = task_table_id  # 未使用，保留兼容
     return [
-        {"field_name": "任务标题", "type": TEXT_FIELD_TYPE},  # 主字段
-        {
-            "field_name": "关联任务",
-            "type": LINKED_RECORD_FIELD_TYPE,
-            "table_id": task_table_id,
-        },
+        {"field_name": "任务标题", "type": TEXT_FIELD_TYPE},  # 主字段，逻辑关联
         {
             "field_name": "岗位角色",
             "type": SINGLE_SELECT_FIELD_TYPE,
@@ -188,14 +190,13 @@ def agent_output_fields(task_table_id: str) -> list[dict]:
 
 
 def report_fields(task_table_id: str) -> list[dict]:
-    """综合报告表字段：CEO 助理的最终决策汇总。"""
+    """综合报告表字段：CEO 助理的最终决策汇总。
+
+    v8.6.1: 同 agent_output_fields，删除 LinkedRecord 字段（飞书 API 平台限制）。
+    """
+    _ = task_table_id  # 未使用，保留兼容
     return [
-        {"field_name": "报告标题", "type": TEXT_FIELD_TYPE},  # 主字段
-        {
-            "field_name": "关联任务",
-            "type": LINKED_RECORD_FIELD_TYPE,
-            "table_id": task_table_id,
-        },
+        {"field_name": "报告标题", "type": TEXT_FIELD_TYPE},  # 主字段，逻辑关联
         {
             "field_name": "综合健康度",
             "type": SINGLE_SELECT_FIELD_TYPE,

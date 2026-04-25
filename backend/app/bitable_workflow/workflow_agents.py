@@ -646,29 +646,16 @@ async def write_agent_outputs(
         }
         if chart_attachment_token:
             fields["图表"] = [{"file_token": chart_attachment_token}]
-        if task_record_id:
-            fields["关联任务"] = [{"record_id": task_record_id}]
+        # v8.6.1 实测确认：飞书 POST/PUT/batch_create 三个 records 写接口**全部**
+        # 不接受 LinkedRecord(type=18) 字段写入（code=1254067 LinkFieldConvFail）。
+        # 这是飞书 Bitable 平台限制 — LinkedRecord 字段只能通过 UI 手动建立或在
+        # 业务侧靠 任务标题/任务编号 文本字段做"逻辑关联"。
+        # 因此从一开始就不写关联字段，避免无意义的 4xx + 重试浪费。
         try:
             await bitable_ops.create_record(app_token, output_table_id, fields)
             written += 1
         except Exception as exc:
-            # v8.5 修复回归：v6.1 起就已知 Bitable records POST 接口无法写 type=18 关联字段
-            # （Feishu API 文档限制，必须用 batch_create 接口才行）。
-            # Codex 某轮审计错把 fallback 改成硬抛 → 整条任务永远失败、整库无任何输出。
-            # 复原 v6.1 的 graceful degradation：丢掉关联字段重试，记录用 warning 标注。
-            if "LinkFieldConvFail" in str(exc) and task_record_id and "关联任务" in fields:
-                try:
-                    fields_no_link = {k: v for k, v in fields.items() if k != "关联任务"}
-                    await bitable_ops.create_record(app_token, output_table_id, fields_no_link)
-                    written += 1
-                    logger.warning(
-                        "Wrote output for agent=%s without 关联任务 (LinkFieldConvFail — Bitable API 已知限制)",
-                        result.agent_name,
-                    )
-                except Exception as fallback_exc:
-                    logger.error("Fallback write also failed agent=%s: %s", result.agent_name, fallback_exc)
-            else:
-                logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc)
+            logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc)
     return written
 
 
@@ -703,18 +690,8 @@ async def write_ceo_report(
         "参与岗位数": float(participant_count),
         "决策紧急度": _estimate_urgency(ceo_result),
     }
-    if task_record_id:
-        record_fields["关联任务"] = [{"record_id": task_record_id}]
-
-    try:
-        return await bitable_ops.create_record(app_token, report_table_id, record_fields)
-    except Exception as exc:
-        # v8.5 同上：CEO 报告也走 graceful degradation，避免单字段限制让整任务失败。
-        if "LinkFieldConvFail" in str(exc) and task_record_id and "关联任务" in record_fields:
-            logger.warning("CEO report 关联任务 字段降级写入（Bitable API 限制）")
-            record_fields_no_link = {k: v for k, v in record_fields.items() if k != "关联任务"}
-            return await bitable_ops.create_record(app_token, report_table_id, record_fields_no_link)
-        raise
+    # v8.6.1 同上：飞书所有 records 写接口都不支持 LinkedRecord，从源头不写关联字段
+    return await bitable_ops.create_record(app_token, report_table_id, record_fields)
 
 
 async def update_performance(
