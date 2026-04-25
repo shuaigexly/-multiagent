@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 
 from app.api import config as config_api
 from app.api import events, feishu, feishu_bot as feishu_bot_api, feishu_context as feishu_context_api, feishu_oauth as feishu_oauth_api, health as health_api, results, tasks, workflow as workflow_api
-from app.core.observability import configure_logging, correlation_scope
+from app.core.observability import configure_logging, correlation_scope, set_task_context
 from app.core.settings import apply_db_config, settings
 from app.feishu.client import reset_feishu_client
 from app.feishu import mcp_client
@@ -22,6 +22,10 @@ from app.core.event_emitter import EventEmitter
 # 安装结构化日志（JSON / plain 切换由 LOG_FORMAT 决定）
 configure_logging()
 logger = logging.getLogger(__name__)
+
+# 注册 agent 工具（fetch_url / bitable_query / feishu_sheet / python_calc）
+# 装饰器在导入时自动注册到 app.agents.tools._REGISTRY
+from app.agents import builtin_tools  # noqa: F401
 
 _sentry_dsn = os.getenv("SENTRY_DSN", "")
 if _sentry_dsn:
@@ -167,9 +171,13 @@ async def correlation_middleware(request: Request, call_next):
     """
     incoming = request.headers.get("X-Correlation-ID") or request.headers.get("X-Request-ID")
     cid = (incoming or uuid.uuid4().hex[:12])[:64]
+    tenant = (request.headers.get("X-Tenant-ID") or "default")[:64]
     async with correlation_scope(cid):
+        # tenant_id 贯穿到 budget / audit / cache key
+        set_task_context(tenant_id=tenant)
         response = await call_next(request)
         response.headers["X-Correlation-ID"] = cid
+        response.headers["X-Tenant-ID"] = tenant
         return response
 
 

@@ -533,7 +533,43 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v7.0（当前） — 企业级基础设施层（可观测性 + 成本管控 + 审计）
+### v7.1（当前） — Agent 真实工具调用 + 多租户传播
+
+本轮聚焦 **agent 实际能力提升**：让 7 岗 LLM 不再凭空估算，而是在分析过程中主动调用工具拉真实数据。
+
+**🛠️ Function calling 工具调用框架（`app/agents/tools.py` + `builtin_tools.py`）**
+- OpenAI function calling 协议兼容，每个 agent 在分析中可决定调用工具
+- `call_llm_with_tools` 实现工具循环：LLM 决策 → 并行执行工具 → 结果回填 → 再决策（最多 4 轮）
+- 每轮检查 budget；超额或达上限自动终止循环并强制收尾
+- feishu_aily provider 不支持 function calling，自动回退普通调用
+
+**🧰 4 个内置工具（开箱即用）**
+| 工具 | 用途 | 返回 |
+|---|---|---|
+| `fetch_url(url)` | 抓取公开网页（行业基准、新闻、文档） | 文本（HTML 自动去标签，前 8000 字） |
+| `bitable_query(app_token, table_id, filter)` | 查询任何多维表格记录 | JSON 数组（最多 50 条） |
+| `feishu_sheet(url)` | 读取**真实飞书电子表格** | 前 100 行 CSV |
+| `python_calc(expression)` | 受限 Python 数值计算（math 库 + 列表推导） | 字符串结果（禁 I/O / import / `__`） |
+
+**📥 真实数据源升级**
+- v6.0 仅支持把 CSV 文本粘到「数据源」字段
+- v7.1 agent 可直接接收飞书 Sheet URL → `feishu_sheet` 工具自动拉真实单元格
+- agent 可在中途用 `bitable_query` 查询其他岗位的历史输出（跨任务横向参考）
+
+**🏢 多租户 tenant_id 全链路传播**
+- 中间件读取 `X-Tenant-ID` 请求头（缺失为 `default`），写入响应 + observability 上下文
+- 所有 LLM budget / agent_cache / audit_log 自动按 tenant 隔离
+- 为后续 schema 级多租户演进打基础（task 表加 tenant_id 字段后即可启用）
+
+**🧪 测试**
+- 新增 `tests/test_agent_tools.py`（8 cases）：注册器 / dispatch 异常容错 / OpenAI schema / python_calc 沙箱
+- 全套件 57 → **65 passing**
+
+**显式延后（理由：本轮已是大改动，独立 PR 更可控）**
+- Arq 后台任务系统：当前 BackgroundTasks + scheduler 满足单实例需求；多实例横向扩展时再切
+- Alembic 迁移：当前 `init_db.create_all` 还能 cover；schema 频繁变更时再引入
+
+### v7.0 — 企业级基础设施层（可观测性 + 成本管控 + 审计）
 
 为提升项目的运维与生产就绪程度，引入四项基础设施能力：
 
