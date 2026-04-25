@@ -253,11 +253,15 @@ async def _create_followup_tasks(
     task_tid: str,
     task_title: str,
     ceo_result: AgentResult,
+    parent_task_number: str | None = None,
 ) -> None:
     """将 CEO 助理行动项转化为新的「待分析」任务，实现业务闭环（再流转）。
 
     同时尝试通过飞书任务 API 创建待办事项，方便在飞书中直接跟进。
     只取前 3 条非空行动项；跟进任务本身不再生成二级跟进，避免无限循环。
+
+    parent_task_number: 原任务的「任务编号」（AutoNumber 字段值），自动写入
+      跟进任务的「依赖任务编号」字段，构建任务依赖图（v8.6.7 新增）。
     """
     if task_title.startswith("[跟进]"):
         return
@@ -284,19 +288,19 @@ async def _create_followup_tasks(
 
     # 2. 在「分析任务」表中生成后续待分析记录（再流转闭环）
     for item in action_items:
+        record_fields: dict = {
+            "任务标题": f"[跟进] {truncate_with_marker(item, 50, '...[截断]')}",
+            "分析维度": "综合分析",
+            "优先级": "P2 中",
+            "状态": Status.PENDING,
+            "进度": 0,
+            "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成",
+        }
+        # v8.6.7：跟进任务自动指向原任务，构建依赖图
+        if parent_task_number:
+            record_fields["依赖任务编号"] = str(parent_task_number)
         try:
-            await bitable_ops.create_record(
-                app_token,
-                task_tid,
-                {
-                    "任务标题": f"[跟进] {truncate_with_marker(item, 50, '...[截断]')}",
-                    "分析维度": "综合分析",
-                    "优先级": "P2 中",
-                    "状态": Status.PENDING,
-                    "进度": 0,
-                    "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成",
-                },
-            )
+            await bitable_ops.create_record(app_token, task_tid, record_fields)
             logger.info(
                 "Follow-up task created from [%s]: %s",
                 task_title,
@@ -541,8 +545,22 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             # 飞书消息通知（非阻塞，失败不影响任务状态）
             await _send_completion_message(task_title, ceo_result)
 
-            # 反馈再流转：CEO 行动项 → 新的待分析任务
-            await _create_followup_tasks(app_token, task_tid, task_title, ceo_result)
+            # 反馈再流转：CEO 行动项 → 新的待分析任务（自动 set 依赖任务编号 = 原任务编号）
+            parent_num_raw = fields.get("任务编号")
+            parent_num: str | None = None
+            if isinstance(parent_num_raw, str):
+                parent_num = parent_num_raw
+            elif isinstance(parent_num_raw, dict):
+                v = parent_num_raw.get("value")
+                if isinstance(v, list) and v:
+                    first = v[0]
+                    parent_num = (first.get("text") if isinstance(first, dict) else str(first)) or None
+            elif isinstance(parent_num_raw, (int, float)):
+                parent_num = str(int(parent_num_raw))
+            await _create_followup_tasks(
+                app_token, task_tid, task_title, ceo_result,
+                parent_task_number=parent_num,
+            )
 
         except Exception as exc:
             logger.error("Pipeline failed for task=%s record=%s: %s", task_title, rid, exc)
