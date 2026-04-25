@@ -125,13 +125,22 @@ async def get_feishu_context():
         return_exceptions=True,
     )
     errors = {}
-    if isinstance(drive, Exception):
+    # v8.1 修复：CancelledError 在 Python 3.8+ 继承自 BaseException 而不是 Exception，
+    # isinstance(x, Exception) 会漏匹配 → 客户端断连时 cancelled 对象被当 drive 数据返回，
+    # 后续 JSON 序列化炸（无法序列化 CancelledError 实例）。改用 BaseException 全覆盖。
+    if isinstance(drive, BaseException):
+        if isinstance(drive, asyncio.CancelledError):
+            raise drive
         errors["drive"] = str(drive)
         drive = []
-    if isinstance(calendar, Exception):
+    if isinstance(calendar, BaseException):
+        if isinstance(calendar, asyncio.CancelledError):
+            raise calendar
         errors["calendar"] = str(calendar)
         calendar = []
-    if isinstance(tasks, Exception):
+    if isinstance(tasks, BaseException):
+        if isinstance(tasks, asyncio.CancelledError):
+            raise tasks
         errors["tasks"] = str(tasks)
         tasks = []
     pending_tasks = [item for item in tasks if not item.get("completed")][:20]

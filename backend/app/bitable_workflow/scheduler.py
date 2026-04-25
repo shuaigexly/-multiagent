@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 # 单轮最多处理任务数（每条任务触发 7 次 LLM 调用）
 _MAX_PER_CYCLE = 3
 _LOCAL_CYCLE_LOCK: asyncio.Lock | None = None
+import threading as _threading
+_LOCAL_CYCLE_LOCK_INIT = _threading.Lock()
 _LOCK_TTL_SECONDS = int(os.getenv("WORKFLOW_CYCLE_LOCK_TTL_SECONDS", "900"))
 _RECOVER_STALE_MINUTES = int(os.getenv("WORKFLOW_RECOVER_STALE_MINUTES", "30"))
 _ALLOW_LOCAL_WORKFLOW_LOCK = os.getenv("WORKFLOW_ALLOW_LOCAL_LOCK", "").lower() in {
@@ -53,9 +55,12 @@ def _cycle_lock_key(app_token: str, task_tid: str) -> str:
 
 
 async def _acquire_cycle_lock(app_token: str, task_tid: str) -> tuple[object | None, str | None]:
+    # v8.1 修复：双检锁懒初始化，防止并发 cycle 启动各自创建独立 Lock 实例 → 本地互斥失效
     global _LOCAL_CYCLE_LOCK
     if _LOCAL_CYCLE_LOCK is None:
-        _LOCAL_CYCLE_LOCK = asyncio.Lock()
+        with _LOCAL_CYCLE_LOCK_INIT:
+            if _LOCAL_CYCLE_LOCK is None:
+                _LOCAL_CYCLE_LOCK = asyncio.Lock()
     await _LOCAL_CYCLE_LOCK.acquire()
     owner = _owner_id()
     try:

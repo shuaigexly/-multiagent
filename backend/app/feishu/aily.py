@@ -33,12 +33,20 @@ logger = logging.getLogger(__name__)
 
 _TOKEN_CACHE: dict = {}
 _TOKEN_LOCK: asyncio.Lock | None = None
+import threading as _threading
+_TOKEN_LOCK_INIT = _threading.Lock()
 
 
 def _get_token_lock() -> asyncio.Lock:
+    """v8.1 修复：懒初始化 race — 两个并发首次访问可能各自创建独立 Lock，
+    后续 critical section 失同步 → 双重 token fetch 浪费 Feishu API 调用配额。
+    用 threading.Lock 双检守护"创建"步骤。
+    """
     global _TOKEN_LOCK
     if _TOKEN_LOCK is None:
-        _TOKEN_LOCK = asyncio.Lock()
+        with _TOKEN_LOCK_INIT:
+            if _TOKEN_LOCK is None:
+                _TOKEN_LOCK = asyncio.Lock()
     return _TOKEN_LOCK
 
 

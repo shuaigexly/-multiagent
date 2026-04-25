@@ -36,12 +36,17 @@ _RATE_LIMIT_MAX = int(os.getenv("TASK_RATE_LIMIT_MAX", "10"))
 _RATE_LIMIT_WINDOW = int(os.getenv("TASK_RATE_LIMIT_WINDOW", "60"))
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _claim_lock: asyncio.Lock | None = None
+import threading as _threading
+_claim_lock_init = _threading.Lock()
 
 
 def _get_claim_lock() -> asyncio.Lock:
+    """v8.1 修复：双检锁守护懒初始化（之前并发首次访问会创建多把锁，导致 claim 串行化失效）。"""
     global _claim_lock
     if _claim_lock is None:
-        _claim_lock = asyncio.Lock()
+        with _claim_lock_init:
+            if _claim_lock is None:
+                _claim_lock = asyncio.Lock()
     return _claim_lock
 
 

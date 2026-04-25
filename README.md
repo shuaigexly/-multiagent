@@ -533,7 +533,22 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v8.0（当前） — 第四 + 五 + 六 + 七轮审计（9 个真实 bug）
+### v8.1（当前） — 第八 + 九轮审计（5 个真实 bug）
+
+继续深扫，又找到 5 个真实 bug。
+
+🔴 严重：
+31. **`feishu_context.py` `isinstance(x, Exception)` 漏 `CancelledError`** — Python 3.8+ `CancelledError` 继承 `BaseException` 而非 `Exception`。客户端断 SSE → 子调用被 cancel → cancelled 对象当 drive 数据返回 → JSON 序列化抛错。修：用 `isinstance(x, BaseException)` + 显式重 raise CancelledError。
+32. **`aily._get_token_lock` 懒初始化 race** — 与 progress_broker 同款。两个并发首次调用各自创建 Lock → 双重 fetch tenant_access_token 浪费 Feishu 配额。修：`threading.Lock` 双检守护。
+33. **`api/tasks._get_claim_lock` 同款 race** — 任务认领串行化失效。修：双检锁。
+34. **`scheduler._LOCAL_CYCLE_LOCK` 同款 race** — cycle 互斥失效。修：双检锁。
+35. **Pillow ≥ 10 弃用 `Image.LANCZOS`** — 升级 Pillow 后图像缩放抛 AttributeError。修：双路径 fallback `Image.Resampling.LANCZOS` → `Image.LANCZOS`。
+
+🧪 测试：
+- 新增 `tests/test_audit_round5.py`（5 cases）：CancelledError 父类验证 / 3 处懒初始化锁单例 / Pillow LANCZOS 双兼容
+- 全套件 149 → **154 passing**（+2 skipped 环境兼容）
+
+### v8.0 — 第四 + 五 + 六 + 七轮审计（9 个真实 bug）
 
 **🔴 严重**
 22. `progress_broker._get_lock` 懒初始化 race — 两个 coroutine 并发首次访问各自创建 Lock，publish 用 A 锁、subscribe 用 B 锁 → 订阅者列表无同步。修：threading.Lock 双检守护 asyncio.Lock 的"创建"步骤。

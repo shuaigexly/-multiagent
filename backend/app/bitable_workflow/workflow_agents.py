@@ -122,7 +122,11 @@ async def _enrich_with_vision(task_description: str, fields: dict) -> str:
                     # JPEG 仅支持 RGB / L / CMYK；其他模式（RGBA/P/1/I/F/PA/...）必须先转 RGB
                     if img.mode != "RGB":
                         img = img.convert("RGB")
-                    img.thumbnail((1280, 1280), Image.LANCZOS)
+                    # v8.1 修复：Pillow ≥10 弃用 Image.LANCZOS，改用 Image.Resampling.LANCZOS。
+                    # 双路径兼容旧版本（< 10）和新版本（≥ 10）。
+                    resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS", None) \
+                        or getattr(Image, "LANCZOS", None)
+                    img.thumbnail((1280, 1280), resample) if resample else img.thumbnail((1280, 1280))
                     out = BytesIO()
                     img.save(out, format="JPEG", quality=75, optimize=True)
                     img_bytes = out.getvalue()
