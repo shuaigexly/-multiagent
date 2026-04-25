@@ -82,16 +82,20 @@ async def _grant_initial_permissions(app_token: str) -> None:
     base = get_feishu_open_base_url()
     token = await get_tenant_access_token()
 
-    # 1. 把所有者本人加为 full_access
+    # 1. 把所有者本人加为 full_access — 三选一优先级：open_id > mobile > email
     owner_email = (settings.feishu_base_owner_email or "").strip()
+    owner_mobile = (settings.feishu_base_owner_mobile or "").strip()
     owner_open_id = (settings.feishu_base_owner_open_id or "").strip()
-    if owner_email and not owner_open_id:
-        # 先把邮箱反查成 open_id（飞书 add_member 不直接接受邮箱，需要先 lookup）
-        owner_open_id = await _resolve_email_to_open_id(base, token, owner_email)
+    if not owner_open_id and owner_mobile:
+        owner_open_id = await _resolve_contact_to_open_id(base, token, mobile=owner_mobile) or ""
+        if not owner_open_id:
+            logger.warning("owner mobile %r not found in Feishu tenant", owner_mobile)
+    if not owner_open_id and owner_email:
+        owner_open_id = await _resolve_contact_to_open_id(base, token, email=owner_email) or ""
         if not owner_open_id:
             logger.warning(
                 "owner email %r not found in Feishu tenant — 用户必须是该飞书租户成员才能加协作者；"
-                "请改填 FEISHU_BASE_OWNER_OPEN_ID 或确认邮箱在租户内",
+                "请改填 FEISHU_BASE_OWNER_OPEN_ID 或 FEISHU_BASE_OWNER_MOBILE",
                 owner_email,
             )
     if owner_open_id:
@@ -108,9 +112,12 @@ async def _grant_initial_permissions(app_token: str) -> None:
     for v in extras:
         oid = v
         if "@" in v:
-            oid = await _resolve_email_to_open_id(base, token, v) or ""
+            oid = await _resolve_contact_to_open_id(base, token, email=v) or ""
+        elif v.isdigit() and len(v) >= 7:
+            oid = await _resolve_contact_to_open_id(base, token, mobile=v) or ""
+        if "@" in v or (v.isdigit() and len(v) >= 7):
             if not oid:
-                logger.warning("extra viewer email %r not in tenant", v)
+                logger.warning("extra viewer %r not in tenant", v)
                 continue
         try:
             await _add_bitable_member(
@@ -128,18 +135,28 @@ async def _grant_initial_permissions(app_token: str) -> None:
             logger.warning("public link share patch failed: %s", exc)
 
 
-async def _resolve_email_to_open_id(base: str, token: str, email: str) -> str | None:
-    """飞书 contact API 把邮箱反查成 open_id；不在租户内返回 None。
+async def _resolve_contact_to_open_id(
+    base: str, token: str,
+    *, email: str | None = None, mobile: str | None = None,
+) -> str | None:
+    """飞书 contact API 把邮箱/手机反查成 open_id；不在租户内返回 None。
 
     POST /contact/v3/users/batch_get_id?user_id_type=open_id
-      body: {"emails": ["..."]}
+      body: {"emails": ["..."]} 或 {"mobiles": ["..."]}
     """
+    if not (email or mobile):
+        return None
+    body_payload: dict = {}
+    if mobile:
+        body_payload["mobiles"] = [mobile]
+    if email:
+        body_payload["emails"] = [email]
     url = f"{base}/open-apis/contact/v3/users/batch_get_id"
     r = await _get_http_client().post(
         url,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         params={"user_id_type": "open_id"},
-        json={"emails": [email]},
+        json=body_payload,
     )
     body: dict = {}
     try:
@@ -148,14 +165,15 @@ async def _resolve_email_to_open_id(base: str, token: str, email: str) -> str | 
         pass
     if r.status_code >= 400 or body.get("code", 0) != 0:
         logger.warning(
-            "email→open_id lookup failed: status=%s code=%s msg=%s",
+            "contact→open_id lookup failed: status=%s code=%s msg=%s",
             r.status_code, body.get("code"), body.get("msg"),
         )
         return None
     items = (body.get("data") or {}).get("user_list") or []
     for u in items:
-        if u.get("email") == email:
-            return u.get("user_id")  # user_id_type=open_id 时这里就是 open_id
+        # 反查命中（只要有 user_id 就接受，不再严格 match email/mobile）
+        if u.get("user_id"):
+            return u["user_id"]
     return None
 
 

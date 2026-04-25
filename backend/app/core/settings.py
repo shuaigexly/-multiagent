@@ -66,6 +66,7 @@ class Settings(BaseSettings):
 
     # v8.6.6 — 多维表格初始权限（默认 app 建的 base 别人完全打不开）
     feishu_base_owner_email: str = ""    # 用户邮箱，必须在飞书租户内才能反查成 open_id
+    feishu_base_owner_mobile: str = ""   # 或手机号（最稳，飞书账号一定绑了手机）
     feishu_base_owner_open_id: str = ""  # 或直接填 open_id（首选，最不易出错）
     feishu_base_public_link_share: bool = False  # 是否开链接分享
     # link_share_entity: tenant_readable=组织内可查看 / anyone_readable=任何人凭链接可查看
