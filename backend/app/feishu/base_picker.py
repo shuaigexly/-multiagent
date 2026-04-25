@@ -27,6 +27,20 @@ from app.feishu.aily import get_feishu_open_base_url
 logger = logging.getLogger(__name__)
 
 
+def _safe_json(resp: httpx.Response) -> dict:
+    """v8.6.17：飞书 5xx / 网关错误偶尔返回 HTML/纯文本，直接 r.json() 抛
+    JSONDecodeError 没有任何上下文。这里统一兜底，让上层 RuntimeError 带 status
+    + 内容前缀，便于排错。
+    """
+    try:
+        return resp.json()
+    except Exception:
+        return {
+            "code": -1,
+            "msg": f"non-JSON response (status={resp.status_code}): {resp.text[:200]!r}",
+        }
+
+
 async def list_user_bases(
     user_access_token: str,
     folder_token: Optional[str] = None,
@@ -49,7 +63,7 @@ async def list_user_bases(
             if page_token:
                 params["page_token"] = page_token
             r = await h.get(f"{base}/open-apis/drive/v1/files", headers=auth, params=params)
-            body = r.json()
+            body = _safe_json(r)
             if r.status_code != 200 or body.get("code") != 0:
                 raise RuntimeError(
                     f"list files failed: status={r.status_code} code={body.get('code')} "
@@ -80,7 +94,7 @@ async def list_tables(app_token: str, user_access_token: str) -> list[dict]:
     auth = {"Authorization": f"Bearer {user_access_token}"}
     async with httpx.AsyncClient(timeout=15) as h:
         r = await h.get(f"{base}/open-apis/bitable/v1/apps/{app_token}/tables", headers=auth)
-        body = r.json()
+        body = _safe_json(r)
         if r.status_code != 200 or body.get("code") != 0:
             raise RuntimeError(f"list tables failed: code={body.get('code')} msg={body.get('msg')}")
         return body.get("data", {}).get("items") or []
@@ -95,7 +109,7 @@ async def list_fields(app_token: str, table_id: str, user_access_token: str) -> 
             f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
             headers=auth,
         )
-        body = r.json()
+        body = _safe_json(r)
         if r.status_code != 200 or body.get("code") != 0:
             raise RuntimeError(f"list fields failed: code={body.get('code')} msg={body.get('msg')}")
         return body.get("data", {}).get("items") or []

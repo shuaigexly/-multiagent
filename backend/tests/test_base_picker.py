@@ -64,6 +64,21 @@ async def test_list_user_bases_raises_on_api_error():
 
 
 @pytest.mark.asyncio
+async def test_list_user_bases_non_json_response_raises_clear_error():
+    """v8.6.17 回归：飞书 5xx 返回 HTML 时 r.json() 抛 JSONDecodeError，
+    应该被 _safe_json 捕获并转为带 status 的 RuntimeError，而不是裸 traceback。"""
+    bad = MagicMock()
+    bad.status_code = 502
+    bad.text = "<html><body>502 Bad Gateway</body></html>"
+    bad.json = MagicMock(side_effect=ValueError("Expecting value"))
+    with patch("httpx.AsyncClient") as MockClient:
+        instance = MockClient.return_value.__aenter__.return_value
+        instance.get = AsyncMock(return_value=bad)
+        with pytest.raises(RuntimeError, match="status=502"):
+            await list_user_bases("u-fake")
+
+
+@pytest.mark.asyncio
 async def test_list_tables_returns_items():
     payload = {"code": 0, "data": {"items": [
         {"table_id": "tbl_x", "name": "任务表", "revision": 1},

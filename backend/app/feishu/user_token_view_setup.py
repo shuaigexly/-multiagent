@@ -59,9 +59,20 @@ async def configure_view_groups(
     ok_list: list[str] = []
     failed_list: list[str] = []
 
+    def _safe_json(resp: httpx.Response) -> dict:
+        """v8.6.17：飞书 5xx/网关错误偶尔返回 HTML，r.json() 直接 raise 难定位。
+        统一返回 {"code": -1, "msg": "..."} 让上层逻辑走错误分支。"""
+        try:
+            return resp.json()
+        except Exception:
+            return {
+                "code": -1,
+                "msg": f"non-JSON response (status={resp.status_code}): {resp.text[:200]!r}",
+            }
+
     async with httpx.AsyncClient(timeout=30) as h:
         rt = await h.get(f"{base}/open-apis/bitable/v1/apps/{app_token}/tables", headers=auth_get)
-        body = rt.json()
+        body = _safe_json(rt)
         if rt.status_code != 200 or body.get("code") != 0:
             raise RuntimeError(
                 f"list tables failed: status={rt.status_code} code={body.get('code')} msg={body.get('msg')}"
@@ -78,7 +89,13 @@ async def configure_view_groups(
                 f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields",
                 headers=auth_get,
             )
-            fields = (rf.json().get("data") or {}).get("items") or []
+            fbody = _safe_json(rf)
+            if rf.status_code != 200 or fbody.get("code") != 0:
+                failed_list.append(
+                    f"{tname}/{vname}: 列字段失败 status={rf.status_code} msg={fbody.get('msg')}"
+                )
+                continue
+            fields = (fbody.get("data") or {}).get("items") or []
             target_fid = next((f["field_id"] for f in fields if f.get("field_name") == target_field), None)
             if not target_fid:
                 failed_list.append(f"{tname}/{vname}: 字段 {target_field!r} 不存在")
@@ -88,8 +105,14 @@ async def configure_view_groups(
                 f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views",
                 headers=auth_get,
             )
+            vbody = _safe_json(rv)
+            if rv.status_code != 200 or vbody.get("code") != 0:
+                failed_list.append(
+                    f"{tname}/{vname}: 列视图失败 status={rv.status_code} msg={vbody.get('msg')}"
+                )
+                continue
             view = next(
-                (v for v in (rv.json().get("data") or {}).get("items") or []
+                (v for v in (vbody.get("data") or {}).get("items") or []
                  if v.get("view_name") == vname and v.get("view_type") == vtype),
                 None,
             )
@@ -119,14 +142,15 @@ async def configure_view_groups(
                     f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views/{view['view_id']}",
                     headers=auth, json=payload,
                 )
-                pbody = rp.json() if rp.status_code < 500 else {}
+                pbody = _safe_json(rp)
                 if rp.status_code == 200 and pbody.get("code") == 0:
                     # 验证是否生效（GET 后看 property）
                     rd = await h.get(
                         f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views/{view['view_id']}",
                         headers=auth_get,
                     )
-                    prop = (rd.json().get("data") or {}).get("view", {}).get("property") or {}
+                    dbody = _safe_json(rd)
+                    prop = (dbody.get("data") or {}).get("view", {}).get("property") or {}
                     # 看任意一个 key 出现 target_fid
                     flat = str(prop)
                     if target_fid in flat:
