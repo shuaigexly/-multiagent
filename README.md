@@ -139,16 +139,18 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
                           已完成
 ```
 
-### 四张多维表格（含表间关联字段）
+### 四张多维表格
 
-| 表格 | 用途 | 关联关系 |
+| 表格 | 用途 | 关联方式 |
 |------|------|----------|
 | **分析任务** | 主表，驱动状态机 | 无（主表） |
-| **岗位分析** | 每岗 Agent 的分析输出（6条/任务） | ←「关联任务」字段关联主表 |
-| **综合报告** | CEO 助理综合决策报告 | ←「关联任务」字段关联主表 |
+| **岗位分析** | 每岗 Agent 的分析输出（6条/任务） | 用「任务标题」文本字段做逻辑关联（v8.6.1+） |
+| **综合报告** | CEO 助理综合决策报告 | 用「报告标题」文本字段做逻辑关联（v8.6.1+） |
 | **数字员工效能** | 各岗位处理任务数滚动统计 | 无 |
 
-> 「关联任务」为飞书多维表格关联记录字段（type=18），实现跨表数据追溯与视图联动。
+> v8.6.1 实测确认：飞书 Bitable 三个 records 写接口（POST/PUT/batch_create）**全部不接受 LinkedRecord 字段**（type=18）写入（错误码 1254067 LinkFieldConvFail，飞书平台硬限制）。
+> 改用主字段（任务标题 / 报告标题）做文本逻辑关联，配合视图 filter 切片实现跨表追溯。
+> 跟进任务通过「依赖任务编号」字段构建 DAG（v8.6.7）。
 
 ### 虚拟组织角色定义
 
@@ -397,8 +399,15 @@ docker run -p 80:80 puff-frontend
 | `LLM_PROVIDER` | `openai_compatible` 或 `feishu_aily` | `openai_compatible` |
 | `LLM_API_KEY` | LLM 服务商 API Key | — |
 | `LLM_BASE_URL` | Chat Completions 端点 URL | `https://api.deepseek.com/v1` |
-| `LLM_MODEL` | 模型名称 | `deepseek-chat` |
+| `LLM_MODEL` | STANDARD 档模型名称（主要分析路径） | `deepseek-chat` |
+| `LLM_FAST_MODEL` / `LLM_FAST_BASE_URL` / `LLM_FAST_API_KEY` | FAST 档（reflection / sub-Q / 工具循环；缺省回退 STANDARD） | — |
+| `LLM_DEEP_MODEL` / `LLM_DEEP_BASE_URL` / `LLM_DEEP_API_KEY` | DEEP 档（CEO 综合 / confidence<3 重试；缺省回退 STANDARD） | — |
 | `AILY_APP_ID` | 飞书 Aily 智能伙伴 App ID（`feishu_aily` 模式时必填） | — |
+
+> **三档模型路由（v8.6.11）**：`app/core/model_router.py::resolve_model` 按 tier 返回 ModelConfig。
+> 实测火山方舟豆包 EP（OpenAI 兼容）：`base_url=https://ark.cn-beijing.volces.com/api/v3`，
+> `LLM_MODEL=ep-xxx`（EP ID 来自飞书开发者后台）。FAST 档建议挂上一代轻量版省钱，
+> DEEP 档挂旗舰版。`LLM_PLAN_EXECUTE=0` 可关闭 CEO plan-execute 链路（省 6 次 LLM/任务）。
 
 ### 飞书配置
 
@@ -410,6 +419,11 @@ docker run -p 80:80 puff-frontend
 | `FEISHU_CHAT_ID` | 默认推送群 ID（可选） |
 | `FEISHU_BOT_VERIFICATION_TOKEN` | 机器人验证 Token |
 | `FEISHU_BOT_ENCRYPT_KEY` | 机器人加密 Key |
+| `FEISHU_BASE_OWNER_OPEN_ID` | setup_workflow 后自动加为 base full_access 协作者（v8.6.6） |
+| `FEISHU_BASE_OWNER_MOBILE` | 或填手机号，contact API 自动反查 open_id |
+| `FEISHU_BASE_OWNER_EMAIL` | 或填飞书租户内邮箱（活动账号常用） |
+| `FEISHU_BASE_PUBLIC_LINK_SHARE` | `true` 时自动开链接分享 |
+| `FEISHU_BASE_LINK_SHARE_ENTITY` | `anyone_readable` / `tenant_readable` 等（默认 `anyone_readable`，他人凭链接可看） |
 
 ### 内容运营工作流
 
@@ -533,9 +547,45 @@ pip install larksuite-oapi
 
 ## 变更日志
 
-### v8.4（当前） — 第十七轮深度安全审计（SSRF / AST sandbox / 持久化注入 / DDL 注入）
+### v8.6.4 → v8.6.15 — 多维表格视图 / 权限 / 性能 / 演示数据集（用户实测驱动）
+
+每一项都是用户截图反馈 → 飞书 API 实测验证 → 修复 + 单测覆盖的产出，不是凭空臆测。
+
+**视图 / UI（v8.6.4 / v8.6.7 / v8.6.8 / v8.6.12 → v8.6.15）**
+- v8.6.4 实证飞书 OpenAPI 不公开 `kanban.group_field_id` / `gallery.cover_field_id`（PATCH 静默丢弃，5 种 payload 全失败）；改用 `filter_info` 切片视图（飞书唯一可编程的 view property，配合 SingleSelect option_id JSON 编码格式）
+- v8.6.7 跟进任务自动写「依赖任务编号」（=父任务 AutoNumber 值），构建任务 DAG
+- v8.6.8 PATCH filter 视图同时显式 set `hidden_fields=[]`，消除飞书 UI「存在未保存的视图」提示
+- v8.6.13 撤销 v8.6.12 的删视图操作（用户要求保留 kanban/gallery 视图槽）
+- v8.6.14 在 base 第一行写入「📌 使用提示」记录，引导用户 1 次 UI 点击配 group/cover field
+- v8.6.15 新增 `app/feishu/user_token_view_setup.py` + `POST /api/v1/feishu/oauth/apply-view-config`，用 user_access_token 走前端身份配视图（实测 OpenAPI 仍不开 group_field，但流程已就位）
+
+**权限（v8.6.6）**
+- `setup_workflow` 自动调 `POST /drive/v1/permissions/{token}/members` 把 `FEISHU_BASE_OWNER_OPEN_ID` 加为 `full_access`；不公开 PATCH `view.property` 但**公开** PATCH `permissions/public`，自动开 `link_share_entity=anyone_readable`（任何飞书账号凭链接可看）
+- v8.6.6-r2 contact API 邮箱/手机号反查 open_id（`/contact/v3/users/batch_get_id`），三选一优先级 open_id > mobile > email
+
+**主字段 / 数据写入（v8.6.3 → v8.6.5）**
+- v8.6.3 修复 SDK `app_table_field.update` 在某些版本会"找不到字段就建一个"，导致原主字段「多行文本」纹丝不动 + 新建重复字段 → 飞书画册/看板用主字段做卡片标题 → 全部「未命名记录」。改为 HTTP GET 找 `is_primary=True` 字段后 PUT rename
+- v8.6.3 chart_renderer 中文字体回退链（Microsoft YaHei/SimHei/PingFang SC/Noto Sans CJK SC...）+ 多 unit 分组归一化避免「单柱占满整图」
+- v8.6.4-r2 `_extract_health` 优先解析「总体/整体/综合 评级」行附近 emoji，避免风险段 🔴 误判为整体预警
+- v8.6.4-r2 `_create_followup_tasks` 过滤 `[摘要]` 前缀（CEO action_items[0] 是管理摘要不是行动项），避免「[跟进] [摘要] ...」垃圾任务
+- v8.6.5 SEED_TASKS 升级为 4-tuple `(title, dim, background, data_source)`，预置可解析 CSV
+- v8.6.9 重构演示数据集 → `app/bitable_workflow/demo_data.py`：虚构产品 InsightHub 三个月运营快照，7 张关联 CSV（月度 KPI / 渠道漏斗 / SEO 关键词 / 功能 RICE / 用户漏斗 / Q1 P&L / 竞品对标），SEED 7 条共享同一产品背景
+
+**性能 / LLM（v8.6.10 / v8.6.11）**
+- v8.6.10 `plan_execute.py` sub-questions for 串行 → `asyncio.gather` 并行（5 个独立子问题），CEO Wave3 提速 4-5×
+- v8.6.11 接入火山方舟豆包（OpenAI 兼容），三档模型路由生效（`pydantic-settings` 不注入 os.environ 的兜底通道）
+
+**审计 / 测试**
+- 新增 `app/bitable_workflow/verify.py` — 迭代审计模块 + CLI（`python -m app.bitable_workflow.verify <app_token>`），逐表 / 逐视图 / 逐字段 / 逐记录读取实际 UI 状态
+- 新增 `tests/test_schema.py::test_seed_tasks_have_real_data_source` 强制 SEED 数据源含数字 + 结构化分隔符
+- 测试 162 passed / 2 skipped，全部累积变更覆盖
+
+⚠️ **演示数据声明**：`demo_data.py` 中所有 InsightHub 数字（MAU/DAU/LTV/CAC/营收等）均为手编演示数据，竞赛交付前必须替换为真实业务数据。
+
+### v8.4 — 第十七轮深度安全审计（SSRF / AST sandbox / 持久化注入 / DDL 注入）
 
 本轮把审计从"并发竞态"上升到"安全攻击面"。新增 1 个安全模块、修补 8 类攻击面。
+（v8.4 是 v8.6.x 之前的最后一个安全审计版本）
 
 **🛡️ SSRF 防护（新增 `app/core/url_safety.py`）**
 - 统一闸口拦截所有 LLM 工具的外链：`fetch_url` / `inspect_image` / vision 全部走该模块
