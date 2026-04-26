@@ -119,23 +119,34 @@ async def audit_bitable(
             id_to_name = {f.get("field_id"): f.get("field_name") for f in fields}
             for v in views_raw:
                 vid = v["view_id"]
-                # v8.6.19：部分视图类型（如 gantt / form）GET /views/{view_id} 接口
-                # 行为可能不同，详情拉失败仅 warning，不阻塞主审计
+                # v8.6.20-r2：form 视图正确详情端点是 /forms/{view_id} 而不是
+                # /views/{view_id}（后者对 form 返回 400）。其他类型仍走 /views。
                 fi: list[dict] = []
                 try:
-                    detail_resp = await _fetch(
-                        http,
-                        f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views/{vid}",
-                        token,
-                    )
-                    detail = (detail_resp.get("data") or {}).get("view") or {}
-                    prop = detail.get("property") or {}
-                    fi = (prop.get("filter_info") or {}).get("conditions") or []
+                    if v.get("view_type") == "form":
+                        detail_resp = await _fetch(
+                            http,
+                            f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/forms/{vid}",
+                            token,
+                        )
+                        # form 详情含 shared_url；本字段不影响主 issues，存在 v 上即可
+                        form_data = (detail_resp.get("data") or {}).get("form") or {}
+                        v["shared_url"] = form_data.get("shared_url")
+                        v["form_shared"] = form_data.get("shared")
+                    else:
+                        detail_resp = await _fetch(
+                            http,
+                            f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views/{vid}",
+                            token,
+                        )
+                        detail = (detail_resp.get("data") or {}).get("view") or {}
+                        prop = detail.get("property") or {}
+                        fi = (prop.get("filter_info") or {}).get("conditions") or []
                 except Exception as exc:
                     report.setdefault("warnings", []).append(
                         f"获取视图详情失败 {tname}/{v.get('view_name')!r} ({v.get('view_type')}): {exc}"
                     )
-                views.append({
+                view_entry = {
                     "id": vid,
                     "name": v["view_name"],
                     "type": v["view_type"],
@@ -147,7 +158,11 @@ async def audit_bitable(
                         }
                         for c in fi
                     ],
-                })
+                }
+                # v8.6.20-r2：form 视图额外暴露 shared_url
+                if v.get("view_type") == "form" and v.get("shared_url"):
+                    view_entry["shared_url"] = v["shared_url"]
+                views.append(view_entry)
             tinfo["views"] = views
 
             records = await _fetch_items(

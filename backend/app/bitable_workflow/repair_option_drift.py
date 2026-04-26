@@ -72,6 +72,67 @@ async def _list_field_options(app_token: str, table_id: str, field_name: str) ->
     return None, []
 
 
+async def prune_hidden_options(
+    app_token: str,
+    table_id: str,
+    field_name: str,
+    allowed: set[str],
+    dry_run: bool = False,
+) -> dict:
+    """v8.6.20-r2：清理 SingleSelect 字段里 schema 外的 hidden options。
+
+    飞书 PUT /fields/{field_id} 提交不含 hidden option 的新 property，飞书会
+    自动删除该 option（前提：没有 record 引用它，且 v8.6.20-r1 repair 已把
+    所有 record 重定向到 schema option）。
+    返回 {"removed": [...], "kept": [...], "issues": [...]}
+    """
+    base = get_feishu_open_base_url()
+    token = await get_tenant_access_token()
+    field_id, opts = await _list_field_options(app_token, table_id, field_name)
+    if not field_id:
+        return {"removed": [], "kept": [], "issues": [f"字段 {field_name!r} 不存在"]}
+
+    keep = [o for o in opts if o.get("name") in allowed]
+    drop = [o for o in opts if o.get("name") not in allowed]
+    if not drop:
+        return {"removed": [], "kept": [o.get("name") for o in keep], "issues": []}
+
+    if dry_run:
+        return {
+            "removed": [o.get("name") for o in drop],
+            "kept": [o.get("name") for o in keep],
+            "issues": ["DRY-RUN — 未实际写入"],
+        }
+
+    # PUT /fields/{field_id} 提交完整 property，飞书会删除不在新 options 列表里的
+    payload = {
+        "field_name": field_name,
+        "type": 3,  # SingleSelect
+        "ui_type": "SingleSelect",
+        "property": {
+            "options": [
+                {"id": o.get("id"), "name": o.get("name"), "color": o.get("color", 0)}
+                for o in keep
+            ],
+        },
+    }
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields/{field_id}"
+    async with httpx.AsyncClient(timeout=15) as h:
+        r = await h.put(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }, json=payload)
+        body = _safe_json(r)
+        if r.status_code != 200 or body.get("code") != 0:
+            return {"removed": [], "kept": [o.get("name") for o in keep],
+                    "issues": [f"PUT field 失败 status={r.status_code} code={body.get('code')} msg={body.get('msg')}"]}
+    return {
+        "removed": [o.get("name") for o in drop],
+        "kept": [o.get("name") for o in keep],
+        "issues": [],
+    }
+
+
 async def repair_option_drift(
     app_token: str,
     table_id: str | None = None,
@@ -169,6 +230,8 @@ async def _cli() -> int:
                         help=f'SingleSelect 字段名（默认 {_DEFAULT_FIELD!r}）')
     parser.add_argument("--dry-run", action="store_true",
                         help="只打印不写")
+    parser.add_argument("--prune", action="store_true",
+                        help="同时清理字段里 schema 外的 hidden options（建议先做 repair，再 prune）")
     args = parser.parse_args()
 
     result = await repair_option_drift(
@@ -177,7 +240,7 @@ async def _cli() -> int:
         field_name=args.field,
         dry_run=args.dry_run,
     )
-    print(f"\n===== 修复结果 =====")
+    print(f"\n===== Repair 结果 =====")
     print(f"  扫描: {result['scanned']} 条")
     print(f"  改写: {result['rewritten']} 条")
     print(f"  跳过: {result['skipped']} 条")
@@ -185,6 +248,19 @@ async def _cli() -> int:
         print(f"  问题: {len(result['issues'])} 项")
         for i in result["issues"][:10]:
             print(f"    - {i}")
+
+    if args.prune:
+        tid = await _list_table_id(args.app_token, args.table)
+        prune_res = await prune_hidden_options(
+            args.app_token, tid, args.field, _HEALTH_ALLOWED, dry_run=args.dry_run,
+        )
+        print(f"\n===== Prune 结果 =====")
+        print(f"  保留: {prune_res['kept']}")
+        print(f"  删除: {prune_res['removed']}")
+        if prune_res.get("issues"):
+            for i in prune_res["issues"]:
+                print(f"  - {i}")
+
     return 0 if not result.get("issues") else 1
 
 
