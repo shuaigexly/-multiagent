@@ -156,6 +156,37 @@ async def test_batch_update_falls_back_serial_on_chunk_failure(monkeypatch):
     assert serial_calls == ["r0", "r1", "r2"]  # 严格按顺序，不并发
 
 
+def test_flatten_text_value_handles_feishu_rich_text():
+    """v8.6.19 实测发现：search_records / get_record 把 text 字段返回为富文本数组
+    [{"text": "...", "type": "text"}]，写回飞书会报 1254060 TextFieldConvFail。
+    _flatten_text_value 必须把它拍平成 string。"""
+    from app.bitable_workflow.scheduler import _flatten_text_value, _flatten_record_fields
+    # 1) 富文本数组 → 拼接 text
+    rich = [{"text": "Insight", "type": "text"}, {"text": "Hub", "type": "text"}]
+    assert _flatten_text_value(rich) == "InsightHub"
+    # 2) 普通 string 不变
+    assert _flatten_text_value("plain") == "plain"
+    # 3) None 不变
+    assert _flatten_text_value(None) is None
+    # 4) Number 不变
+    assert _flatten_text_value(42) == 42
+    # 5) Attachment list（含 file_token 不含 text）原样返回
+    att = [{"file_token": "xxx", "name": "chart.png"}]
+    assert _flatten_text_value(att) == att
+    # 6) _flatten_record_fields 应规范化 dict 内所有 value
+    fields = {
+        "任务标题": rich,
+        "状态": "已完成",
+        "进度": 1.0,
+        "图表": att,
+    }
+    flat = _flatten_record_fields(fields)
+    assert flat["任务标题"] == "InsightHub"
+    assert flat["状态"] == "已完成"
+    assert flat["进度"] == 1.0
+    assert flat["图表"] == att
+
+
 @pytest.mark.asyncio
 async def test_batch_delete_chunks_at_500(monkeypatch):
     chunks_seen: list[int] = []

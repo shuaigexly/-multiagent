@@ -37,6 +37,25 @@ logger = logging.getLogger(__name__)
 USE_RECORDS_SEARCH = os.getenv("WORKFLOW_USE_RECORDS_SEARCH", "1") == "1"
 USE_BATCH_RECORDS = os.getenv("WORKFLOW_USE_BATCH_RECORDS", "1") == "1"
 
+
+def _flatten_text_value(value):
+    """v8.6.19 修：飞书 search_records / get_record 把 text/title 字段返回为
+    `[{"text": "...", "type": "text"}]` 富文本数组。直接当 string 用 / 写回飞书都会
+    炸（写回报 1254060 TextFieldConvFail）。这里把富文本数组拍平成纯 string。
+
+    其他类型（int/float/None/dict 含 file_token 等）原样返回。
+    """
+    if isinstance(value, list) and value and isinstance(value[0], dict) and "text" in value[0]:
+        return "".join(str(seg.get("text", "")) for seg in value if isinstance(seg, dict))
+    return value
+
+
+def _flatten_record_fields(fields: dict) -> dict:
+    """对 record fields 字典应用 _flatten_text_value 规范化所有富文本字段。"""
+    if not isinstance(fields, dict):
+        return fields
+    return {k: _flatten_text_value(v) for k, v in fields.items()}
+
 # 单轮最多处理任务数（每条任务触发 7 次 LLM 调用）
 _MAX_PER_CYCLE = 3
 _LOCAL_CYCLE_LOCK: asyncio.Lock | None = None
@@ -239,7 +258,11 @@ async def _claim_pending_record(
         {"状态": Status.ANALYZING, "当前阶段": claim_stage, "进度": 0.01},
     )
     claimed = await bitable_ops.get_record(app_token, task_tid, record_id)
-    fields = claimed.get("fields") or {}
+    # v8.6.19：飞书 get_record 把 text/title 返回为富文本数组 [{"text":...,"type":"text"}]
+    # 必须拍平成 string，否则上层写回会触发 1254060 TextFieldConvFail
+    raw_fields = claimed.get("fields") or {}
+    fields = _flatten_record_fields(raw_fields)
+    claimed["fields"] = fields  # 同步覆盖，保证调用方拿到的是 flat
     if fields.get("状态") == Status.ANALYZING and fields.get("当前阶段") == claim_stage:
         return claimed
     return None
@@ -570,7 +593,8 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
         if processed >= _MAX_PER_CYCLE:
             break
         rid = record.get("record_id", "?")
-        fields = record.get("fields", {})
+        # v8.6.19：search_records 返回的 text 字段是富文本数组，先拍平
+        fields = _flatten_record_fields(record.get("fields", {}))
         task_title = fields.get("任务标题", f"任务_{rid[:8]}")
 
         # 绑定 task_id 上下文 — 此后所有 logger.* 调用自动带上 task_id，便于聚合查询
