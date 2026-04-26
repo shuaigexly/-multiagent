@@ -156,6 +156,25 @@ async def test_batch_update_falls_back_serial_on_chunk_failure(monkeypatch):
     assert serial_calls == ["r0", "r1", "r2"]  # 严格按顺序，不并发
 
 
+def test_normalize_singleselect_strips_invisible_chars():
+    """v8.6.20：飞书 SingleSelect 字段 invisible 字符会让飞书自动新建 hidden option，
+    导致 filter view 命中数对不上。normalize 必须把它们 strip 掉。"""
+    from app.bitable_workflow.workflow_agents import _normalize_singleselect, _HEALTH_LABELS_ALLOWED
+    # 含 zero-width space
+    assert _normalize_singleselect("🟡​ 关注", _HEALTH_LABELS_ALLOWED, "⚪ 数据不足") == "🟡 关注"
+    # 含 NBSP
+    assert _normalize_singleselect("🟡 关注", _HEALTH_LABELS_ALLOWED, "⚪ 数据不足") == "🟡 关注"
+    # 末尾空白
+    assert _normalize_singleselect("🟡 关注  ", _HEALTH_LABELS_ALLOWED, "⚪ 数据不足") == "🟡 关注"
+    # 干净值原样返回
+    assert _normalize_singleselect("🔴 预警", _HEALTH_LABELS_ALLOWED, "⚪ 数据不足") == "🔴 预警"
+    # 不在 allowed 集合 → 兜底
+    assert _normalize_singleselect("未知", _HEALTH_LABELS_ALLOWED, "⚪ 数据不足") == "⚪ 数据不足"
+    # 空值 → 兜底
+    assert _normalize_singleselect("", _HEALTH_LABELS_ALLOWED, "⚪ 数据不足") == "⚪ 数据不足"
+    assert _normalize_singleselect(None, _HEALTH_LABELS_ALLOWED, "⚪ 数据不足") == "⚪ 数据不足"
+
+
 def test_priority_score_maps_correctly():
     """v8.6.20：priority_score 替代飞书公式不生效问题。"""
     from app.bitable_workflow.schema import priority_score

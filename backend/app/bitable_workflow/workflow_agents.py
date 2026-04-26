@@ -552,6 +552,30 @@ def _extract_health(result: AgentResult) -> str:
     return "⚪ 数据不足"
 
 
+# v8.6.20 — 防御：飞书 SingleSelect 字段写入时若 value 含 invisible 字符（zero-width
+# space U+200B、NBSP U+00A0 等）或空白漂移，飞书会"看似匹配实则新建 option"，
+# 导致 filter 视图命中数对不上（实测 base #3 bug：32 条 🟡 关注 filter 仅命中 20）。
+# normalize 函数严格只允许 schema 中的 4 个 label，超界返回兜底 ⚪ 数据不足。
+_HEALTH_LABELS_ALLOWED = {"🟢 健康", "🟡 关注", "🔴 预警", "⚪ 数据不足"}
+_AGENT_ROLE_LABELS_ALLOWED = {opt["name"] for opt in __import__("app.bitable_workflow.schema", fromlist=["AGENT_ROLE_OPTIONS"]).AGENT_ROLE_OPTIONS}
+
+
+def _normalize_singleselect(value: str, allowed: set[str], fallback: str) -> str:
+    """SingleSelect 字段写入前严格校验：必须 ∈ allowed；含不可见字符或空白漂移会被
+    飞书当成新 option 创建（schema 外 hidden option_id），filter 视图命中漂移。"""
+    if not value:
+        return fallback
+    s = str(value).strip()
+    # 移除 zero-width 字符
+    for ch in ("​", "‌", "‍", "﻿"):
+        s = s.replace(ch, "")
+    # NBSP -> 普通 space（飞书 schema 用普通 space）
+    s = s.replace(" ", " ")
+    if s in allowed:
+        return s
+    return fallback
+
+
 def _estimate_confidence(result: AgentResult) -> int:
     """置信度：优先 LLM 自报（metadata.confidence），否则启发式估算。"""
     if 1 <= result.confidence_hint <= 5:
@@ -662,10 +686,18 @@ async def write_agent_outputs(
                 logger.warning("chart render/upload failed for %s: %s", result.agent_id, render_exc)
 
         from app.bitable_workflow import schema as _schema
-        health_label = _extract_health(result)
+        # v8.6.20 — 防御 SingleSelect option_id 漂移（实测 #3 bug 根因）：
+        # 严格 normalize，含 invisible 字符或不在 allowed 集合的值统一兜底
+        health_label = _normalize_singleselect(
+            _extract_health(result), _HEALTH_LABELS_ALLOWED, "⚪ 数据不足",
+        )
+        role_label = _normalize_singleselect(
+            _role_with_emoji(result.agent_name), _AGENT_ROLE_LABELS_ALLOWED,
+            _role_with_emoji(result.agent_name),  # 角色 normalize 失败仍写原值（兜底）
+        )
         fields: dict = {
             "任务标题": task_title,
-            "岗位角色": _role_with_emoji(result.agent_name),
+            "岗位角色": role_label,
             "健康度评级": health_label,
             # v8.6.20：健康度数值由 health_score() 算（替代飞书公式不生效）
             "健康度数值": _schema.health_score(health_label),
