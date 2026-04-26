@@ -7,6 +7,8 @@ services, or redirected internal targets.
 from __future__ import annotations
 
 import ipaddress
+import fnmatch
+import os
 import socket
 from urllib.parse import urlparse
 
@@ -45,6 +47,28 @@ def _resolve_host(hostname: str) -> list[str]:
     return ips
 
 
+def _allowed_host_patterns() -> list[str]:
+    raw = os.getenv("PUBLIC_FETCH_ALLOWED_HOSTS") or os.getenv("FETCH_URL_ALLOWED_HOSTS") or ""
+    return [item.strip().lower() for item in raw.split(",") if item.strip()]
+
+
+def _is_production() -> bool:
+    return os.getenv("APP_ENV", os.getenv("ENV", "development")).lower() in {"prod", "production"}
+
+
+def _validate_fetch_allowlist(hostname: str) -> None:
+    patterns = _allowed_host_patterns()
+    if not patterns:
+        if _is_production():
+            raise UnsafeURL("PUBLIC_FETCH_ALLOWED_HOSTS is required in production")
+        return
+    host = hostname.rstrip(".").lower()
+    for pattern in patterns:
+        if fnmatch.fnmatch(host, pattern.rstrip(".").lower()):
+            return
+    raise UnsafeURL("URL host is not in the public fetch allowlist")
+
+
 def validate_public_http_url(url: str) -> str:
     """Validate that *url* is http(s) and resolves only to public IPs."""
     parsed = urlparse((url or "").strip())
@@ -54,6 +78,7 @@ def validate_public_http_url(url: str) -> str:
         raise UnsafeURL("URL host is required")
     if parsed.username or parsed.password:
         raise UnsafeURL("URL credentials are not allowed")
+    _validate_fetch_allowlist(parsed.hostname)
 
     try:
         if _is_blocked_ip(parsed.hostname):

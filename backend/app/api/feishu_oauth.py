@@ -18,12 +18,18 @@ from app.core.settings import (
     settings as _settings,
 )
 from app.core.auth import require_api_key
+from app.core.observability import get_tenant_id, set_task_context
 from app.core.text_utils import truncate_with_marker
 from app.feishu.token_crypto import encrypt_token
 from app.feishu.user_token import (
+    USER_ACCESS_TOKEN_KEY,
+    USER_OPEN_ID_KEY,
+    USER_REFRESH_TOKEN_KEY,
     get_user_access_token,
     refresh_user_token,
+    scoped_config_key,
     set_user_access_token,
+    set_user_open_id,
     set_user_refresh_token,
 )
 from app.models.database import UserConfig, get_db
@@ -33,7 +39,14 @@ logger = logging.getLogger(__name__)
 
 CALLBACK_PATH = "/api/v1/feishu/oauth/callback"
 STATE_TTL_SECONDS = int(os.getenv("OAUTH_STATE_TTL_SECONDS", "600"))
-_pending_states: dict[str, tuple[str, float]] = {}
+_pending_states: dict[str, tuple[str, str, float]] = {}
+_USER_TOKEN_ERROR_CODES = {
+    "99991663",
+    "99991664",
+    "99991665",
+    "99991668",
+    "99991671",
+}
 
 
 def _feishu_base() -> str:
@@ -44,7 +57,7 @@ def _cleanup_pending_states(now: float | None = None) -> None:
     now = now or time.time()
     expired = [
         token
-        for token, (_, created_at) in _pending_states.items()
+        for token, (_, _, created_at) in _pending_states.items()
         if now - created_at > STATE_TTL_SECONDS
     ]
     for token in expired:
@@ -74,11 +87,12 @@ def _is_allowed_backend_origin(origin: str) -> bool:
 def _create_oauth_state(frontend_origin: str) -> str:
     _cleanup_pending_states()
     token = secrets.token_urlsafe(16)
-    _pending_states[token] = (frontend_origin, time.time())
+    tenant_id = get_tenant_id() or "default"
+    _pending_states[token] = (frontend_origin, tenant_id, time.time())
     return f"{frontend_origin}|{token}"
 
 
-def _consume_oauth_state(state: str) -> str:
+def _consume_oauth_state(state: str) -> tuple[str, str]:
     _cleanup_pending_states()
     if "|" not in state:
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
@@ -86,10 +100,41 @@ def _consume_oauth_state(state: str) -> str:
     pending = _pending_states.pop(token, None)
     if pending is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-    expected_origin, created_at = pending
+    expected_origin, tenant_id, created_at = pending
     if time.time() - created_at > STATE_TTL_SECONDS or frontend_origin != expected_origin:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-    return expected_origin
+    return expected_origin, tenant_id
+
+
+def _is_user_token_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    if any(code in text for code in _USER_TOKEN_ERROR_CODES):
+        return True
+    return "token" in text and any(marker in text for marker in ("expired", "expire", "invalid"))
+
+
+async def _ensure_user_token() -> str:
+    user_token = get_user_access_token()
+    if user_token:
+        return user_token
+    await refresh_user_token()
+    user_token = get_user_access_token()
+    if not user_token:
+        raise RuntimeError("missing user_access_token; please finish OAuth authorization first")
+    return user_token
+
+
+async def _with_user_token_retry(call):
+    user_token = await _ensure_user_token()
+    try:
+        return await call(user_token)
+    except Exception as exc:
+        if not _is_user_token_error(exc):
+            raise
+        logger.info("user_access_token expired/invalid, refreshing and retrying once")
+        await refresh_user_token()
+        refreshed = await _ensure_user_token()
+        return await call(refreshed)
 
 
 @router.get("/oauth/status", dependencies=[Depends(require_api_key)])
@@ -147,7 +192,8 @@ async def oauth_callback(
     app_id = get_feishu_app_id()
     app_secret = get_feishu_app_secret()
     base = _feishu_base()
-    frontend_origin = _consume_oauth_state(state)
+    frontend_origin, tenant_id = _consume_oauth_state(state)
+    set_task_context(tenant_id=tenant_id)
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -192,9 +238,9 @@ async def oauth_callback(
 
         # Step 3: 存入数据库
         for key, value in [
-            ("feishu_user_access_token", encrypted_access_token),
-            ("feishu_user_refresh_token", encrypted_refresh_token),
-            ("feishu_user_open_id", open_id),
+            (scoped_config_key(USER_ACCESS_TOKEN_KEY, tenant_id), encrypted_access_token),
+            (scoped_config_key(USER_REFRESH_TOKEN_KEY, tenant_id), encrypted_refresh_token),
+            (scoped_config_key(USER_OPEN_ID_KEY, tenant_id), open_id),
         ]:
             if not value:
                 continue
@@ -207,11 +253,10 @@ async def oauth_callback(
         await db.commit()
 
         # Step 4: 更新内存缓存
-        set_user_access_token(access_token)
-        set_user_refresh_token(refresh_token or None)
+        set_user_access_token(access_token, tenant_id=tenant_id)
+        set_user_refresh_token(refresh_token or None, tenant_id=tenant_id)
         if open_id:
-            from app.feishu.user_token import set_user_open_id
-            set_user_open_id(open_id)
+            set_user_open_id(open_id, tenant_id=tenant_id)
         logger.info(f"飞书用户 OAuth 授权成功，user_access_token 已保存 (open_id={open_id or '未知'})")
 
         return RedirectResponse(url=f"{frontend_origin}/settings?oauth=success")
@@ -225,25 +270,15 @@ async def oauth_callback(
 
 @router.get("/oauth/list-bases", dependencies=[Depends(require_api_key)])
 async def list_user_bases_endpoint(
-    folder_token: str | None = Query(None, description="可选：指定文件夹下的 base"),
+    folder_token: str | None = Query(None, description="optional folder token"),
 ):
-    """v8.6.16：列出当前 user_access_token 关联用户云空间下的所有多维表格。
-
-    前置：先走 OAuth 授权（GET /oauth/url + callback）让 user_access_token 入库。
-    返回 [{"app_token", "name", "url", "modified_time"}, ...]
-    """
-    user_token = get_user_access_token()
-    if not user_token:
-        try:
-            await refresh_user_token()
-            user_token = get_user_access_token()
-        except Exception as exc:
-            return {"ok": False, "message": f"无 user_access_token，请先走 OAuth 授权: {exc}"}
-        if not user_token:
-            return {"ok": False, "message": "无 user_access_token，请先走 OAuth 授权"}
     try:
         from app.feishu.base_picker import list_user_bases
-        bases = await list_user_bases(user_token, folder_token=folder_token)
+
+        async def _call(user_token: str):
+            return await list_user_bases(user_token, folder_token=folder_token)
+
+        bases = await _with_user_token_retry(_call)
         return {"ok": True, "count": len(bases), "bases": bases}
     except Exception as exc:
         logger.error("list_user_bases failed: %s", exc, exc_info=True)
@@ -251,32 +286,32 @@ async def list_user_bases_endpoint(
 
 
 @router.get("/oauth/list-tables", dependencies=[Depends(require_api_key)])
-async def list_tables_endpoint(app_token: str = Query(..., description="多维表格 app_token")):
-    """v8.6.16：列出指定 base 下的所有表。"""
-    user_token = get_user_access_token()
-    if not user_token:
-        return {"ok": False, "message": "无 user_access_token"}
+async def list_tables_endpoint(app_token: str = Query(..., description="bitable app_token")):
     try:
         from app.feishu.base_picker import list_tables, list_fields
-        tables = await list_tables(app_token, user_token)
-        # 顺手附带每张表的字段摘要（field_id / name / type / is_primary）
-        result = []
-        for t in tables:
-            fields = await list_fields(app_token, t["table_id"], user_token)
-            result.append({
-                "table_id": t["table_id"],
-                "name": t.get("name"),
-                "fields": [
-                    {
-                        "field_id": f.get("field_id"),
-                        "field_name": f.get("field_name"),
-                        "type": f.get("type"),
-                        "ui_type": f.get("ui_type"),
-                        "is_primary": bool(f.get("is_primary")),
-                    }
-                    for f in fields
-                ],
-            })
+
+        async def _call(user_token: str):
+            tables = await list_tables(app_token, user_token)
+            result = []
+            for t in tables:
+                fields = await list_fields(app_token, t["table_id"], user_token)
+                result.append({
+                    "table_id": t["table_id"],
+                    "name": t.get("name"),
+                    "fields": [
+                        {
+                            "field_id": f.get("field_id"),
+                            "field_name": f.get("field_name"),
+                            "type": f.get("type"),
+                            "ui_type": f.get("ui_type"),
+                            "is_primary": bool(f.get("is_primary")),
+                        }
+                        for f in fields
+                    ],
+                })
+            return result
+
+        result = await _with_user_token_retry(_call)
         return {"ok": True, "tables": result}
     except Exception as exc:
         logger.error("list_tables_endpoint failed: %s", exc, exc_info=True)
@@ -284,28 +319,14 @@ async def list_tables_endpoint(app_token: str = Query(..., description="多维�
 
 
 @router.post("/oauth/apply-view-config", dependencies=[Depends(require_api_key)])
-async def apply_view_config(app_token: str = Query(..., description="多维表格 app_token")):
-    """v8.6.15：用已存的 user_access_token 给 app_token 的所有看板/画册视图配
-    group_field / cover_field（飞书 OpenAPI tenant token 不开放此能力，必须 user
-    token 走前端身份）。
-
-    前置条件：先走 /oauth/url 拿授权链接 → 用户授权 → callback 存 token。
-    然后调本端点：POST /oauth/apply-view-config?app_token=xxx
-    """
-    user_token = get_user_access_token()
-    if not user_token:
-        # 尝试用 refresh_token 刷新一次
-        try:
-            await refresh_user_token()
-            user_token = get_user_access_token()
-        except Exception as exc:
-            return {"ok": False, "message": f"无 user_access_token，请先走 OAuth 授权: {exc}"}
-        if not user_token:
-            return {"ok": False, "message": "无 user_access_token，请先走 OAuth 授权"}
-
+async def apply_view_config(app_token: str = Query(..., description="bitable app_token")):
     try:
         from app.feishu.user_token_view_setup import configure_view_groups
-        result = await configure_view_groups(app_token, user_token)
+
+        async def _call(user_token: str):
+            return await configure_view_groups(app_token, user_token)
+
+        result = await _with_user_token_retry(_call)
         return {"ok": True, "applied": result["ok"], "failed": result["failed"]}
     except Exception as exc:
         logger.error("apply_view_config failed: %s", exc, exc_info=True)

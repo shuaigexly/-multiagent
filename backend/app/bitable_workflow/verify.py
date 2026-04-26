@@ -22,7 +22,37 @@ from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 async def _fetch(http: httpx.AsyncClient, url: str, token: str) -> dict:
     r = await http.get(url, headers={"Authorization": f"Bearer {token}"})
     r.raise_for_status()
-    return r.json()
+    data = r.json()
+    if data.get("code") not in (None, 0):
+        raise RuntimeError(f"Feishu API failed: code={data.get('code')} msg={data.get('msg')}")
+    return data
+
+
+async def _fetch_items(
+    http: httpx.AsyncClient,
+    url: str,
+    token: str,
+    *,
+    page_size: int = 100,
+) -> list[dict]:
+    items: list[dict] = []
+    page_token: str | None = None
+    while True:
+        params: dict[str, object] = {"page_size": page_size}
+        if page_token:
+            params["page_token"] = page_token
+        r = await http.get(url, headers={"Authorization": f"Bearer {token}"}, params=params)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code") not in (None, 0):
+            raise RuntimeError(f"Feishu API failed: code={data.get('code')} msg={data.get('msg')}")
+        payload = data.get("data") or {}
+        items.extend(payload.get("items") or [])
+        if not payload.get("has_more"):
+            return items
+        page_token = payload.get("page_token") or payload.get("next_page_token")
+        if not page_token:
+            raise RuntimeError("Feishu API returned has_more=true without page_token")
 
 
 async def audit_bitable(
@@ -41,8 +71,7 @@ async def audit_bitable(
     report: dict = {"tables": [], "global_issues": []}
 
     async with httpx.AsyncClient(timeout=30) as http:
-        data = await _fetch(http, f"{base}/open-apis/bitable/v1/apps/{app_token}/tables", token)
-        tables = data.get("data", {}).get("items") or []
+        tables = await _fetch_items(http, f"{base}/open-apis/bitable/v1/apps/{app_token}/tables", token)
 
         if expected_table_names:
             actual = {t["name"] for t in tables}
@@ -55,12 +84,11 @@ async def audit_bitable(
             tname = t["name"]
             tinfo: dict = {"name": tname, "id": tid, "issues": []}
 
-            ff = await _fetch(
+            fields = await _fetch_items(
                 http,
                 f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields",
                 token,
             )
-            fields = ff.get("data", {}).get("items") or []
             primary = [f for f in fields if f.get("is_primary")]
             if len(primary) != 1:
                 tinfo["issues"].append(f"is_primary 字段数={len(primary)}（期望 1）")
@@ -81,12 +109,11 @@ async def audit_bitable(
                 for f in fields
             ]
 
-            vv = await _fetch(
+            views_raw = await _fetch_items(
                 http,
                 f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views",
                 token,
             )
-            views_raw = vv.get("data", {}).get("items") or []
             views = []
             id_to_name = {f.get("field_id"): f.get("field_name") for f in fields}
             for v in views_raw:
@@ -114,12 +141,12 @@ async def audit_bitable(
                 })
             tinfo["views"] = views
 
-            rr = await _fetch(
+            records = await _fetch_items(
                 http,
-                f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/records?page_size=50",
+                f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/records",
                 token,
+                page_size=50,
             )
-            records = (rr.get("data") or {}).get("items") or []
             tinfo["records_count"] = len(records)
 
             primary_field_name = primary[0].get("field_name") if primary else None

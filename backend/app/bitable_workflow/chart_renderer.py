@@ -58,6 +58,7 @@ def render_chart_to_png(chart_data: list[dict], title: str = "") -> Optional[byt
     """
     if not chart_data or not isinstance(chart_data, list):
         return None
+    fig = None
     try:
         import matplotlib
         matplotlib.use("Agg")  # headless backend
@@ -156,12 +157,14 @@ def render_chart_to_png(chart_data: list[dict], title: str = "") -> Optional[byt
         fig.tight_layout()
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
-        plt.close(fig)
         buf.seek(0)
         return buf.read()
     except Exception as exc:
         logger.warning("chart render failed: %s", exc)
         return None
+    finally:
+        if fig is not None:
+            plt.close(fig)
 
 
 async def upload_chart_to_bitable(

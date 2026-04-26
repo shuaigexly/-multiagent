@@ -146,8 +146,22 @@ async def _get(key: str) -> int:
         return await _in_memory.get(key)
 
 
-async def record_usage(prompt_tokens: int, completion_tokens: int) -> int:
+async def record_usage(
+    prompt_tokens: int,
+    completion_tokens: int,
+    *,
+    reasoning_tokens: int = 0,
+) -> int:
     """记录一次 LLM 调用消耗，返回当前任务累计。
+
+    v8.6.18：reasoning_tokens 单独记账。火山方舟豆包等 reasoning model 在
+    completion_tokens_details.reasoning_tokens 里返回，之前 record_usage 接口
+    没暴露这个维度 → 计费时分不清"输出"和"推理"成本（推理 tokens 通常按
+    completion 单价的 1-3 倍计费）。新增可观测性维度：
+      - 任务级 reasoning 累计 key
+      - 租户级日 reasoning 累计 key
+      - 全局日 reasoning 累计 key
+    向后兼容：reasoning_tokens 默认 0，老 caller 无需改动。
 
     自动从 ContextVar 读取 task_id / tenant_id，并写入：
       - 任务级累计（key TTL 24h）
@@ -164,9 +178,14 @@ async def record_usage(prompt_tokens: int, completion_tokens: int) -> int:
 
     if task_id:
         task_total = await _incr(_key_task(task_id), total, ttl_seconds=24 * 3600)
+        if reasoning_tokens > 0:
+            await _incr(_key_task(task_id) + ":reasoning", reasoning_tokens, ttl_seconds=24 * 3600)
 
     await _incr(_key_daily("tenant", tenant_id), total, ttl_seconds=36 * 3600)
     await _incr(_key_daily("global", "all"), total, ttl_seconds=36 * 3600)
+    if reasoning_tokens > 0:
+        await _incr(_key_daily("tenant", tenant_id) + ":reasoning", reasoning_tokens, ttl_seconds=36 * 3600)
+        await _incr(_key_daily("global", "all") + ":reasoning", reasoning_tokens, ttl_seconds=36 * 3600)
 
     return task_total
 

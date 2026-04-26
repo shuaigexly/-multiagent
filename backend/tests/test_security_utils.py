@@ -29,6 +29,33 @@ def test_public_url_validation_rejects_private_targets():
         validate_public_http_url("http://localhost:8000/admin")
 
 
+def test_public_url_validation_requires_allowlist_in_production(monkeypatch):
+    from app.core.url_safety import UnsafeURL, validate_public_http_url
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("PUBLIC_FETCH_ALLOWED_HOSTS", raising=False)
+    monkeypatch.delenv("FETCH_URL_ALLOWED_HOSTS", raising=False)
+
+    with pytest.raises(UnsafeURL, match="PUBLIC_FETCH_ALLOWED_HOSTS"):
+        validate_public_http_url("https://example.com/report")
+
+
+def test_public_url_validation_allows_matching_allowlist(monkeypatch):
+    from app.core import url_safety
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PUBLIC_FETCH_ALLOWED_HOSTS", "*.example.com")
+    monkeypatch.setattr(
+        url_safety.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
+    )
+
+    assert url_safety.validate_public_http_url("https://assets.example.com/report") == (
+        "https://assets.example.com/report"
+    )
+
+
 @pytest.mark.asyncio
 async def test_fetch_url_tool_rejects_private_targets():
     import importlib
@@ -75,6 +102,81 @@ async def test_python_calc_blocks_large_repetition():
 
     assert result.startswith("ERROR:")
     assert "unsafe expression" in result
+
+
+@pytest.mark.asyncio
+async def test_python_calc_blocks_nested_large_repetition():
+    import importlib
+
+    from app.agents import builtin_tools
+    from app.agents.tools import dispatch_tool, reset_registry
+
+    reset_registry()
+    importlib.reload(builtin_tools)
+
+    result = await dispatch_tool("python_calc", {"expression": "[0] * 10000 * 10000"})
+
+    assert result.startswith("ERROR:")
+    assert "unsafe expression" in result
+
+
+@pytest.mark.asyncio
+async def test_vision_rejects_oversized_inline_image_before_client(monkeypatch):
+    from app.core import vision
+
+    monkeypatch.setenv("LLM_VISION_MODEL", "vision-model")
+    monkeypatch.setattr(vision, "check_budget", AsyncMock())
+
+    image = "data:image/png;base64," + ("A" * (7 * 1024 * 1024))
+
+    assert await vision.analyze_image(image) is None
+
+
+def test_user_tokens_are_scoped_by_tenant():
+    from app.core.observability import clear_task_context, set_task_context
+    from app.feishu import user_token
+
+    clear_task_context(tenant_id=True)
+    user_token._user_access_tokens.clear()
+    set_task_context(tenant_id="tenant-a")
+    user_token.set_user_access_token("token-a")
+    set_task_context(tenant_id="tenant-b")
+    user_token.set_user_access_token("token-b")
+
+    assert user_token.get_user_access_token() == "token-b"
+    set_task_context(tenant_id="tenant-a")
+    assert user_token.get_user_access_token() == "token-a"
+
+    clear_task_context(tenant_id=True)
+    user_token._user_access_tokens.clear()
+
+
+@pytest.mark.asyncio
+async def test_oauth_user_token_retry_refreshes_once(monkeypatch):
+    from app.api import feishu_oauth
+    from app.core.observability import clear_task_context
+    from app.feishu import user_token
+
+    clear_task_context(tenant_id=True)
+    user_token._user_access_tokens.clear()
+    user_token.set_user_access_token("old-token", tenant_id="default")
+
+    async def fake_refresh():
+        user_token.set_user_access_token("new-token", tenant_id="default")
+
+    calls = []
+
+    async def flaky_call(token: str):
+        calls.append(token)
+        if token == "old-token":
+            raise RuntimeError("Feishu API failed: code=99991668 token expired")
+        return "ok"
+
+    monkeypatch.setattr(feishu_oauth, "refresh_user_token", fake_refresh)
+
+    assert await feishu_oauth._with_user_token_retry(flaky_call) == "ok"
+    assert calls == ["old-token", "new-token"]
+    user_token._user_access_tokens.clear()
 
 
 def test_memory_prompt_block_sanitizes_persistent_injection():

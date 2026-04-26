@@ -26,6 +26,7 @@ from app.core.settings import get_llm_api_key, get_llm_base_url
 from app.core.url_safety import UnsafeURL, fetch_public_url_bytes, validate_public_http_url
 
 logger = logging.getLogger(__name__)
+_MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
 
 
 _DEFAULT_VISION_PROMPT = (
@@ -52,6 +53,12 @@ def _api_key() -> str:
 
 def _is_url(text: str) -> bool:
     return text.startswith(("http://", "https://"))
+
+
+def _base64_decoded_size(payload: str) -> int:
+    compact = "".join(payload.split())
+    padding = compact.count("=")
+    return max(0, (len(compact) * 3) // 4 - padding)
 
 
 async def _fetch_as_base64(url: str) -> Optional[str]:
@@ -107,11 +114,22 @@ async def analyze_image(
             logger.warning("vision: unsafe image url rejected: %s", exc)
             return None
     elif image.startswith("data:image"):
+        if "," not in image:
+            logger.warning("vision: malformed data URI rejected")
+            return None
+        b64_payload = image.split(",", 1)[1]
+        if _base64_decoded_size(b64_payload) > _MAX_INLINE_IMAGE_BYTES:
+            logger.warning("vision: inline image too large, rejected")
+            return None
         image_url_block = {"url": image}
     else:
         # 假设是裸 base64
+        if _base64_decoded_size(image) > _MAX_INLINE_IMAGE_BYTES:
+            logger.warning("vision: inline image too large, rejected")
+            return None
         image_url_block = {"url": f"data:image/png;base64,{image}"}
 
+    client = None
     try:
         from openai import AsyncOpenAI
 
@@ -136,6 +154,12 @@ async def analyze_image(
     except Exception as exc:
         logger.warning("vision call failed: %s", exc)
         return None
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception as exc:
+                logger.debug("vision client close failed: %s", exc)
 
     usage = getattr(resp, "usage", None)
     if usage is not None:

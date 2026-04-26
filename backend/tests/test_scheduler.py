@@ -1,4 +1,6 @@
 """测试调度器核心逻辑（scheduler.py）"""
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock, call
 
@@ -98,6 +100,43 @@ class TestRunOneCycle:
             from app.bitable_workflow.scheduler import run_one_cycle
             result = await run_one_cycle("app_token", TABLE_IDS)
         assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_lock_renewal_failure_aborts_running_cycle(self, monkeypatch):
+        from app.bitable_workflow import scheduler
+
+        released = False
+        cancelled = False
+
+        async def fake_acquire(_app_token, _task_tid):
+            return object(), "owner"
+
+        async def fake_release(_client, _owner, _app_token, _task_tid):
+            nonlocal released
+            released = True
+
+        async def fake_renew(_client, _owner, _app_token, _task_tid):
+            await asyncio.sleep(0)
+            raise RuntimeError("lost lock")
+
+        async def fake_run(_app_token, _table_ids):
+            nonlocal cancelled
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+        monkeypatch.setattr(scheduler, "_acquire_cycle_lock", fake_acquire)
+        monkeypatch.setattr(scheduler, "_release_cycle_lock", fake_release)
+        monkeypatch.setattr(scheduler, "_renew_cycle_lock", fake_renew)
+        monkeypatch.setattr(scheduler, "_run_one_cycle_locked", fake_run)
+
+        with pytest.raises(RuntimeError, match="renewal failed"):
+            await scheduler.run_one_cycle("app_token", TABLE_IDS)
+
+        assert cancelled is True
+        assert released is True
 
     @pytest.mark.asyncio
     async def test_stuck_analyzing_records_reset(self):

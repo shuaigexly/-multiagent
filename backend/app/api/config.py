@@ -242,6 +242,7 @@ async def test_llm(body: LLMTestRequest):
     if not model:
         return {"ok": False, "message": "缺少 LLM Model"}
 
+    client = None
     try:
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         response = await client.chat.completions.create(
@@ -256,6 +257,12 @@ async def test_llm(body: LLMTestRequest):
         return {"ok": True, "message": "连接成功"}
     except Exception as exc:
         return {"ok": False, "message": str(exc)}
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
 
 
 @router.post("/test-feishu", dependencies=[Depends(require_api_key)])

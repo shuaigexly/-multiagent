@@ -41,6 +41,38 @@ def _safe_json(resp: httpx.Response) -> dict:
         }
 
 
+def _next_page_token(data: dict) -> str | None:
+    return data.get("page_token") or data.get("next_page_token")
+
+
+async def _paged_items(
+    h: httpx.AsyncClient,
+    url: str,
+    auth: dict[str, str],
+    *,
+    item_key: str = "items",
+    page_size: int = 100,
+) -> list[dict]:
+    items: list[dict] = []
+    page_token: str | None = None
+    while True:
+        params: dict[str, object] = {"page_size": page_size}
+        if page_token:
+            params["page_token"] = page_token
+        r = await h.get(url, headers=auth, params=params)
+        body = _safe_json(r)
+        if r.status_code != 200 or body.get("code") != 0:
+            raise RuntimeError(f"paged request failed: code={body.get('code')} msg={body.get('msg')}")
+        data = body.get("data") or {}
+        items.extend(data.get(item_key) or [])
+        if not data.get("has_more"):
+            break
+        page_token = _next_page_token(data)
+        if not page_token:
+            raise RuntimeError("paged request failed: has_more=true but page_token missing")
+    return items
+
+
 async def list_user_bases(
     user_access_token: str,
     folder_token: Optional[str] = None,
@@ -82,9 +114,9 @@ async def list_user_bases(
                 })
             if not data.get("has_more"):
                 break
-            page_token = data.get("next_page_token")
+            page_token = _next_page_token(data)
             if not page_token:
-                break
+                raise RuntimeError("list files failed: has_more=true but page_token missing")
     return bases
 
 
@@ -93,11 +125,11 @@ async def list_tables(app_token: str, user_access_token: str) -> list[dict]:
     base = get_feishu_open_base_url()
     auth = {"Authorization": f"Bearer {user_access_token}"}
     async with httpx.AsyncClient(timeout=15) as h:
-        r = await h.get(f"{base}/open-apis/bitable/v1/apps/{app_token}/tables", headers=auth)
-        body = _safe_json(r)
-        if r.status_code != 200 or body.get("code") != 0:
-            raise RuntimeError(f"list tables failed: code={body.get('code')} msg={body.get('msg')}")
-        return body.get("data", {}).get("items") or []
+        return await _paged_items(
+            h,
+            f"{base}/open-apis/bitable/v1/apps/{app_token}/tables",
+            auth,
+        )
 
 
 async def list_fields(app_token: str, table_id: str, user_access_token: str) -> list[dict]:
@@ -105,14 +137,11 @@ async def list_fields(app_token: str, table_id: str, user_access_token: str) -> 
     base = get_feishu_open_base_url()
     auth = {"Authorization": f"Bearer {user_access_token}"}
     async with httpx.AsyncClient(timeout=15) as h:
-        r = await h.get(
+        return await _paged_items(
+            h,
             f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
-            headers=auth,
+            auth,
         )
-        body = _safe_json(r)
-        if r.status_code != 200 or body.get("code") != 0:
-            raise RuntimeError(f"list fields failed: code={body.get('code')} msg={body.get('msg')}")
-        return body.get("data", {}).get("items") or []
 
 
 async def pick_base_interactive(user_access_token: str) -> dict:

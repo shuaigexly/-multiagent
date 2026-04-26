@@ -30,6 +30,26 @@ _PLAN_PROMPT = (
 )
 
 
+def _escape_xml(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _safe_prompt_fragment(value: object, *, source: str, max_chars: int) -> str:
+    text = truncate_with_marker(value, max_chars)
+    try:
+        from app.core.prompt_guard import sanitize
+
+        text = sanitize(text, source=source).text
+    except Exception:
+        pass
+    return _escape_xml(text)
+
+
 _EXECUTE_PROMPT = (
     "现在你正在执行子问题 #{idx}/{total}：\n"
     "<sub_question>\n{step}\n</sub_question>\n"
@@ -121,11 +141,15 @@ async def run_plan_execute(
     # 会让 .format() 抛 KeyError。这与 base_agent.USER_PROMPT_TEMPLATE 已采用的同一防护。
     plan_prompt = (
         _PLAN_PROMPT
-        .replace("{task}", task_description[:1500])
-        .replace("{upstream_block}", upstream_block[:3000] if upstream_block else "<no_upstream/>")
+        .replace("{task}", _safe_prompt_fragment(task_description, source="plan_execute.task", max_chars=1500))
+        .replace(
+            "{upstream_block}",
+            _safe_prompt_fragment(upstream_block, source="plan_execute.upstream", max_chars=3000)
+            if upstream_block else "<no_upstream/>",
+        )
     )
     if memory_block:
-        plan_prompt = memory_block + "\n\n" + plan_prompt
+        plan_prompt = _safe_prompt_fragment(memory_block, source="plan_execute.memory", max_chars=3000) + "\n\n" + plan_prompt
     plan_raw = await call_llm(
         system_prompt="你是一位严格的任务分解师。只输出合法 JSON 数组。",
         user_prompt=plan_prompt,
@@ -169,10 +193,14 @@ async def run_plan_execute(
             _EXECUTE_PROMPT
             .replace("{idx}", str(idx))
             .replace("{total}", str(len(plan)))
-            .replace("{step}", str(step.get("step", ""))[:300])
-            .replace("{why}", str(step.get("why", ""))[:200])
-            .replace("{task}", task_description[:1000])
-            .replace("{upstream_block}", upstream_block[:2000] if upstream_block else "<no_upstream/>")
+            .replace("{step}", _safe_prompt_fragment(step.get("step", ""), source="plan_execute.step", max_chars=300))
+            .replace("{why}", _safe_prompt_fragment(step.get("why", ""), source="plan_execute.why", max_chars=200))
+            .replace("{task}", _safe_prompt_fragment(task_description, source="plan_execute.task", max_chars=1000))
+            .replace(
+                "{upstream_block}",
+                _safe_prompt_fragment(upstream_block, source="plan_execute.upstream", max_chars=2000)
+                if upstream_block else "<no_upstream/>",
+            )
         )
         try:
             ans = await call_llm(
@@ -194,10 +222,13 @@ async def run_plan_execute(
     # ------ Phase 3: Synthesize ------
     synth_prompt = (
         _SYNTHESIZE_PROMPT
-        .replace("{task}", task_description[:1000])
-        .replace("{sub_answers}", truncate_with_marker("\n\n".join(sub_answers), 8000))
+        .replace("{task}", _safe_prompt_fragment(task_description, source="plan_execute.task", max_chars=1000))
+        .replace(
+            "{sub_answers}",
+            _safe_prompt_fragment("\n\n".join(sub_answers), source="plan_execute.sub_answers", max_chars=8000),
+        )
     )
     if memory_block:
-        synth_prompt = memory_block + "\n\n" + synth_prompt
+        synth_prompt = _safe_prompt_fragment(memory_block, source="plan_execute.memory", max_chars=3000) + "\n\n" + synth_prompt
     final_raw = await agent._call_llm(synth_prompt, force_tier="deep")
     return final_raw

@@ -300,10 +300,13 @@ async def delete_task(
             raise HTTPException(400, f"任务状态 {current_status} 无法取消")
         return {"status": "cancelled"}
 
-    task_row = await db.execute(select(Task.id, Task.input_file).where(Task.id == task_id))
+    task_row = await db.execute(select(Task.id, Task.input_file, Task.status).where(Task.id == task_id))
     task_data = task_row.first()
     if task_data is None:
         raise HTTPException(404, "任务不存在")
+
+    if task_data.status in {"pending", "running"}:
+        raise HTTPException(409, "task is active; cancel it before deleting")
 
     input_file_path = task_data.input_file
 

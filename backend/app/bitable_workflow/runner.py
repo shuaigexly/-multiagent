@@ -34,28 +34,63 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     result = await create_bitable(name)
     app_token = result["app_token"]
 
-    task_tid = await create_table(app_token, schema.TABLE_TASK, schema.TASK_FIELDS)
-    # 岗位分析表和综合报告表通过关联字段（type=18）与分析任务表建立表间关系
-    output_tid = await create_table(app_token, schema.TABLE_AGENT_OUTPUT, agent_output_fields(task_tid))
-    report_tid = await create_table(app_token, schema.TABLE_REPORT, report_fields(task_tid))
-    performance_tid = await create_table(app_token, schema.TABLE_PERFORMANCE, schema.PERFORMANCE_FIELDS)
-    # v8.6.16 — 第 5 张表「📚 数据源库」：每行一个数据集，分析任务通过名称引用
-    datasource_tid = await create_table(app_token, schema.TABLE_DATASOURCE, schema.DATASOURCE_FIELDS)
+    # v8.6.18 — setup 中途任意步骤失败 → 自动 DELETE 整个 base 回滚（避免污染云空间）
+    # codex 实测发现注入 _create_extra_views 抛错后会留下 6 张表 + 飞书自动「数据表」
+    # 残留。这里把 create_bitable 之后的所有逻辑包在 try/except，失败时自动调
+    # DELETE /drive/v1/files/{app_token}?type=bitable 把整个 base 删掉，确保
+    # 上层调用方要么拿到完整可用的 base，要么什么都没有。
+    try:
+        task_tid = await create_table(app_token, schema.TABLE_TASK, schema.TASK_FIELDS)
+        # 岗位分析表和综合报告表通过关联字段（type=18）与分析任务表建立表间关系
+        output_tid = await create_table(app_token, schema.TABLE_AGENT_OUTPUT, agent_output_fields(task_tid))
+        report_tid = await create_table(app_token, schema.TABLE_REPORT, report_fields(task_tid))
+        performance_tid = await create_table(app_token, schema.TABLE_PERFORMANCE, schema.PERFORMANCE_FIELDS)
+        # v8.6.16 — 第 5 张表「📚 数据源库」：每行一个数据集，分析任务通过名称引用
+        datasource_tid = await create_table(app_token, schema.TABLE_DATASOURCE, schema.DATASOURCE_FIELDS)
 
-    # 为每张表创建附加视图（看板/画册）以提升可视化效果
-    # 每张表的第一个视图是默认网格视图（创建表时自动生成），这里追加额外视图
-    await _create_extra_views(app_token, task_tid, output_tid, report_tid, performance_tid)
+        # 为每张表创建附加视图（看板/画册）以提升可视化效果
+        # 每张表的第一个视图是默认网格视图（创建表时自动生成），这里追加额外视图
+        await _create_extra_views(app_token, task_tid, output_tid, report_tid, performance_tid)
 
-    # v8.6.2 修复：飞书新建多维表格 App 时会自动创建一张「数据表」作为默认表，
-    # 用户打开 base URL 默认进的就是这张空表 → 看到一片空白以为整个 Bitable 没数据。
-    # 同时各业务表里也会保留默认主字段「多行文本」（rename 没生效或 Feishu API 行为变化），
-    # 看起来像一列空数据。统一在 setup 末尾把这些清理掉。
-    await _cleanup_auto_created_artifacts(
-        app_token,
-        keep_table_ids={task_tid, output_tid, report_tid, performance_tid, datasource_tid},
-    )
+        # v8.6.2 修复：飞书新建多维表格 App 时会自动创建一张「数据表」作为默认表，
+        # 用户打开 base URL 默认进的就是这张空表 → 看到一片空白以为整个 Bitable 没数据。
+        # 同时各业务表里也会保留默认主字段「多行文本」（rename 没生效或 Feishu API 行为变化），
+        # 看起来像一列空数据。统一在 setup 末尾把这些清理掉。
+        await _cleanup_auto_created_artifacts(
+            app_token,
+            keep_table_ids={task_tid, output_tid, report_tid, performance_tid, datasource_tid},
+        )
+    except Exception as setup_exc:
+        logger.error("setup_workflow failed mid-way, rolling back base %s: %s", app_token, setup_exc)
+        await _delete_base_best_effort(app_token)
+        raise
 
-    # v8.6.16 — 写入数据源表（B 方案）：把 7 张 CSV 拆出来作为可复用数据集
+    # v8.6.18 — 数据写入也要补偿：如果 SEED/数据源写入中途挂了，DELETE 整个 base
+    try:
+        await _populate_base_records(
+            app_token, task_tid, datasource_tid,
+        )
+    except Exception as populate_exc:
+        logger.error("populate base records failed, rolling back %s: %s", app_token, populate_exc)
+        await _delete_base_best_effort(app_token)
+        raise
+
+    logger.info("Workflow setup complete: app_token=%s url=%s", app_token, result["url"])
+    return {
+        "app_token": app_token,
+        "url": result["url"],
+        "table_ids": {
+            "task": task_tid,
+            "output": output_tid,
+            "report": report_tid,
+            "performance": performance_tid,
+            "datasource": datasource_tid,
+        },
+    }
+
+
+async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: str) -> None:
+    """v8.6.18：把数据源表 + 引导 + SEED 任务写入抽出来，便于 setup_workflow 包补偿。"""
     from app.bitable_workflow.demo_data import DATASETS, csv_to_markdown
     for ds_name, ds_type, field_doc, csv_text in DATASETS:
         n_rows = max(0, len([ln for ln in csv_text.strip().splitlines() if ln.strip()]) - 1)
@@ -100,14 +135,14 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
         },
     )
 
-    # v8.6.16 — 数据源字段同时存「人看的 markdown 表格」+「机器解析的原始 CSV」。
+    # v8.6.18 — 数据源字段同时存「人看的 markdown 表格」+「机器解析的原始 CSV」。
     # 飞书 PC/Web 客户端 text 字段会把 markdown 表格渲染成可视化表格，
     # CSV 留在最末段供 agent 的 data_parser 识别。
+    # 围栏带 csv 语言标记（codex 验收 Top 5 #5），workflow_agents 正则 (?:csv)? 兼容。
     for title, dimension, background, data_source in schema.SEED_TASKS:
-        from app.bitable_workflow.demo_data import csv_to_markdown
         rendered = (
             f"{csv_to_markdown(data_source)}\n\n"
-            f"---\n_原始 CSV（agent 解析用，请勿编辑下方原始数据格式）：_\n```\n"
+            f"---\n_原始 CSV（agent 解析用，请勿编辑下方原始数据格式）：_\n```csv\n"
             f"{data_source}\n```"
         )
         await bitable_ops.create_record(
@@ -124,18 +159,34 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
             },
         )
 
-    logger.info("Workflow setup complete: app_token=%s url=%s", app_token, result["url"])
-    return {
-        "app_token": app_token,
-        "url": result["url"],
-        "table_ids": {
-            "task": task_tid,
-            "output": output_tid,
-            "report": report_tid,
-            "performance": performance_tid,
-            "datasource": datasource_tid,
-        },
-    }
+
+async def _delete_base_best_effort(app_token: str) -> None:
+    """v8.6.18：setup_workflow 中途失败时调 DELETE /drive/v1/files 删除整个 base。
+    任何失败仅 warn，不抛（已经在 except 里）。"""
+    import httpx
+    from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
+    try:
+        base = get_feishu_open_base_url()
+        token = await get_tenant_access_token()
+        async with httpx.AsyncClient(timeout=15) as h:
+            r = await h.delete(
+                f"{base}/open-apis/drive/v1/files/{app_token}",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"type": "bitable"},
+            )
+            try:
+                body = r.json()
+            except Exception:
+                body = {"raw": r.text[:200]}
+            if r.status_code >= 400 or body.get("code", 0) != 0:
+                logger.warning(
+                    "rollback DELETE base failed: status=%s code=%s msg=%s",
+                    r.status_code, body.get("code"), body.get("msg"),
+                )
+            else:
+                logger.info("rollback: DELETE base %s success", app_token)
+    except Exception as exc:
+        logger.warning("rollback DELETE base raised: %s", exc)
 
 
 async def _cleanup_auto_created_artifacts(app_token: str, keep_table_ids: set[str]) -> None:

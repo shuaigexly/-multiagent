@@ -66,6 +66,21 @@ def set_task_context(
         _tenant_id.set(tenant_id)
 
 
+def clear_task_context(
+    *,
+    task_id: bool = False,
+    agent_id: bool = False,
+    tenant_id: bool = False,
+) -> None:
+    """Clear selected ContextVar fields in the current asyncio context."""
+    if task_id:
+        _task_id.set(None)
+    if agent_id:
+        _agent_id.set(None)
+    if tenant_id:
+        _tenant_id.set(None)
+
+
 @asynccontextmanager
 async def correlation_scope(correlation_id: str | None = None) -> AsyncIterator[str]:
     """绑定 correlation_id 到当前 asyncio context；离开 scope 自动清除。

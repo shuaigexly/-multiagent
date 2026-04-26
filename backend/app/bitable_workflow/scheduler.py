@@ -27,7 +27,7 @@ from app.bitable_workflow.workflow_agents import (
     write_ceo_report,
 )
 from app.agents.base_agent import AgentResult
-from app.core.observability import set_task_context
+from app.core.observability import clear_task_context, set_task_context
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -321,9 +321,32 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
         renew_task = asyncio.create_task(
             _renew_cycle_lock(lock_client, lock_owner, app_token, task_tid)
         )
+    cycle_task: asyncio.Task | None = None
     try:
-        return await _run_one_cycle_locked(app_token, table_ids)
+        cycle_task = asyncio.create_task(_run_one_cycle_locked(app_token, table_ids))
+        if renew_task is None:
+            return await cycle_task
+        done, _pending = await asyncio.wait(
+            {cycle_task, renew_task},
+            return_when=asyncio.FIRST_EXCEPTION,
+        )
+        if renew_task in done:
+            renew_exc = renew_task.exception()
+            if renew_exc is not None:
+                cycle_task.cancel()
+                try:
+                    await cycle_task
+                except asyncio.CancelledError:
+                    pass
+                raise RuntimeError("Workflow lock renewal failed; cycle aborted") from renew_exc
+        return await cycle_task
     finally:
+        if cycle_task is not None and not cycle_task.done():
+            cycle_task.cancel()
+            try:
+                await cycle_task
+            except asyncio.CancelledError:
+                pass
         if renew_task is not None:
             renew_task.cancel()
             try:
@@ -435,6 +458,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             except Exception as upd_exc:
                 logger.debug("dep wait stage update failed: %s", upd_exc)
             logger.info("Task [%s] blocked by deps: %s", task_title, unmet_deps)
+            clear_task_context(task_id=True, agent_id=True)
             continue
 
         try:
@@ -582,5 +606,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                 )
             except Exception:
                 pass
+        finally:
+            clear_task_context(task_id=True, agent_id=True)
 
     return processed

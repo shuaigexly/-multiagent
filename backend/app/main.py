@@ -111,27 +111,43 @@ async def _recover_interrupted_tasks():
 
 
 async def _load_runtime_config():
-    from app.feishu.user_token import set_user_access_token, set_user_open_id, set_user_refresh_token
+    from app.feishu.user_token import (
+        USER_ACCESS_TOKEN_KEY,
+        USER_OPEN_ID_KEY,
+        USER_REFRESH_TOKEN_KEY,
+        set_user_access_token,
+        set_user_open_id,
+        set_user_refresh_token,
+        tenant_from_config_key,
+    )
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(UserConfig))
         rows = {row.key: row.value for row in result.scalars().all()}
         apply_db_config(rows)
-        # 启动时恢复用户 OAuth token
-        if user_token := rows.get("feishu_user_access_token"):
+        for key, user_token in rows.items():
+            tenant_id = tenant_from_config_key(key, USER_ACCESS_TOKEN_KEY)
+            if tenant_id is None or not user_token:
+                continue
             try:
-                set_user_access_token(decrypt_token(user_token))
-                logger.info("已从数据库恢复飞书用户 OAuth token")
+                set_user_access_token(decrypt_token(user_token), tenant_id=tenant_id)
+                logger.info("loaded Feishu user OAuth token tenant=%s", tenant_id)
             except RuntimeError as exc:
-                logger.warning("飞书用户 OAuth token 未加载: %s", exc)
-        if refresh_token := rows.get("feishu_user_refresh_token"):
+                logger.warning("Feishu user OAuth token not loaded tenant=%s: %s", tenant_id, exc)
+        for key, refresh_token in rows.items():
+            tenant_id = tenant_from_config_key(key, USER_REFRESH_TOKEN_KEY)
+            if tenant_id is None or not refresh_token:
+                continue
             try:
-                set_user_refresh_token(decrypt_token(refresh_token))
-                logger.info("已从数据库恢复飞书用户 refresh token")
+                set_user_refresh_token(decrypt_token(refresh_token), tenant_id=tenant_id)
+                logger.info("loaded Feishu user refresh token tenant=%s", tenant_id)
             except RuntimeError as exc:
-                logger.warning("飞书用户 refresh token 未加载: %s", exc)
-        if open_id := rows.get("feishu_user_open_id"):
-            set_user_open_id(open_id)
-            logger.info(f"已从数据库恢复飞书用户 open_id: {open_id}")
+                logger.warning("Feishu refresh token not loaded tenant=%s: %s", tenant_id, exc)
+        for key, open_id in rows.items():
+            tenant_id = tenant_from_config_key(key, USER_OPEN_ID_KEY)
+            if tenant_id is None or not open_id:
+                continue
+            set_user_open_id(open_id, tenant_id=tenant_id)
+            logger.info("loaded Feishu user open_id tenant=%s", tenant_id)
     reset_feishu_client()
 
 
@@ -144,7 +160,7 @@ app = FastAPI(
 
 
 def _load_allowed_origins() -> list[str]:
-    raw = os.getenv("ALLOWED_ORIGINS", "")
+    raw = os.getenv("ALLOWED_ORIGINS") or settings.allowed_origins
     env = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
     if not raw and env in {"prod", "production"}:
         raise RuntimeError("ALLOWED_ORIGINS must be configured in production")

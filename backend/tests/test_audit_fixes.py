@@ -1,5 +1,9 @@
 """审计修复回归测试 — 锁定 v7.6 → v7.7 的 7 个真实 bug。"""
 import pytest
+from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from types import ModuleType
+import sys
 
 from app.bitable_workflow.scheduler import _normalize_task_number, _unmet_dependencies
 
@@ -157,3 +161,55 @@ def test_safe_prompt_text_short_strings_not_overprocessed():
 
     out = _safe_prompt_text("张三 2026-04-25", max_chars=80)
     assert out == "张三 2026-04-25"
+
+
+@pytest.mark.asyncio
+async def test_workflow_seed_does_not_write_auto_created_time(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_create_record(_app_token, _table_id, fields):
+        captured.update(fields)
+        return "rec_1"
+
+    monkeypatch.setattr(workflow.bitable_ops, "create_record", fake_create_record)
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+
+    req = workflow.SeedRequest(app_token="app", table_id="tbl", title="task")
+
+    result = await workflow.workflow_seed(req)
+
+    assert result == {"record_id": "rec_1"}
+    assert len(captured) == 4
+
+
+@pytest.mark.asyncio
+async def test_delete_task_rejects_running_task_before_hard_delete():
+    from fastapi import HTTPException
+    from app.api import tasks
+
+    class FakeResult:
+        def first(self):
+            return SimpleNamespace(id="task-1", input_file=None, status="running")
+
+    class FakeDB:
+        def __init__(self):
+            self.execute_count = 0
+
+        async def execute(self, _stmt):
+            self.execute_count += 1
+            return FakeResult()
+
+    db = FakeDB()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await tasks.delete_task("task-1", action=None, db=db)
+
+    assert exc_info.value.status_code == 409
+    assert db.execute_count == 1

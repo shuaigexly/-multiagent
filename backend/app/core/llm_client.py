@@ -88,46 +88,60 @@ async def _call_openai_compatible(
         api_key=api_key or get_llm_api_key(),
         base_url=base_url or get_llm_base_url(),
     )
-    use_model = model or get_llm_model()
-    last_err: Exception | None = None
-    for attempt in range(3):
-        try:
-            async with _get_llm_semaphore():
-                resp = await client.chat.completions.create(
-                    model=use_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            content = (resp.choices[0].message.content or "").strip()
-            if not content:
-                raise RuntimeError("LLM returned empty content")
-            # 记账：把本次调用 token 消耗写入 budget tracker
+    try:
+        use_model = model or get_llm_model()
+        last_err: Exception | None = None
+        for attempt in range(3):
             try:
-                usage = getattr(resp, "usage", None)
-                if usage is not None:
-                    await record_usage(
-                        prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-                        completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                async with _get_llm_semaphore():
+                    resp = await client.chat.completions.create(
+                        model=use_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
                     )
-            except Exception as record_exc:
-                logger.debug("Budget record_usage failed (non-fatal): %s", record_exc)
-            return content
+                content = (resp.choices[0].message.content or "").strip()
+                if not content:
+                    raise RuntimeError("LLM returned empty content")
+                # 记账：把本次调用 token 消耗写入 budget tracker
+                # v8.6.18：reasoning_tokens 单独记账（豆包/o1 类 reasoning model
+                # 在 completion_tokens_details.reasoning_tokens 返回，之前丢失了
+                # 这一维度。火山方舟单价对推理 tokens 通常和输出同价或更高）
+                try:
+                    usage = getattr(resp, "usage", None)
+                    if usage is not None:
+                        details = getattr(usage, "completion_tokens_details", None)
+                        reasoning = 0
+                        if details is not None:
+                            reasoning = int(getattr(details, "reasoning_tokens", 0) or 0)
+                        await record_usage(
+                            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                            reasoning_tokens=reasoning,
+                        )
+                except Exception as record_exc:
+                    logger.debug("Budget record_usage failed (non-fatal): %s", record_exc)
+                return content
+            except Exception as exc:
+                last_err = exc
+                if attempt < 2:
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "LLM call attempt %s failed: %s. Retrying in %ss...",
+                        attempt + 1,
+                        exc,
+                        wait,
+                    )
+                    await asyncio.sleep(wait)
+        raise RuntimeError(f"LLM call failed after 3 attempts: {last_err}") from last_err
+    finally:
+        try:
+            await client.close()
         except Exception as exc:
-            last_err = exc
-            if attempt < 2:
-                wait = 2 ** attempt
-                logger.warning(
-                    "LLM call attempt %s failed: %s. Retrying in %ss...",
-                    attempt + 1,
-                    exc,
-                    wait,
-                )
-                await asyncio.sleep(wait)
-    raise RuntimeError(f"LLM call failed after 3 attempts: {last_err}") from last_err
+            logger.debug("AsyncOpenAI close failed: %s", exc)
 
 
 async def _call_feishu_aily(system_prompt: str, user_prompt: str) -> str:
@@ -146,12 +160,7 @@ async def call_llm_streaming(
     on_token: Any = None,
     tier: str | None = None,
 ) -> str:
-    """流式 LLM 调用：每个 token 通过 on_token(chunk:str) 增量回调，最终返回完整内容。
-
-    on_token 可以是 sync 或 async 函数；返回值忽略。
-    用于把 LLM 思考实时推送到 SSE 频道，让前端"看到 agent 思考"。
-    feishu_aily 不支持流式 → 回退普通调用并触发一次性回调。
-    """
+    """Streaming LLM call with deterministic client cleanup."""
     provider = get_llm_provider().strip().lower()
     if provider == "feishu_aily":
         text = await call_llm(
@@ -169,7 +178,7 @@ async def call_llm_streaming(
     try:
         await check_budget(strict=True)
     except BudgetExceeded as exc:
-        logger.warning("Streaming LLM refused — budget exceeded: %s", exc)
+        logger.warning("Streaming LLM refused - budget exceeded: %s", exc)
         raise
 
     from openai import AsyncOpenAI
@@ -182,56 +191,60 @@ async def call_llm_streaming(
     prompt_tokens = 0
     completion_tokens = 0
 
-    async with _get_llm_semaphore():
-        stream = await client.chat.completions.create(
-            model=cfg.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-        # v8.0 修复 #30：流式中途断开（网络抖动）chunks 已累积内容必须保留，
-        # 否则用户看到不完整的"半句话"流然后整段返回空，体验比一次性返回更差。
-        try:
-            async for event in stream:
-                # usage 仅在最后一个 chunk 上出现（include_usage=True）
-                if getattr(event, "usage", None):
-                    prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
-                    completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
-                if not event.choices:
-                    continue
-                delta = event.choices[0].delta
-                piece = getattr(delta, "content", None)
-                if not piece:
-                    continue
-                chunks.append(piece)
-                if on_token:
-                    try:
-                        res = on_token(piece)
-                        if asyncio.iscoroutine(res):
-                            await res
-                    except Exception as cb_exc:
-                        logger.debug("on_token callback failed: %s", cb_exc)
-        except Exception as stream_exc:
-            partial = "".join(chunks).strip()
-            logger.warning(
-                "call_llm_streaming interrupted after %d chars: %s",
-                len(partial), stream_exc,
+    try:
+        async with _get_llm_semaphore():
+            stream = await client.chat.completions.create(
+                model=cfg.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+                stream_options={"include_usage": True},
             )
-            if not partial:
-                raise
+            try:
+                async for event in stream:
+                    if getattr(event, "usage", None):
+                        prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
+                        completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
+                    if not event.choices:
+                        continue
+                    delta = event.choices[0].delta
+                    piece = getattr(delta, "content", None)
+                    if not piece:
+                        continue
+                    chunks.append(piece)
+                    if on_token:
+                        try:
+                            res = on_token(piece)
+                            if asyncio.iscoroutine(res):
+                                await res
+                        except Exception as cb_exc:
+                            logger.debug("on_token callback failed: %s", cb_exc)
+            except Exception as stream_exc:
+                partial = "".join(chunks).strip()
+                logger.warning(
+                    "call_llm_streaming interrupted after %d chars: %s",
+                    len(partial),
+                    stream_exc,
+                )
+                if not partial:
+                    raise
 
-    if prompt_tokens or completion_tokens:
+        if prompt_tokens or completion_tokens:
+            try:
+                await record_usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+            except Exception as exc:
+                logger.debug("record_usage failed: %s", exc)
+
+        return "".join(chunks).strip()
+    finally:
         try:
-            await record_usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+            await client.close()
         except Exception as exc:
-            logger.debug("record_usage failed: %s", exc)
-
-    return "".join(chunks).strip()
+            logger.debug("AsyncOpenAI close failed: %s", exc)
 
 
 async def call_llm_with_tools(
@@ -244,14 +257,7 @@ async def call_llm_with_tools(
     tier: str | None = None,
     on_token: Any = None,
 ) -> str:
-    """带工具调用的 LLM 入口（OpenAI function calling 兼容协议）。
-
-    Agent 在分析过程中可决定调用 fetch_url / bitable_query / feishu_sheet / python_calc。
-    每个 iteration 检查 budget；超出预算或达到 max_tool_iterations 即停止工具循环
-    并强制 LLM 用现有信息给出最终答案。
-
-    feishu_aily provider 不支持 function calling，回退到普通 call_llm。
-    """
+    """OpenAI-compatible function-calling entrypoint."""
     provider = get_llm_provider().strip().lower()
     if provider == "feishu_aily":
         return await call_llm(
@@ -267,7 +273,6 @@ async def call_llm_with_tools(
 
     tools_schema = get_openai_tools_schema()
     if not tools_schema:
-        # 没有任何工具注册 → 退回普通调用
         return await call_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -282,152 +287,157 @@ async def call_llm_with_tools(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
+    last_content = ""
 
-    last_content: str = ""
-    for iteration in range(max_tool_iterations):
-        try:
-            await check_budget(strict=True)
-        except BudgetExceeded as exc:
-            logger.warning("Tool loop aborted — budget exceeded at iter %s: %s", iteration, exc)
-            break
-
-        # 关键修复（v7.8）：tools 路径之前完全不流式 → SSE agent.token 事件永不触发。
-        # 现在最后一轮（已强制 tool_choice=none）走流式协议，让前端能实时看 agent 输出。
-        is_final_iter = iteration == max_tool_iterations - 1
-        use_stream = bool(on_token) and is_final_iter
-
-        async with _get_llm_semaphore():
+    try:
+        for iteration in range(max_tool_iterations):
             try:
-                if use_stream:
-                    # v8.0 修复 #29：流式中途异常不丢已累积 chunks
-                    # 之前 async for 在 try 块内，网络抖动 → 已累积内容全丢，落到 except 返回空。
-                    # 现在：stream 创建在 try 内（开 stream 失败抛错由 outer except 处理），
-                    # 但 async for 部分用独立 try/except 拿到部分内容也算成功返回。
-                    chunks: list[str] = []
-                    final_prompt_tokens = 0
-                    final_completion_tokens = 0
-                    stream = await client.chat.completions.create(
+                await check_budget(strict=True)
+            except BudgetExceeded as exc:
+                logger.warning("Tool loop aborted - budget exceeded at iter %s: %s", iteration, exc)
+                break
+
+            is_final_iter = iteration == max_tool_iterations - 1
+            use_stream = bool(on_token) and is_final_iter
+
+            async with _get_llm_semaphore():
+                try:
+                    if use_stream:
+                        chunks: list[str] = []
+                        final_prompt_tokens = 0
+                        final_completion_tokens = 0
+                        stream = await client.chat.completions.create(
+                            model=cfg.model,
+                            messages=messages,
+                            tools=tools_schema,
+                            tool_choice="none",
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            stream=True,
+                            stream_options={"include_usage": True},
+                        )
+                        try:
+                            async for event in stream:
+                                if getattr(event, "usage", None):
+                                    final_prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
+                                    final_completion_tokens = int(
+                                        getattr(event.usage, "completion_tokens", 0) or 0
+                                    )
+                                if not event.choices:
+                                    continue
+                                delta = event.choices[0].delta
+                                piece = getattr(delta, "content", None)
+                                if not piece:
+                                    continue
+                                chunks.append(piece)
+                                try:
+                                    res = on_token(piece)
+                                    if asyncio.iscoroutine(res):
+                                        await res
+                                except Exception as cb_exc:
+                                    logger.debug("on_token callback failed: %s", cb_exc)
+                        except Exception as stream_exc:
+                            partial = "".join(chunks).strip()
+                            logger.warning(
+                                "stream interrupted at iter=%s after %d chars: %s",
+                                iteration,
+                                len(partial),
+                                stream_exc,
+                            )
+                            if not partial:
+                                raise
+                        if final_prompt_tokens or final_completion_tokens:
+                            try:
+                                await record_usage(
+                                    prompt_tokens=final_prompt_tokens,
+                                    completion_tokens=final_completion_tokens,
+                                )
+                            except Exception as exc:
+                                logger.debug("record_usage failed: %s", exc)
+                        return "".join(chunks).strip() or last_content
+
+                    resp = await client.chat.completions.create(
                         model=cfg.model,
                         messages=messages,
                         tools=tools_schema,
-                        tool_choice="none",
+                        tool_choice="auto" if not is_final_iter else "none",
                         temperature=temperature,
                         max_tokens=max_tokens,
-                        stream=True,
-                        stream_options={"include_usage": True},
                     )
-                    try:
-                        async for event in stream:
-                            if getattr(event, "usage", None):
-                                final_prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
-                                final_completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
-                            if not event.choices:
-                                continue
-                            delta = event.choices[0].delta
-                            piece = getattr(delta, "content", None)
-                            if not piece:
-                                continue
-                            chunks.append(piece)
-                            try:
-                                res = on_token(piece)
-                                if asyncio.iscoroutine(res):
-                                    await res
-                            except Exception as cb_exc:
-                                logger.debug("on_token callback failed: %s", cb_exc)
-                    except Exception as stream_exc:
-                        partial = "".join(chunks).strip()
-                        logger.warning(
-                            "stream interrupted at iter=%s after %d chars: %s",
-                            iteration, len(partial), stream_exc,
-                        )
-                        # 至少保留已收到的内容；为空才让 outer except 接管
-                        if not partial:
-                            raise
-                    if final_prompt_tokens or final_completion_tokens:
-                        try:
-                            await record_usage(
-                                prompt_tokens=final_prompt_tokens,
-                                completion_tokens=final_completion_tokens,
-                            )
-                        except Exception as exc:
-                            logger.debug("record_usage failed: %s", exc)
-                    return "".join(chunks).strip() or last_content
-                resp = await client.chat.completions.create(
-                    model=cfg.model,
-                    messages=messages,
-                    tools=tools_schema,
-                    tool_choice="auto" if not is_final_iter else "none",
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            except Exception as exc:
-                logger.warning("call_llm_with_tools iter=%s failed: %s", iteration, exc)
-                if iteration == 0:
-                    raise
-                break
+                except Exception as exc:
+                    logger.warning("call_llm_with_tools iter=%s failed: %s", iteration, exc)
+                    if iteration == 0:
+                        raise
+                    break
 
-        usage = getattr(resp, "usage", None)
-        if usage is not None:
-            try:
-                await record_usage(
-                    prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-                    completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
-                )
-            except Exception as exc:
-                logger.debug("record_usage failed: %s", exc)
-
-        msg = resp.choices[0].message
-        last_content = (msg.content or "").strip()
-        tool_calls = getattr(msg, "tool_calls", None) or []
-
-        if not tool_calls:
-            # v8.0 修复：之前 streaming 仅在 is_final_iter（最后一轮）触发 →
-            # 多数任务 LLM 第一轮就给内容（不调工具），永远走不到流式。
-            # 现在：若 on_token 在场且 LLM 给出内容，把内容作为一条事件推送出去。
-            # 这不是真 token streaming（OpenAI tools+stream 协议较复杂），但
-            # 至少让前端 SSE 通道收到 agent.token 事件不再是死代码。
-            if on_token and last_content:
+            usage = getattr(resp, "usage", None)
+            if usage is not None:
                 try:
-                    res = on_token(last_content)
-                    if asyncio.iscoroutine(res):
-                        await res
-                except Exception as cb_exc:
-                    logger.debug("on_token (final content push) failed: %s", cb_exc)
-            return last_content or "(LLM returned empty content after tool loop)"
+                    await record_usage(
+                        prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                        completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                    )
+                except Exception as exc:
+                    logger.debug("record_usage failed: %s", exc)
 
-        # 把 assistant 的 tool_calls 加入对话历史
-        messages.append({
-            "role": "assistant",
-            "content": msg.content or "",
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in tool_calls
-            ],
-        })
+            msg = resp.choices[0].message
+            last_content = (msg.content or "").strip()
+            tool_calls = getattr(msg, "tool_calls", None) or []
 
-        # 并行执行所有 tool calls
-        async def _run(tc):
-            result = await dispatch_tool(tc.function.name, tc.function.arguments)
-            return tc.id, tc.function.name, result
+            if not tool_calls:
+                if on_token and last_content:
+                    try:
+                        res = on_token(last_content)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception as cb_exc:
+                        logger.debug("on_token (final content push) failed: %s", cb_exc)
+                return last_content or "(LLM returned empty content after tool loop)"
 
-        outcomes = await asyncio.gather(*[_run(tc) for tc in tool_calls])
-        for tc_id, tool_name, result in outcomes:
-            logger.info(
-                "tool.completed iter=%s name=%s result_len=%s",
-                iteration, tool_name, len(result) if isinstance(result, str) else 0,
-            )
             messages.append({
-                "role": "tool",
-                "tool_call_id": tc_id,
-                "content": result,
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
             })
 
-    # 达到 max_tool_iterations 还没收敛 → 用最后一次 content 兜底
-    return last_content or "(LLM exceeded max tool iterations without final answer)"
+            async def _run_tool(tc):
+                result = await dispatch_tool(tc.function.name, tc.function.arguments)
+                return tc.id, tc.function.name, result
+
+            outcomes = await asyncio.gather(
+                *[_run_tool(tc) for tc in tool_calls],
+                return_exceptions=True,
+            )
+            for outcome in outcomes:
+                if isinstance(outcome, Exception):
+                    logger.warning("tool.failed iter=%s err=%s", iteration, outcome)
+                    continue
+                tc_id, tool_name, result = outcome
+                logger.info(
+                    "tool.completed iter=%s name=%s result_len=%s",
+                    iteration,
+                    tool_name,
+                    len(result) if isinstance(result, str) else 0,
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": result,
+                })
+
+        return last_content or "(LLM exceeded max tool iterations without final answer)"
+    finally:
+        try:
+            await client.close()
+        except Exception as exc:
+            logger.debug("AsyncOpenAI close failed: %s", exc)

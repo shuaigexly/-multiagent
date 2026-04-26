@@ -91,6 +91,26 @@ async def test_list_tables_returns_items():
 
 
 @pytest.mark.asyncio
+async def test_list_tables_follows_page_token():
+    page1 = {"code": 0, "data": {
+        "items": [{"table_id": "tbl_a", "name": "A"}],
+        "has_more": True,
+        "page_token": "next",
+    }}
+    page2 = {"code": 0, "data": {
+        "items": [{"table_id": "tbl_b", "name": "B"}],
+        "has_more": False,
+    }}
+    with patch("httpx.AsyncClient") as MockClient:
+        instance = MockClient.return_value.__aenter__.return_value
+        instance.get = AsyncMock(side_effect=[_mock_response(page1), _mock_response(page2)])
+        tables = await list_tables("app_x", "u-fake")
+
+    assert [t["table_id"] for t in tables] == ["tbl_a", "tbl_b"]
+    assert instance.get.call_args_list[1].kwargs["params"]["page_token"] == "next"
+
+
+@pytest.mark.asyncio
 async def test_list_fields_returns_items():
     payload = {"code": 0, "data": {"items": [
         {"field_id": "fld_a", "field_name": "标题", "type": 1, "is_primary": True},
@@ -102,3 +122,23 @@ async def test_list_fields_returns_items():
         fields = await list_fields("app_x", "tbl_x", "u-fake")
     assert len(fields) == 2
     assert fields[0]["is_primary"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_fields_follows_next_page_token():
+    page1 = {"code": 0, "data": {
+        "items": [{"field_id": "fld_a", "field_name": "A"}],
+        "has_more": True,
+        "next_page_token": "p2",
+    }}
+    page2 = {"code": 0, "data": {
+        "items": [{"field_id": "fld_b", "field_name": "B"}],
+        "has_more": False,
+    }}
+    with patch("httpx.AsyncClient") as MockClient:
+        instance = MockClient.return_value.__aenter__.return_value
+        instance.get = AsyncMock(side_effect=[_mock_response(page1), _mock_response(page2)])
+        fields = await list_fields("app_x", "tbl_x", "u-fake")
+
+    assert [f["field_id"] for f in fields] == ["fld_a", "fld_b"]
+    assert instance.get.call_args_list[1].kwargs["params"]["page_token"] == "p2"

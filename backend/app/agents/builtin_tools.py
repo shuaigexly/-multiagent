@@ -258,6 +258,7 @@ class _SafeCalcValidator(ast.NodeVisitor):
     _allowed_binops = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
     _allowed_unary = (ast.UAdd, ast.USub)
     _allowed_compare = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE)
+    _max_sequence_size = 100_000
 
     def __init__(self) -> None:
         self.node_count = 0
@@ -321,6 +322,9 @@ class _SafeCalcValidator(ast.NodeVisitor):
         if isinstance(node.op, ast.Mult):
             self._validate_repeat(node.left, node.right)
             self._validate_repeat(node.right, node.left)
+            sequence_size = self._estimate_sequence_size(node)
+            if sequence_size is not None and sequence_size > self._max_sequence_size:
+                raise ValueError("sequence result too large")
         self.visit(node.left)
         self.visit(node.right)
 
@@ -391,10 +395,29 @@ class _SafeCalcValidator(ast.NodeVisitor):
     def _validate_repeat(self, maybe_count: ast.AST, repeated: ast.AST) -> None:
         if not isinstance(maybe_count, ast.Constant) or not isinstance(maybe_count.value, int):
             return
-        if not isinstance(repeated, (ast.Constant, ast.List, ast.Tuple, ast.Set)):
+        if self._estimate_sequence_size(repeated) is None:
             return
         if abs(maybe_count.value) > 10_000:
             raise ValueError("repeat count too large")
+
+    def _estimate_sequence_size(self, node: ast.AST) -> int | None:
+        """Return a conservative size estimate for literal sequence expressions."""
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (str, bytes, tuple)):
+                return len(node.value)
+            return None
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            return len(node.elts)
+        if isinstance(node, ast.Dict):
+            return len(node.keys)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+            left_size = self._estimate_sequence_size(node.left)
+            right_size = self._estimate_sequence_size(node.right)
+            if isinstance(node.left, ast.Constant) and isinstance(node.left.value, int) and right_size is not None:
+                return abs(node.left.value) * right_size
+            if isinstance(node.right, ast.Constant) and isinstance(node.right.value, int) and left_size is not None:
+                return left_size * abs(node.right.value)
+        return None
 
 
 def _validate_calc_expression(expression: str) -> ast.Expression:

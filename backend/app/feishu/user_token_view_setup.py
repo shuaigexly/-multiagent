@@ -70,14 +70,30 @@ async def configure_view_groups(
                 "msg": f"non-JSON response (status={resp.status_code}): {resp.text[:200]!r}",
             }
 
+    async def _paged_items(h: httpx.AsyncClient, url: str) -> list[dict]:
+        items: list[dict] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, object] = {"page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            resp = await h.get(url, headers=auth_get, params=params)
+            body = _safe_json(resp)
+            if resp.status_code != 200 or body.get("code") != 0:
+                raise RuntimeError(
+                    f"paged list failed: status={resp.status_code} code={body.get('code')} msg={body.get('msg')}"
+                )
+            data = body.get("data") or {}
+            items.extend(data.get("items") or [])
+            if not data.get("has_more"):
+                return items
+            page_token = data.get("page_token") or data.get("next_page_token")
+            if not page_token:
+                raise RuntimeError("paged list failed: has_more=true but page_token missing")
+
     async with httpx.AsyncClient(timeout=30) as h:
-        rt = await h.get(f"{base}/open-apis/bitable/v1/apps/{app_token}/tables", headers=auth_get)
-        body = _safe_json(rt)
-        if rt.status_code != 200 or body.get("code") != 0:
-            raise RuntimeError(
-                f"list tables failed: status={rt.status_code} code={body.get('code')} msg={body.get('msg')}"
-            )
-        tables = {t["name"]: t["table_id"] for t in body.get("data", {}).get("items", [])}
+        table_items = await _paged_items(h, f"{base}/open-apis/bitable/v1/apps/{app_token}/tables")
+        tables = {t["name"]: t["table_id"] for t in table_items}
 
         for tname, vname, vtype, target_field in _VIEW_CONFIG:
             tid = tables.get(tname)
@@ -85,34 +101,29 @@ async def configure_view_groups(
                 failed_list.append(f"{tname}/{vname}: 表不存在")
                 continue
 
-            rf = await h.get(
-                f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields",
-                headers=auth_get,
-            )
-            fbody = _safe_json(rf)
-            if rf.status_code != 200 or fbody.get("code") != 0:
-                failed_list.append(
-                    f"{tname}/{vname}: 列字段失败 status={rf.status_code} msg={fbody.get('msg')}"
+            try:
+                fields = await _paged_items(
+                    h,
+                    f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields",
                 )
+            except RuntimeError as exc:
+                failed_list.append(f"{tname}/{vname}: list fields failed: {exc}")
                 continue
-            fields = (fbody.get("data") or {}).get("items") or []
             target_fid = next((f["field_id"] for f in fields if f.get("field_name") == target_field), None)
             if not target_fid:
                 failed_list.append(f"{tname}/{vname}: 字段 {target_field!r} 不存在")
                 continue
 
-            rv = await h.get(
-                f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views",
-                headers=auth_get,
-            )
-            vbody = _safe_json(rv)
-            if rv.status_code != 200 or vbody.get("code") != 0:
-                failed_list.append(
-                    f"{tname}/{vname}: 列视图失败 status={rv.status_code} msg={vbody.get('msg')}"
+            try:
+                views = await _paged_items(
+                    h,
+                    f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views",
                 )
+            except RuntimeError as exc:
+                failed_list.append(f"{tname}/{vname}: list views failed: {exc}")
                 continue
             view = next(
-                (v for v in (vbody.get("data") or {}).get("items") or []
+                (v for v in views
                  if v.get("view_name") == vname and v.get("view_type") == vtype),
                 None,
             )

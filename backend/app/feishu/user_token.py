@@ -11,14 +11,20 @@ from app.core.settings import (
     get_feishu_app_secret,
     get_feishu_region,
 )
+from app.core.observability import get_tenant_id
 from app.feishu.token_crypto import encrypt_token
 from app.models.database import AsyncSessionLocal, UserConfig
 
 logger = logging.getLogger(__name__)
 
-_user_access_token: str | None = None
-_user_refresh_token: str | None = None
-_user_open_id: str | None = None
+DEFAULT_TENANT_ID = "default"
+USER_ACCESS_TOKEN_KEY = "feishu_user_access_token"
+USER_REFRESH_TOKEN_KEY = "feishu_user_refresh_token"
+USER_OPEN_ID_KEY = "feishu_user_open_id"
+
+_user_access_tokens: dict[str, str] = {}
+_user_refresh_tokens: dict[str, str] = {}
+_user_open_ids: dict[str, str] = {}
 _refresh_lock: asyncio.Lock | None = None
 import threading as _threading
 _refresh_lock_init = _threading.Lock()
@@ -36,31 +42,62 @@ def _get_refresh_lock() -> asyncio.Lock:
     return _refresh_lock
 
 
-def get_user_access_token() -> str | None:
-    return _user_access_token
+def _tenant_scope(tenant_id: str | None = None) -> str:
+    tenant = (tenant_id or get_tenant_id() or DEFAULT_TENANT_ID).strip()
+    return tenant or DEFAULT_TENANT_ID
 
 
-def set_user_access_token(token: str | None) -> None:
-    global _user_access_token
-    _user_access_token = token
+def scoped_config_key(base_key: str, tenant_id: str | None = None) -> str:
+    tenant = _tenant_scope(tenant_id)
+    if tenant == DEFAULT_TENANT_ID:
+        return base_key
+    return f"{base_key}:{tenant}"
 
 
-def get_user_refresh_token() -> str | None:
-    return _user_refresh_token
+def tenant_from_config_key(key: str, base_key: str) -> str | None:
+    if key == base_key:
+        return DEFAULT_TENANT_ID
+    prefix = f"{base_key}:"
+    if key.startswith(prefix):
+        tenant = key[len(prefix):].strip()
+        return tenant or None
+    return None
 
 
-def set_user_refresh_token(token: str | None) -> None:
-    global _user_refresh_token
-    _user_refresh_token = token
+def get_user_access_token(tenant_id: str | None = None) -> str | None:
+    return _user_access_tokens.get(_tenant_scope(tenant_id))
 
 
-def get_user_open_id() -> str | None:
-    return _user_open_id
+def set_user_access_token(token: str | None, tenant_id: str | None = None) -> None:
+    tenant = _tenant_scope(tenant_id)
+    if token:
+        _user_access_tokens[tenant] = token
+    else:
+        _user_access_tokens.pop(tenant, None)
 
 
-def set_user_open_id(open_id: str | None) -> None:
-    global _user_open_id
-    _user_open_id = open_id
+def get_user_refresh_token(tenant_id: str | None = None) -> str | None:
+    return _user_refresh_tokens.get(_tenant_scope(tenant_id))
+
+
+def set_user_refresh_token(token: str | None, tenant_id: str | None = None) -> None:
+    tenant = _tenant_scope(tenant_id)
+    if token:
+        _user_refresh_tokens[tenant] = token
+    else:
+        _user_refresh_tokens.pop(tenant, None)
+
+
+def get_user_open_id(tenant_id: str | None = None) -> str | None:
+    return _user_open_ids.get(_tenant_scope(tenant_id))
+
+
+def set_user_open_id(open_id: str | None, tenant_id: str | None = None) -> None:
+    tenant = _tenant_scope(tenant_id)
+    if open_id:
+        _user_open_ids[tenant] = open_id
+    else:
+        _user_open_ids.pop(tenant, None)
 
 
 def _feishu_base() -> str:
@@ -73,6 +110,7 @@ async def refresh_user_token() -> None:
 
 
 async def _refresh_user_token_impl() -> None:
+    tenant_id = _tenant_scope()
     refresh_token = get_user_refresh_token()
     if not refresh_token:
         raise RuntimeError("未找到飞书用户 refresh_token")
@@ -131,8 +169,8 @@ async def _refresh_user_token_impl() -> None:
     try:
         async with AsyncSessionLocal() as db:
             for key, value in [
-                ("feishu_user_access_token", encrypted_access_token),
-                ("feishu_user_refresh_token", encrypted_refresh_token),
+                (scoped_config_key(USER_ACCESS_TOKEN_KEY, tenant_id), encrypted_access_token),
+                (scoped_config_key(USER_REFRESH_TOKEN_KEY, tenant_id), encrypted_refresh_token),
             ]:
                 existing = await db.execute(select(UserConfig).where(UserConfig.key == key))
                 row = existing.scalar_one_or_none()
@@ -144,7 +182,7 @@ async def _refresh_user_token_impl() -> None:
     except Exception as exc:
         raise RuntimeError(f"刷新飞书用户 token 后写入数据库失败: {exc}") from exc
 
-    set_user_access_token(new_access_token)
-    set_user_refresh_token(new_refresh_token)
+    set_user_access_token(new_access_token, tenant_id=tenant_id)
+    set_user_refresh_token(new_refresh_token, tenant_id=tenant_id)
 
     logger.info("飞书用户 access_token 已刷新并写回数据库")
