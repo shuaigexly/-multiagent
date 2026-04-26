@@ -252,4 +252,8 @@ async def _cli() -> int:
 
 
 if __name__ == "__main__":
+    # v8.6.20-r5：Windows 默认 stdout=GBK 遇到 emoji（🕐/🟢/...）会 UnicodeEncodeError，
+    # 跟 repair_option_drift.py / migrate_formula_to_number.py 一致用 utf-8 包装。
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", write_through=True)
     sys.exit(asyncio.run(_cli()))
