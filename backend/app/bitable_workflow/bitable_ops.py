@@ -123,6 +123,31 @@ def _is_field_missing_error(exc: Exception) -> bool:
     return any(marker in text for marker in _FIELD_MISSING_MSGS)
 
 
+async def create_record_optional_fields(
+    app_token: str,
+    table_id: str,
+    fields: dict,
+    optional_keys: list[str],
+) -> str:
+    """v8.6.20：create_record 版本的 optional fields fallback。
+    用法同 update_record_optional_fields，但走 create 路径。
+    返回 record_id。
+    """
+    try:
+        return await create_record(app_token, table_id, fields)
+    except Exception as exc:
+        if not _is_field_missing_error(exc) or not optional_keys:
+            raise
+        reduced = {k: v for k, v in fields.items() if k not in optional_keys}
+        if not reduced:
+            raise
+        logger.info(
+            "create_record_optional_fields: stripping %s due to: %s",
+            optional_keys, exc,
+        )
+        return await create_record(app_token, table_id, reduced)
+
+
 async def update_record_optional_fields(
     app_token: str,
     table_id: str,

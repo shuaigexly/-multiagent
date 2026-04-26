@@ -379,6 +379,7 @@ async def _create_followup_tasks(
         logger.warning("Feishu task API failed for [%s]: %s", task_title, exc)
 
     # 2. 在「分析任务」表中生成后续待分析记录（再流转闭环）
+    from app.bitable_workflow import schema as _schema
     for item in action_items:
         record_fields: dict = {
             "任务标题": f"[跟进] {truncate_with_marker(item, 50, '...[截断]')}",
@@ -387,12 +388,17 @@ async def _create_followup_tasks(
             "状态": Status.PENDING,
             "进度": 0,
             "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成",
+            # v8.6.20：跟进任务也填综合评分（由 priority_score 算出）
+            "综合评分": _schema.priority_score("P2 中"),
         }
         # v8.6.7：跟进任务自动指向原任务，构建依赖图
         if parent_task_number:
             record_fields["依赖任务编号"] = str(parent_task_number)
         try:
-            await bitable_ops.create_record(app_token, task_tid, record_fields)
+            # v8.6.20：综合评分老 base 没有 → optional fallback
+            await bitable_ops.create_record_optional_fields(
+                app_token, task_tid, record_fields, optional_keys=["综合评分"],
+            )
             logger.info(
                 "Follow-up task created from [%s]: %s",
                 task_title,

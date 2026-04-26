@@ -156,6 +156,56 @@ async def test_batch_update_falls_back_serial_on_chunk_failure(monkeypatch):
     assert serial_calls == ["r0", "r1", "r2"]  # 严格按顺序，不并发
 
 
+def test_priority_score_maps_correctly():
+    """v8.6.20：priority_score 替代飞书公式不生效问题。"""
+    from app.bitable_workflow.schema import priority_score
+    assert priority_score("P0 紧急") == 100
+    assert priority_score("P1 高") == 75
+    assert priority_score("P2 中") == 50
+    assert priority_score("P3 低") == 25
+    assert priority_score("") == 25
+    assert priority_score(None) == 25
+    # 模糊匹配（老 base 优先级值可能含变体）
+    assert priority_score("p0") == 100
+    assert priority_score("紧急") == 100
+
+
+def test_health_score_maps_correctly():
+    """v8.6.20：health_score 替代健康度数值公式。"""
+    from app.bitable_workflow.schema import health_score
+    assert health_score("🟢 健康") == 100
+    assert health_score("🟡 关注") == 60
+    assert health_score("🔴 预警") == 20
+    assert health_score("⚪ 数据不足") == 0
+    assert health_score(None) == 0
+    assert health_score("") == 0
+
+
+@pytest.mark.asyncio
+async def test_create_record_optional_fields_strips_missing_field(monkeypatch):
+    """v8.6.20：老 base 缺「健康度数值」/「综合评分」时 create 自动 fallback。"""
+    from app.bitable_workflow.bitable_ops import create_record_optional_fields
+
+    calls: list[dict] = []
+
+    async def fake_create(app_token, table_id, fields):
+        calls.append(dict(fields))
+        if "综合评分" in fields and len(calls) == 1:
+            raise RuntimeError("create record failed: code=1254044 msg=FieldNameNotFound")
+        return "rec_x"
+
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops.create_record", fake_create)
+
+    rid = await create_record_optional_fields(
+        "app", "tbl",
+        {"任务标题": "T", "综合评分": 100},
+        optional_keys=["综合评分"],
+    )
+    assert rid == "rec_x"
+    assert len(calls) == 2
+    assert "综合评分" not in calls[1]
+
+
 def test_flatten_text_value_handles_feishu_rich_text():
     """v8.6.19 实测发现：search_records / get_record 把 text 字段返回为富文本数组
     [{"text": "...", "type": "text"}]，写回飞书会报 1254060 TextFieldConvFail。

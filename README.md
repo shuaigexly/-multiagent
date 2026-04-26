@@ -547,6 +547,44 @@ pip install larksuite-oapi
 
 ## 变更日志
 
+### v8.6.20 — Number 字段替代不可靠的 Formula 公式（实测驱动）
+
+实测 v8.6.19 base 8/8 任务「综合评分」= 25（默认 P3）/ 42/42 岗位分析「健康度数值」= 0（默认）。
+飞书公式 `IF(.CONTAIN("P0"),100,...)` 在通过 OpenAPI 创建的公式字段 + SingleSelect 字段路径下**不生效**（飞书公式语法对 `bitable::$table[].$field[]` 引用 SingleSelect 时返回的不是字符串）。
+
+修复路径：放弃 Formula 字段，改 Number 字段 + 主动写值。
+- `schema.py` 加 [`priority_score`](backend/app/bitable_workflow/schema.py) / [`health_score`](backend/app/bitable_workflow/schema.py) 映射函数
+- `runner` SEED 写任务时 + scheduler `_create_followup_tasks` 写「综合评分」（基于优先级）
+- `workflow_agents.write_agent_outputs` 写「健康度数值」（基于 _extract_health 的字符串）
+- 新增 [`bitable_ops.create_record_optional_fields`](backend/app/bitable_workflow/bitable_ops.py)：老 base 缺新字段（`{1254044, 1254045, 1254046}` / FieldNameNotFound）时自动剥离 optional 重试，向后兼容
+- `_create_formula_fields` deferred creation 不再调用（保留代码备查）
+- 测试新增 `test_priority_score_maps_correctly` / `test_health_score_maps_correctly` / `test_create_record_optional_fields_strips_missing_field`
+
+### v8.6.19 — Bitable 能力扩张：字段/视图/性能/Dashboard/卡片
+
+按 plan v4 修订版分四阶段落地：
+- **Phase 0**：[`bitable_ops`](backend/app/bitable_workflow/bitable_ops.py) `_safe_json` / `field_exists` 60s 缓存 / `update_record_optional_fields`（错误码集合**排除 1254043 RecordIdNotFound**）+ scheduler 顶部 `USE_RECORDS_SEARCH` / `USE_BATCH_RECORDS` flags（默认开启 + 自动 fallback）
+- **Phase A** 字段/视图：完成日期 (Date 5)、负责人 (Person 11)、综合评分/健康度数值 deferred Formula creation（v8.6.20 已废弃改 Number），view_plan 加 gantt + form，`_share_form_view` 尽力开 `shared_url`，`_ensure_table_fields` 仅 Formula 字段降级，完成时 `update_record_optional_fields` 双写「完成时间」+「完成日期」（毫秒戳）
+- **Phase B** 性能：`search_records` (filter/sort/field_names body + page_token query；`automatic_fields` retry 仅 1254000/1254001 或 message 命中)、`batch_update_records` (500 条/次切片，单片失败 fallback **严格串行 await**，避免 1254291 写冲突)、`batch_delete_records`，全部 `_impl + with_retry` 包装；scheduler Phase 0 用 `automatic_fields=True` 拿 ModifiedTime；Phase 1 三层降级（search+综合评分 sort → search + 本地 _prio_key → list+filter_expr+本地排序），**遍历依赖检查后才计数（不先截断）**；`_claim_pending_record` 返回 `dict | None`（含 get_record 结果，避免重复回读）
+- **Phase C**：[`feishu/dashboard_picker.py`](backend/app/feishu/dashboard_picker.py) 解析 `data.dashboards[].block_id`（**非 dashboard_id**）+ user_token 优先 + 完整分页；verify.py `report["dashboards"]` + `report["warnings"]`（dashboard 失败入 warnings 不污染 issues）；feishu_oauth `GET /oauth/list-dashboards` 真走 `_with_user_token_retry` + tenant fallback；im.py `send_card_message` 保留 `(title, content, chat_id)` positional 兼容 + 新增 keyword-only `header_color`/`action_url`/`fields`（label ≤ 30 / value ≤ 200 / 空过滤）；scheduler `_send_completion_message(app_token, task_tid, rid, ...)` 用 `get_feishu_base_url()` 构造 base/table URL（record 参数 best-effort）+ 健康度→header color 映射 + 抽机会/风险首段进 fields
+
+### v8.6.19-r1 — 修 1254060 TextFieldConvFail（实测驱动）
+
+实测 v8.6.19 base 第 1 个任务跑完 6/6 岗位分析写入全部失败：`code=1254060 TextFieldConvFail`。
+根因：飞书 `search_records` / `get_record` 把 text 字段返回为富文本数组 `[{"text":"...","type":"text"}]`，下游 `write_agent_outputs` 把 task_title 直接塞回 `fields["任务标题"]` 时 list[dict] 无法转 text。
+修复：`scheduler.py::_flatten_text_value` + `_flatten_record_fields`，`_claim_pending_record` claim 后立即拍平并覆盖 `claimed["fields"]`，Phase 1 candidate 入口对 `record.get("fields")` 拍平。Attachment 列表（含 file_token 不含 text）原样保留。
+
+### v8.6.18 — codex 端到端验收驱动的修复（rollback / token 分项 / csv fence）
+
+codex 隔离 clone 真跑 setup→cycle→audit 报 Top 5，筛掉 false positive 后 3 个真 bug：
+- **HIGH** [`runner.setup_workflow`](backend/app/bitable_workflow/runner.py) 中途失败留残 base + 飞书自动「数据表」 → 抽出 `_populate_base_records` + `_delete_base_best_effort`，三段（建表/视图/SEED）try/except 包补偿，失败自动 `DELETE /drive/v1/files/{token}?type=bitable` 整体回滚
+- **MEDIUM** [`budget.record_usage`](backend/app/core/budget.py) 丢失 `completion_tokens_details.reasoning_tokens`（豆包等 reasoning model 单价等同 / 高于输出）→ 新增 `reasoning_tokens` kwarg 向后兼容 + 三层 `:reasoning` 累计 key；llm_client 提取 details
+- **LOW** SEED 数据源 CSV fence ` ``` ` → ` ```csv ` 语言标记，workflow_agents 正则 `(?:csv)?` 已兼容
+
+### v8.6.17 — _safe_json 兜底飞书非 JSON 响应
+
+Explore agent 审计 v8.6.4→v8.6.16 发现 base_picker / user_token_view_setup 的 `r.json()` 直接调用，飞书 5xx 偶发返回 HTML/纯文本时抛 JSONDecodeError 无上下文。统一加 `_safe_json` helper 返回 `{"code": -1, "msg": "non-JSON response (status=502): ..."}`，错误带清晰 status。新增回归测试 `test_list_user_bases_non_json_response_raises_clear_error`。
+
 ### v8.6.16 — 数据源结构化 + 选择已有 base CLI/API
 
 **数据源结构化（B+C 组合）**

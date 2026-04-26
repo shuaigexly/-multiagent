@@ -66,6 +66,31 @@ PRIORITY_OPTIONS = [
     {"name": "P3 低", "color": 0},     # 灰
 ]
 
+
+def priority_score(priority_value: str | None) -> int:
+    """v8.6.20：把「优先级」选项名映射到「综合评分」数值（替代飞书公式不生效问题）。
+    P0→100 / P1→75 / P2→50 / P3 或缺省→25。"""
+    s = str(priority_value or "").upper()
+    if "P0" in s or "紧急" in s:
+        return 100
+    if "P1" in s or "高" in s:
+        return 75
+    if "P2" in s or "中" in s:
+        return 50
+    return 25
+
+
+def health_score(health_value: str | None) -> int:
+    """v8.6.20：「健康度评级」→「健康度数值」。🟢→100 / 🟡→60 / 🔴→20 / ⚪/缺省→0。"""
+    s = str(health_value or "")
+    if "🟢" in s or "健康" in s:
+        return 100
+    if "🟡" in s or "关注" in s:
+        return 60
+    if "🔴" in s or "预警" in s:
+        return 20
+    return 0
+
 HEALTH_OPTIONS = [
     {"name": "🟢 健康", "color": 4},
     {"name": "🟡 关注", "color": 3},
@@ -152,10 +177,18 @@ TASK_FIELDS = [
         "ui_type": "User",
         "property": {"multiple": False},
     },
+    # v8.6.20 — 综合评分（Number，scheduler 写）
+    # v8.6.19 实测：飞书公式字段对 SingleSelect 字段的 .CONTAIN 不生效，
+    # 公式 IF(.CONTAIN("P0"),100,...) 永远命中默认 25 分支（实测 8/8 任务都 25）。
+    # 飞书公式语法对 OpenAPI 创建的公式字段在 SingleSelect 下不可靠，改用 Number
+    # 字段 + scheduler/runner 主动写值，100% 可控。
+    {
+        "field_name": "综合评分",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
 ]
-# v8.6.19：综合评分（Formula）+ 健康度数值（Formula）不进 schema —— 公式表达式
-# 必须用 field_id 引用（bitable::$table[tid].$field[fid] 形式），field_id 只有
-# 字段创建后才能拿到。改在 runner._create_formula_fields() 中 deferred creation。
 
 
 def agent_output_fields(task_table_id: str) -> list[dict]:
@@ -198,6 +231,15 @@ def agent_output_fields(task_table_id: str) -> list[dict]:
         {"field_name": "分析思路", "type": TEXT_FIELD_TYPE},
         {"field_name": "图表数据", "type": TEXT_FIELD_TYPE},
         {"field_name": "图表", "type": ATTACHMENT_FIELD_TYPE, "ui_type": "Attachment"},
+        # v8.6.20 — 健康度数值（Number，write_agent_outputs 写值）
+        # 同综合评分的 v8.6.19 实测：公式 IF(.CONTAIN("健康"),100,...) 不生效，
+        # 改 Number + 主动写。
+        {
+            "field_name": "健康度数值",
+            "type": NUMBER_FIELD_TYPE,
+            "ui_type": "Number",
+            "property": {"formatter": "0"},
+        },
         {
             "field_name": "生成时间",
             "type": CREATED_TIME_FIELD_TYPE,

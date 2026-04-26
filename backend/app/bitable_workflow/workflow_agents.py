@@ -661,10 +661,14 @@ async def write_agent_outputs(
             except Exception as render_exc:
                 logger.warning("chart render/upload failed for %s: %s", result.agent_id, render_exc)
 
+        from app.bitable_workflow import schema as _schema
+        health_label = _extract_health(result)
         fields: dict = {
             "任务标题": task_title,
             "岗位角色": _role_with_emoji(result.agent_name),
-            "健康度评级": _extract_health(result),
+            "健康度评级": health_label,
+            # v8.6.20：健康度数值由 health_score() 算（替代飞书公式不生效）
+            "健康度数值": _schema.health_score(health_label),
             "分析摘要": summary,
             "行动项": truncate_with_marker(action_text, 2000, "\n...[已截断]"),
             "行动项数": len(result.action_items),
@@ -680,7 +684,11 @@ async def write_agent_outputs(
         # 业务侧靠 任务标题/任务编号 文本字段做"逻辑关联"。
         # 因此从一开始就不写关联字段，避免无意义的 4xx + 重试浪费。
         try:
-            await bitable_ops.create_record(app_token, output_table_id, fields)
+            # v8.6.20：「健康度数值」是新加 Number 字段，老 base 没有 → optional fallback
+            await bitable_ops.create_record_optional_fields(
+                app_token, output_table_id, fields,
+                optional_keys=["健康度数值"],
+            )
             written += 1
         except Exception as exc:
             logger.error("Failed to write output for agent=%s: %s", result.agent_name, exc)

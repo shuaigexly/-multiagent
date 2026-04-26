@@ -65,13 +65,10 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
         await _delete_base_best_effort(app_token)
         raise
 
-    # v8.6.19 — Phase A.2 deferred Formula 字段创建（必须在普通字段建好后做，
-    # 因为公式表达式要用 field_id 引用 `bitable::$table[tid].$field[fid]`）
-    # 失败仅 logger.warning，不阻塞 setup（公式是 optional capability）
-    try:
-        await _create_formula_fields(app_token, task_tid, output_tid)
-    except Exception as exc:
-        logger.warning("_create_formula_fields failed (non-fatal): %s", exc)
+    # v8.6.20 — Formula 路径已废弃（实测综合评分 8/8=25 / 健康度数值 42/42=0
+    # 全是默认值，飞书公式 .CONTAIN 在 SingleSelect 字段上不生效）。改为 Number
+    # 字段 + scheduler/runner/write_agent_outputs 主动写值，100% 可控。
+    # _create_formula_fields 函数保留但不再调用，留作未来公式语法可靠时复用。
 
     # v8.6.18 — 数据写入也要补偿：如果 SEED/数据源写入中途挂了，DELETE 整个 base
     try:
@@ -153,7 +150,7 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
             f"---\n_原始 CSV（agent 解析用，请勿编辑下方原始数据格式）：_\n```csv\n"
             f"{data_source}\n```"
         )
-        await bitable_ops.create_record(
+        await bitable_ops.create_record_optional_fields(
             app_token,
             task_tid,
             {
@@ -164,7 +161,10 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
                 "进度": 0,
                 "背景说明": background,
                 "数据源": rendered,
+                # v8.6.20：综合评分由 priority_score() 算出（替代飞书公式不生效）
+                "综合评分": schema.priority_score("P1 高"),
             },
+            optional_keys=["综合评分"],
         )
 
 
