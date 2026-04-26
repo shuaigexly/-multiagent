@@ -547,6 +547,24 @@ pip install larksuite-oapi
 
 ## 变更日志
 
+### v8.6.20-r3/r4/r5 — 第二轮深度审计：5 个新 bug 闭环
+
+实测 base PR41b365raO4RlsznRUc8CVtnRh 重审发现：
+
+| # | 真 bug | 修法 | 版本 |
+|---|---|---|---|
+| 4 | **🟢 健康 + 决策紧急度=5 矛盾**（同一报告自相打架；`_extract_health` 取「总体评级」/`_estimate_urgency` 扫 raw_output emoji，两口径不一致）| `_estimate_urgency` 按健康度 cap：🟢→≤3 / 🟡→≤4 / 🔴→不 cap +5 个回归测试 | r3 |
+| 5 | **存量 base 综合评分/健康度数值 仍是 Formula(20)**（v8.6.20 schema 改 Number，但 `_ensure_table_fields` 只 add 不改类型，老 base 永远全 25/0）| 新增 `migrate_formula_to_number.py` CLI（DELETE Formula → POST Number → 按 priority_score/health_score 回填）+ 10 个 unit 测试 | r4 |
+| 6 | **verify.py / base_picker / user_token_view_setup 在 Windows 跑 `python -m ...` 直接 GBK UnicodeEncodeError**（emoji 视图名一打印就挂）| 三个 CLI 入口都加 `sys.stdout = io.TextIOWrapper(buffer, encoding='utf-8')` | r5 |
+
+**r3** 之后 219 → r4 之后 229 个测试全过；verify on 实测 base **issues=0 + dashboards/warnings 区块独立**。
+
+CLI 一键修存量 base（破坏性，按需调）：
+```bash
+python -m app.bitable_workflow.migrate_formula_to_number <app_token>           # 实跑
+python -m app.bitable_workflow.migrate_formula_to_number <app_token> --dry-run # 仅看 plan
+```
+
 ### v8.6.19/v8.6.20 实测 base 已知问题清单（PR41b365raO4RlsznRUc8CVtnRh）
 
 每条都按"设计 vs 实测"逐项核对的硬证据，**不要相信 commit message 的"已修"**，按本节为准：
