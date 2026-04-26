@@ -15,6 +15,7 @@ import re
 import socket
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from app.bitable_workflow import bitable_ops
 from app.bitable_workflow.schema import Status
@@ -31,6 +32,10 @@ from app.core.observability import clear_task_context, set_task_context
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
+
+# v8.6.19 — feature flags（默认开启 + 自动 fallback；不依赖人工关 flag）
+USE_RECORDS_SEARCH = os.getenv("WORKFLOW_USE_RECORDS_SEARCH", "1") == "1"
+USE_BATCH_RECORDS = os.getenv("WORKFLOW_USE_BATCH_RECORDS", "1") == "1"
 
 # 单轮最多处理任务数（每条任务触发 7 次 LLM 调用）
 _MAX_PER_CYCLE = 3
@@ -220,8 +225,12 @@ async def _claim_pending_record(
     task_tid: str,
     record_id: str,
     owner: str,
-) -> bool:
-    """Best-effort claim verification for Bitable rows that lack a true CAS API."""
+) -> Optional[dict]:
+    """v8.6.19：claim 成功返回回读后的完整 record (`get_record` 结果)，失败返回 None。
+
+    旧版返回 bool，调用方还要再 get_record 一次拿全字段；现在合二为一，避免重复 IO，
+    且让上层直接拿到 fields（含 分析维度/背景说明/数据源/任务图像）给 pipeline。
+    """
     claim_stage = f"🔒 已领取：{owner}"
     await bitable_ops.update_record(
         app_token,
@@ -231,18 +240,78 @@ async def _claim_pending_record(
     )
     claimed = await bitable_ops.get_record(app_token, task_tid, record_id)
     fields = claimed.get("fields") or {}
-    return fields.get("状态") == Status.ANALYZING and fields.get("当前阶段") == claim_stage
+    if fields.get("状态") == Status.ANALYZING and fields.get("当前阶段") == claim_stage:
+        return claimed
+    return None
 
 
-async def _send_completion_message(task_title: str, ceo_result: AgentResult) -> None:
-    """任务完成后向飞书群推送摘要卡片。未配置 chat_id 时静默跳过。"""
+_HEALTH_TO_HEADER_COLOR = {
+    "🟢": "green", "🟡": "yellow", "🔴": "red", "⚪": "grey",
+}
+
+
+def _ceo_health_header_color(ceo_result: AgentResult) -> str:
+    """从 CEO 输出推断 header 颜色：🟢 健康→green / 🟡 关注→yellow / 🔴 预警→red / 其他→blue"""
+    try:
+        from app.bitable_workflow.workflow_agents import _extract_health
+        health = _extract_health(ceo_result) or ""
+    except Exception:
+        health = ""
+    for marker, color in _HEALTH_TO_HEADER_COLOR.items():
+        if marker in health:
+            return color
+    return "blue"
+
+
+def _ceo_section_first_paragraph(ceo_result: AgentResult, keyword: str) -> str:
+    """从 ceo_result.sections 中找标题含 keyword 的 section，返回 content 首段（200 字截断）"""
+    for s in (ceo_result.sections or []):
+        title = getattr(s, "title", None) or (s.get("title") if isinstance(s, dict) else "")
+        if keyword in (title or ""):
+            content = getattr(s, "content", None) or (s.get("content") if isinstance(s, dict) else "")
+            content = (content or "").strip()
+            if not content:
+                continue
+            # 取首段（双换行截断 / 200 字截断）
+            first = content.split("\n\n", 1)[0].strip()
+            return truncate_with_marker(first, 200, "...")
+    return ""
+
+
+async def _send_completion_message(
+    app_token: str,
+    task_tid: str,
+    rid: str,
+    task_title: str,
+    ceo_result: AgentResult,
+) -> None:
+    """v8.6.19：任务完成后发飞书富文本卡片，含跳转按钮 + 健康度颜色 + 机会/风险字段。
+
+    URL 用 get_feishu_base_url()（用户侧 feishu.cn）；base/table 级链接为硬验收，
+    record 参数为 best-effort（飞书 deeplink 实测可能因版本变化）。
+    """
     try:
         from app.feishu.im import send_card_message
-        summary = truncate_with_marker(ceo_result.raw_output or "七岗多智能体分析已完成", 2000)
-        await send_card_message(title=f"分析完成：{task_title}", content=summary)
-        logger.info("Feishu notification sent for task [%s]", task_title)
+        from app.feishu.client import get_feishu_base_url
+        feishu_base = get_feishu_base_url()
+        url = f"{feishu_base}/base/{app_token}?table={task_tid}&record={rid}"
+        summary = truncate_with_marker(ceo_result.raw_output or "七岗多智能体分析已完成", 1200)
+        opportunity = _ceo_section_first_paragraph(ceo_result, "机会")
+        risk = _ceo_section_first_paragraph(ceo_result, "风险")
+        fields = []
+        if opportunity:
+            fields.append(("重要机会", opportunity))
+        if risk:
+            fields.append(("重要风险", risk))
+        await send_card_message(
+            title=f"分析完成：{task_title}",
+            content=summary,
+            header_color=_ceo_health_header_color(ceo_result),
+            action_url=url,
+            fields=fields,
+        )
+        logger.info("Feishu card sent for task [%s] url=%s", task_title, url)
     except ValueError:
-        # feishu_chat_id 未配置，静默跳过
         logger.debug("feishu_chat_id not configured, skipping notification for task [%s]", task_title)
     except Exception as exc:
         logger.warning("Feishu notification failed for task [%s]: %s", task_title, exc)
@@ -378,11 +447,28 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
     processed = 0
 
     # Phase 0: 恢复 ANALYZING 悬挂记录（上次崩溃遗留）
-    stuck = await bitable_ops.list_records(
-        app_token,
-        task_tid,
-        filter_expr=f'CurrentValue.[状态]="{Status.ANALYZING}"',
-    )
+    # v8.6.19：优先 search_records（必须 automatic_fields=True，因为 stale 判断依赖
+    # 「最近更新」是 ModifiedTime 自动字段）+ batch_update_records 一次恢复多条；
+    # 任一失败回退老路径（list + 逐条 update）
+    stuck: list[dict] = []
+    if USE_RECORDS_SEARCH:
+        try:
+            stuck = await bitable_ops.search_records(
+                app_token, task_tid,
+                filter_conditions=[{"field_name": "状态", "operator": "is", "value": [Status.ANALYZING]}],
+                field_names=["任务标题", "最近更新", "状态"],
+                automatic_fields=True,  # 「最近更新」是 ModifiedTime
+            )
+        except Exception as exc:
+            logger.warning("Phase0 search failed, fallback to list_records: %s", exc)
+            stuck = []
+    if not stuck:
+        stuck = await bitable_ops.list_records(
+            app_token, task_tid,
+            filter_expr=f'CurrentValue.[状态]="{Status.ANALYZING}"',
+        )
+
+    stale_to_recover: list[dict] = []
     for record in stuck:
         rid = record.get("record_id")
         if not rid:
@@ -392,29 +478,32 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
         if not _is_stale_analyzing(fields):
             logger.info("Skipping active ANALYZING record=%s; not stale enough for recovery", rid)
             continue
-        try:
-            await bitable_ops.update_record(
-                app_token, task_tid, rid, {"状态": Status.PENDING}
-            )
-            logger.warning("Recovered stuck ANALYZING record=%s → 待分析", rid)
-        except Exception as exc:
-            logger.error("Failed to recover ANALYZING record=%s: %s", rid, exc)
+        stale_to_recover.append({"record_id": rid, "fields": {"状态": Status.PENDING}})
 
-    # Phase 1: 领取待分析任务，按优先级排序后逐条执行
-    # v8.0 修复：之前 pool=_MAX_PER_CYCLE×4=12 太小 — 若有 50 条 PENDING 而前 12 条
-    # 都是 P3，排序后 top N 仍是 P3，第 13 条之后的 P0 紧急任务被永远忽略。
-    # 改为拉取最多 200 条做全表排序（_MAX_PER_CYCLE 通常 ≤ 5，对内存压力可忽略）。
+    if stale_to_recover:
+        if USE_BATCH_RECORDS:
+            try:
+                n = await bitable_ops.batch_update_records(app_token, task_tid, stale_to_recover)
+                logger.warning("Recovered %d stuck ANALYZING records → 待分析 (batch)", n)
+            except Exception as exc:
+                logger.warning("batch_update recovery failed, fallback to serial: %s", exc)
+                for entry in stale_to_recover:
+                    try:
+                        await bitable_ops.update_record(app_token, task_tid, entry["record_id"], entry["fields"])
+                        logger.warning("Recovered stuck ANALYZING record=%s (serial)", entry["record_id"])
+                    except Exception as inner:
+                        logger.error("Failed to recover ANALYZING record=%s: %s", entry["record_id"], inner)
+        else:
+            for entry in stale_to_recover:
+                try:
+                    await bitable_ops.update_record(app_token, task_tid, entry["record_id"], entry["fields"])
+                    logger.warning("Recovered stuck ANALYZING record=%s (serial, flag off)", entry["record_id"])
+                except Exception as exc:
+                    logger.error("Failed to recover ANALYZING record=%s: %s", entry["record_id"], exc)
+
+    # Phase 1: 领取待分析任务（v8.6.19：search + 综合评分 server sort，三层降级）
     pending_pool_size = int(os.getenv("WORKFLOW_PENDING_POOL_SIZE", "200"))
-    pending = await bitable_ops.list_records(
-        app_token,
-        task_tid,
-        filter_expr=f'CurrentValue.[状态]="{Status.PENDING}"',
-        page_size=min(100, pending_pool_size),
-        max_records=pending_pool_size,
-    )
 
-    # 优先级排序（v7.9 修复：宽松匹配，不只识别精确字符串）：
-    # 容忍 "P0" / "P0 紧急" / "p1" / "高" / "紧急" 等多种用户输入习惯
     def _prio_key(record: dict) -> int:
         raw = (record.get("fields") or {}).get("优先级", "") or ""
         s = str(raw).upper().strip()
@@ -428,18 +517,58 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             return 3
         return 99
 
-    pending.sort(key=_prio_key)
-    pending = pending[:_MAX_PER_CYCLE]
-    if pending:
-        prio_summary = [
-            (r.get("fields") or {}).get("优先级", "?") for r in pending
-        ]
-        logger.info("Phase 1 picked %d tasks by priority: %s", len(pending), prio_summary)
+    candidates: Optional[list[dict]] = None
+    sorted_by_search = False
+    # 第一层：search + 综合评分 server-side sort（仅当字段存在）
+    if USE_RECORDS_SEARCH:
+        if await bitable_ops.field_exists(app_token, task_tid, "综合评分"):
+            try:
+                candidates = await bitable_ops.search_records(
+                    app_token, task_tid,
+                    filter_conditions=[{"field_name": "状态", "operator": "is", "value": [Status.PENDING]}],
+                    sort=[{"field_name": "综合评分", "desc": True}],
+                    field_names=["任务标题", "状态", "优先级", "任务编号", "依赖任务编号"],
+                    max_records=pending_pool_size,
+                )
+                sorted_by_search = True
+            except Exception as exc:
+                logger.warning("Phase1 search+sort failed, falling back: %s", exc)
+                candidates = None
+        # 第二层：search 仅 filter（综合评分缺失或 sort 失败）
+        if candidates is None:
+            try:
+                candidates = await bitable_ops.search_records(
+                    app_token, task_tid,
+                    filter_conditions=[{"field_name": "状态", "operator": "is", "value": [Status.PENDING]}],
+                    field_names=["任务标题", "状态", "优先级", "任务编号", "依赖任务编号"],
+                    max_records=pending_pool_size,
+                )
+            except Exception as exc:
+                logger.warning("Phase1 search filter failed, falling back to list: %s", exc)
+                candidates = None
+    # 第三层：list + filter_expr（兜底老路径）
+    if candidates is None:
+        candidates = await bitable_ops.list_records(
+            app_token, task_tid,
+            filter_expr=f'CurrentValue.[状态]="{Status.PENDING}"',
+            page_size=min(100, pending_pool_size),
+            max_records=pending_pool_size,
+        )
+    if not sorted_by_search:
+        candidates.sort(key=_prio_key)
+
+    if candidates:
+        prio_summary = [(r.get("fields") or {}).get("优先级", "?") for r in candidates[:5]]
+        logger.info("Phase 1 candidates=%d top5_prio=%s sorted_by_search=%s",
+                    len(candidates), prio_summary, sorted_by_search)
 
     # 任务依赖图：构建 任务编号 → status 的全表索引（便于检查依赖）
     dep_index = await _build_dep_index(app_token, task_tid)
 
-    for record in pending:
+    # v8.6.19：遍历候选，依赖 + claim 都满足才计入本轮（不先截断），直到达 _MAX_PER_CYCLE
+    for record in candidates:
+        if processed >= _MAX_PER_CYCLE:
+            break
         rid = record.get("record_id", "?")
         fields = record.get("fields", {})
         task_title = fields.get("任务标题", f"任务_{rid[:8]}")
@@ -462,11 +591,16 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             continue
 
         try:
-            # 标记为「分析中」并回读校验 owner，降低多实例重复领取概率。
+            # v8.6.19：claim 返回 dict|None — 成功的 record 含完整 fields（含
+            # 分析维度 / 背景说明 / 数据源 / 任务图像），避免 search 字段子集不够而
+            # 必须再 get_record。
             claim_owner = _owner_id()
-            if not await _claim_pending_record(app_token, task_tid, rid, claim_owner):
+            claimed_record = await _claim_pending_record(app_token, task_tid, rid, claim_owner)
+            if claimed_record is None:
                 logger.warning("Workflow claim lost for record=%s owner=%s", rid, claim_owner)
                 continue
+            # 用 claim 回读到的完整 fields 替换 search 拿到的字段子集
+            fields = claimed_record.get("fields") or fields
 
             await bitable_ops.update_record(
                 app_token, task_tid, rid,
@@ -541,7 +675,9 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                 )
 
             # 标记为已完成，进度置为 100%
-            await bitable_ops.update_record(
+            # v8.6.19 — 双字段过渡：完成时间（旧 TEXT 总是写）+ 完成日期（新 DateTime 毫秒戳）
+            # 老 base 缺「完成日期」时 update_record_optional_fields 自动 fallback 仅写完成时间
+            await bitable_ops.update_record_optional_fields(
                 app_token,
                 task_tid,
                 rid,
@@ -550,7 +686,9 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     "当前阶段": "✅ 七岗分析全部完成",
                     "进度": 1.0,
                     "完成时间": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "完成日期": int(datetime.now(tz=timezone.utc).timestamp() * 1000),
                 },
+                optional_keys=["完成日期"],
             )
             processed += 1
             logger.info("Task [%s] completed by 7-agent pipeline", task_title)
@@ -566,8 +704,8 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                 {"title": task_title, "progress": 1.0, "participant_count": len(all_results) + 1},
             )
 
-            # 飞书消息通知（非阻塞，失败不影响任务状态）
-            await _send_completion_message(task_title, ceo_result)
+            # 飞书消息通知（v8.6.19 升级：含跳转 url + 健康度颜色 + 机会/风险字段）
+            await _send_completion_message(app_token, task_tid, rid, task_title, ceo_result)
 
             # 反馈再流转：CEO 行动项 → 新的待分析任务（自动 set 依赖任务编号 = 原任务编号）
             parent_num_raw = fields.get("任务编号")

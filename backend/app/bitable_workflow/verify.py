@@ -68,7 +68,8 @@ async def audit_bitable(
     """
     base = get_feishu_open_base_url()
     token = await get_tenant_access_token()
-    report: dict = {"tables": [], "global_issues": []}
+    # v8.6.19：dashboards / warnings 不计入主 issues
+    report: dict = {"tables": [], "global_issues": [], "dashboards": [], "warnings": []}
 
     async with httpx.AsyncClient(timeout=30) as http:
         tables = await _fetch_items(http, f"{base}/open-apis/bitable/v1/apps/{app_token}/tables", token)
@@ -118,14 +119,22 @@ async def audit_bitable(
             id_to_name = {f.get("field_id"): f.get("field_name") for f in fields}
             for v in views_raw:
                 vid = v["view_id"]
-                detail_resp = await _fetch(
-                    http,
-                    f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views/{vid}",
-                    token,
-                )
-                detail = (detail_resp.get("data") or {}).get("view") or {}
-                prop = detail.get("property") or {}
-                fi = (prop.get("filter_info") or {}).get("conditions") or []
+                # v8.6.19：部分视图类型（如 gantt / form）GET /views/{view_id} 接口
+                # 行为可能不同，详情拉失败仅 warning，不阻塞主审计
+                fi: list[dict] = []
+                try:
+                    detail_resp = await _fetch(
+                        http,
+                        f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/views/{vid}",
+                        token,
+                    )
+                    detail = (detail_resp.get("data") or {}).get("view") or {}
+                    prop = detail.get("property") or {}
+                    fi = (prop.get("filter_info") or {}).get("conditions") or []
+                except Exception as exc:
+                    report.setdefault("warnings", []).append(
+                        f"获取视图详情失败 {tname}/{v.get('view_name')!r} ({v.get('view_type')}): {exc}"
+                    )
                 views.append({
                     "id": vid,
                     "name": v["view_name"],
@@ -166,6 +175,14 @@ async def audit_bitable(
 
             report["tables"].append(tinfo)
 
+        # v8.6.19：尝试列 dashboards（仅 list 可读，飞书 OpenAPI 不开放创建/编辑）
+        # 失败仅入 warnings，不污染主 issues
+        try:
+            from app.feishu.dashboard_picker import list_dashboards
+            report["dashboards"] = await list_dashboards(app_token)
+        except Exception as exc:
+            report["warnings"].append(f"列 dashboards 失败（非致命）: {exc}")
+
     return report
 
 
@@ -191,6 +208,18 @@ def _print_report(report: dict) -> int:
         for i in t["issues"]:
             print(f"  ❌ {i}")
             total += 1
+
+    # v8.6.19：dashboards / warnings 不计入主 issues
+    dashboards = report.get("dashboards") or []
+    if dashboards:
+        print(f"\n## 仪表盘（{len(dashboards)}）")
+        for d in dashboards:
+            print(f"  {d.get('block_id', '?'):20s} {d.get('name', '?')!r}")
+    warnings = report.get("warnings") or []
+    if warnings:
+        print(f"\n## 非致命 warnings ({len(warnings)})")
+        for w in warnings:
+            print(f"  ⚠️ {w}")
 
     print(f"\n总问题数：{total}")
     return total

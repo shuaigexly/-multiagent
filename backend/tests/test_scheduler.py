@@ -67,12 +67,12 @@ class TestFollowupTasks:
 class TestSendCompletionMessage:
     @pytest.mark.asyncio
     async def test_message_sent_when_chat_configured(self, ceo_result):
-        """配置了 chat_id 时应成功发送消息"""
-        import app.feishu.im as im_module  # 确保模块已加载，patch 才能找到
+        """v8.6.19 — 配置了 chat_id 时应成功发送消息（新签名 5 参数）"""
+        import app.feishu.im as im_module
         mock_send = AsyncMock(return_value={"message_id": "msg_123"})
         with patch.object(im_module, "send_card_message", mock_send):
             from app.bitable_workflow.scheduler import _send_completion_message
-            await _send_completion_message("测试任务", ceo_result)
+            await _send_completion_message("app_x", "tbl_x", "rec_x", "测试任务", ceo_result)
         mock_send.assert_called_once()
         assert "测试任务" in str(mock_send.call_args)
 
@@ -82,7 +82,7 @@ class TestSendCompletionMessage:
         import app.feishu.im as im_module
         with patch.object(im_module, "send_card_message", side_effect=Exception("网络错误")):
             from app.bitable_workflow.scheduler import _send_completion_message
-            await _send_completion_message("测试任务", ceo_result)  # 不应抛出
+            await _send_completion_message("app_x", "tbl_x", "rec_x", "测试任务", ceo_result)
 
     @pytest.mark.asyncio
     async def test_no_chat_id_silently_skipped(self, ceo_result):
@@ -90,7 +90,7 @@ class TestSendCompletionMessage:
         import app.feishu.im as im_module
         with patch.object(im_module, "send_card_message", side_effect=ValueError("未配置飞书群 ID")):
             from app.bitable_workflow.scheduler import _send_completion_message
-            await _send_completion_message("测试任务", ceo_result)  # 不应抛出
+            await _send_completion_message("app_x", "tbl_x", "rec_x", "测试任务", ceo_result)
 
 
 class TestRunOneCycle:

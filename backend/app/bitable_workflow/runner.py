@@ -65,6 +65,14 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
         await _delete_base_best_effort(app_token)
         raise
 
+    # v8.6.19 — Phase A.2 deferred Formula 字段创建（必须在普通字段建好后做，
+    # 因为公式表达式要用 field_id 引用 `bitable::$table[tid].$field[fid]`）
+    # 失败仅 logger.warning，不阻塞 setup（公式是 optional capability）
+    try:
+        await _create_formula_fields(app_token, task_tid, output_tid)
+    except Exception as exc:
+        logger.warning("_create_formula_fields failed (non-fatal): %s", exc)
+
     # v8.6.18 — 数据写入也要补偿：如果 SEED/数据源写入中途挂了，DELETE 整个 base
     try:
         await _populate_base_records(
@@ -318,15 +326,146 @@ async def _create_extra_views(
         # 效能表 — 视觉视图
         (performance_tid, "🏅 岗位看板", "kanban", None, None),  # UI 选「岗位」做分组
         (performance_tid, "🏆 效能画册", "gallery", None, None),
+        # v8.6.19 — 甘特视图（用户首次打开 UI 选「创建时间→完成日期」做时间轴）
+        (task_tid, "📅 任务甘特", "gantt", None, None),
+        # v8.6.19 — 表单视图（创建后调 _share_form_view 拿 shared_url）
+        (task_tid, "📥 需求收集表", "form", None, None),
     ]
     for table_id, name, vtype, filter_field, filter_value in view_plan:
         try:
-            await create_view(
+            view_id = await create_view(
                 app_token, table_id, name, vtype,
                 filter_field=filter_field, filter_value=filter_value,
             )
+            # v8.6.19 — form 视图建好后尽力共享，得到 shared_url
+            if vtype == "form" and view_id:
+                shared_url = await _share_form_view(app_token, table_id, view_id)
+                if shared_url:
+                    logger.info("Form view %r shared at %s", name, shared_url)
         except Exception as exc:
             logger.warning("创建视图失败 table=%s name=%s: %s", table_id, name, exc)
+
+
+# ===== v8.6.19 Phase A.2 — Formula 字段 deferred creation =====
+
+async def _create_formula_fields(app_token: str, task_tid: str, output_tid: str) -> None:
+    """v8.6.19：在普通字段建好后创建 Formula 字段。
+
+    必须 deferred 因为公式表达式要用 field_id 引用 `bitable::$table[tid].$field[fid]`，
+    field_id 只有字段创建后才能拿到。
+
+    任一公式字段失败仅 logger.warning + 失效字段缓存，不阻塞 setup（公式是 optional capability）。
+    """
+    import httpx
+    from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
+    from app.bitable_workflow.bitable_ops import _safe_json, _invalidate_field_cache
+    from app.bitable_workflow.schema import FORMULA_FIELD_TYPE
+
+    base = get_feishu_open_base_url()
+    token = await get_tenant_access_token()
+    auth = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    async def _list_field_id_map(tid: str) -> dict[str, str]:
+        url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields"
+        async with httpx.AsyncClient(timeout=15) as h:
+            r = await h.get(url, headers={"Authorization": f"Bearer {token}"})
+            body = _safe_json(r)
+            if r.status_code != 200 or body.get("code") != 0:
+                raise RuntimeError(
+                    f"list fields failed: status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+                )
+            items = (body.get("data") or {}).get("items") or []
+            return {f["field_name"]: f["field_id"] for f in items if f.get("field_name")}
+
+    async def _create_formula(tid: str, field_name: str, expression: str) -> None:
+        url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{tid}/fields"
+        payload = {
+            "field_name": field_name,
+            "type": FORMULA_FIELD_TYPE,
+            "ui_type": "Formula",
+            "property": {"formula_expression": expression},
+        }
+        async with httpx.AsyncClient(timeout=15) as h:
+            r = await h.post(url, headers=auth, json=payload)
+            body = _safe_json(r)
+            if r.status_code != 200 or body.get("code") != 0:
+                raise RuntimeError(
+                    f"create formula field {field_name!r} failed: "
+                    f"status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+                )
+        logger.info("Formula field %r created on table %s", field_name, tid)
+
+    # 1. 综合评分（task 表，仅基于优先级 — 不乘进度，避免待分析任务全 0 同分）
+    try:
+        task_fids = await _list_field_id_map(task_tid)
+        priority_fid = task_fids.get("优先级")
+        if not priority_fid:
+            raise RuntimeError("「优先级」字段在 task 表中不存在")
+        expr = (
+            f'IF(bitable::$table[{task_tid}].$field[{priority_fid}].CONTAIN("P0"),100,'
+            f'IF(bitable::$table[{task_tid}].$field[{priority_fid}].CONTAIN("P1"),75,'
+            f'IF(bitable::$table[{task_tid}].$field[{priority_fid}].CONTAIN("P2"),50,25)))'
+        )
+        await _create_formula(task_tid, "综合评分", expr)
+    except Exception as exc:
+        logger.warning("综合评分 公式字段创建失败 (non-fatal): %s", exc)
+    finally:
+        _invalidate_field_cache(app_token, task_tid)
+
+    # 2. 健康度数值（output 表，依赖 健康度评级）
+    try:
+        output_fids = await _list_field_id_map(output_tid)
+        health_fid = output_fids.get("健康度评级")
+        if not health_fid:
+            raise RuntimeError("「健康度评级」字段在 output 表中不存在")
+        expr = (
+            f'IF(bitable::$table[{output_tid}].$field[{health_fid}].CONTAIN("健康"),100,'
+            f'IF(bitable::$table[{output_tid}].$field[{health_fid}].CONTAIN("关注"),60,'
+            f'IF(bitable::$table[{output_tid}].$field[{health_fid}].CONTAIN("预警"),20,0)))'
+        )
+        await _create_formula(output_tid, "健康度数值", expr)
+    except Exception as exc:
+        logger.warning("健康度数值 公式字段创建失败 (non-fatal): %s", exc)
+    finally:
+        _invalidate_field_cache(app_token, output_tid)
+
+
+async def _share_form_view(app_token: str, table_id: str, view_id: str) -> str | None:
+    """v8.6.19：尝试 PATCH 表单 metadata 设 shared=true，并 GET 拿 shared_url。
+
+    失败仅 logger.warning + return None，不阻塞 setup。
+    """
+    import httpx
+    from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
+    from app.bitable_workflow.bitable_ops import _safe_json
+
+    base = get_feishu_open_base_url()
+    token = await get_tenant_access_token()
+    auth = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/forms/{view_id}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as h:
+            r = await h.patch(url, headers=auth, json={"shared": True})
+            body = _safe_json(r)
+            if r.status_code != 200 or body.get("code") != 0:
+                logger.warning(
+                    "PATCH form metadata failed: status=%s code=%s msg=%s",
+                    r.status_code, body.get("code"), body.get("msg"),
+                )
+                return None
+            # 部分接口在 PATCH 响应里就有 shared_url，部分需要再 GET
+            form_data = (body.get("data") or {}).get("form") or {}
+            shared_url = form_data.get("shared_url")
+            if shared_url:
+                return shared_url
+            r2 = await h.get(url, headers={"Authorization": f"Bearer {token}"})
+            body2 = _safe_json(r2)
+            form_data = (body2.get("data") or {}).get("form") or {}
+            return form_data.get("shared_url")
+    except Exception as exc:
+        logger.warning("_share_form_view failed (non-fatal): %s", exc)
+        return None
 
 
 def mark_starting() -> bool:

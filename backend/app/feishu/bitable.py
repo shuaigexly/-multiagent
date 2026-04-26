@@ -535,8 +535,26 @@ async def _ensure_table_fields(
         )
 
     # schema[0] 已被 rename 到主字段；剩余字段逐个 create
+    # v8.6.19：仅 Formula 字段（type=20）创建失败时降级（warn + continue），
+    # 其他字段失败仍抛错触发 setup_workflow rollback。
+    FORMULA_FIELD_TYPE = 20
     for field in fields[1:]:
-        await _create_field(client, app_token, table_id, field)
+        try:
+            await _create_field(client, app_token, table_id, field)
+        except Exception as exc:
+            if field.get("type") == FORMULA_FIELD_TYPE:
+                logger.warning(
+                    "Formula field %r creation failed (non-fatal): %s",
+                    field.get("field_name"), exc,
+                )
+                # 失败也要清缓存，避免 field_exists 短时间命中旧 miss
+                try:
+                    from app.bitable_workflow.bitable_ops import _invalidate_field_cache
+                    _invalidate_field_cache(app_token, table_id)
+                except Exception:
+                    pass
+                continue
+            raise
 
 
 async def _find_primary_field(app_token: str, table_id: str) -> tuple[str | None, str | None, int | None]:

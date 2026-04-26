@@ -318,6 +318,29 @@ async def list_tables_endpoint(app_token: str = Query(..., description="bitable 
         return {"ok": False, "message": str(exc)}
 
 
+@router.get("/oauth/list-dashboards", dependencies=[Depends(require_api_key)])
+async def list_dashboards_endpoint(app_token: str = Query(...)):
+    """v8.6.19：列出 base 已有 Dashboards。
+
+    优先 user_access_token（走 _with_user_token_retry，过期自动 refresh 一次），
+    user 不可用或失败时回退 tenant_access_token。
+    """
+    from app.feishu.dashboard_picker import list_dashboards
+    try:
+        dashboards = await _with_user_token_retry(
+            lambda token: list_dashboards(app_token, user_token=token)
+        )
+        return {"ok": True, "dashboards": dashboards, "auth": "user"}
+    except Exception as user_exc:
+        logger.info("list-dashboards user_token path failed (%s), falling back to tenant", user_exc)
+        try:
+            dashboards = await list_dashboards(app_token, user_token=None)
+            return {"ok": True, "dashboards": dashboards, "auth": "tenant"}
+        except Exception as exc:
+            logger.error("list-dashboards both paths failed: %s", exc, exc_info=True)
+            return {"ok": False, "message": str(exc)}
+
+
 @router.post("/oauth/apply-view-config", dependencies=[Depends(require_api_key)])
 async def apply_view_config(app_token: str = Query(..., description="bitable app_token")):
     try:

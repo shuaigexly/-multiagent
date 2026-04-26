@@ -1,0 +1,175 @@
+"""v8.6.19 Phase B：search_records / batch_update_records / batch_delete_records。"""
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from app.bitable_workflow.bitable_ops import (
+    search_records, batch_update_records, batch_delete_records,
+)
+
+
+def _resp(payload: dict, status: int = 200) -> MagicMock:
+    r = MagicMock()
+    r.status_code = status
+    r.json = MagicMock(return_value=payload)
+    r.text = ""
+    r.raise_for_status = MagicMock()
+    return r
+
+
+@pytest.mark.asyncio
+async def test_search_records_request_body_shape(monkeypatch):
+    """请求体 filter/sort/field_names；page_size/page_token 在 query。"""
+    captured: dict = {}
+
+    async def fake_post(url, headers=None, params=None, json=None):
+        captured["url"] = url
+        captured["params"] = params
+        captured["body"] = json
+        return _resp({"code": 0, "data": {"items": [{"record_id": "rec1"}], "has_more": False}})
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+
+    result = await search_records(
+        "app", "tbl",
+        filter_conditions=[{"field_name": "状态", "operator": "is", "value": ["待分析"]}],
+        sort=[{"field_name": "综合评分", "desc": True}],
+        field_names=["任务标题"],
+    )
+    assert result == [{"record_id": "rec1"}]
+    assert captured["params"]["page_size"] > 0
+    assert captured["body"]["filter"]["conditions"][0]["field_name"] == "状态"
+    assert captured["body"]["sort"][0]["field_name"] == "综合评分"
+    assert "field_names" in captured["body"]
+    assert "automatic_fields" not in captured["body"]  # 默认 False 不发送
+
+
+@pytest.mark.asyncio
+async def test_search_records_pagination(monkeypatch):
+    """has_more=True 自动跟 page_token 翻页。"""
+    pages = [
+        _resp({"code": 0, "data": {"items": [{"record_id": "a"}], "has_more": True, "page_token": "p2"}}),
+        _resp({"code": 0, "data": {"items": [{"record_id": "b"}], "has_more": False}}),
+    ]
+    call_count = {"n": 0}
+
+    async def fake_post(url, headers=None, params=None, json=None):
+        r = pages[call_count["n"]]
+        call_count["n"] += 1
+        return r
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+
+    result = await search_records("app", "tbl")
+    assert [r["record_id"] for r in result] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_search_records_strips_automatic_fields_on_specific_error(monkeypatch):
+    """v4 修订：仅 1254000/1254001 或 message 含 automatic_fields 时剥离重试。"""
+    pages = [
+        # 第一次带 automatic_fields=True 报错 1254001
+        _resp({"code": 1254001, "msg": "Invalid parameter: automatic_fields"}),
+        # 第二次不带，成功
+        _resp({"code": 0, "data": {"items": [{"record_id": "x"}], "has_more": False}}),
+    ]
+    sent_bodies: list[dict] = []
+    call_count = {"n": 0}
+
+    async def fake_post(url, headers=None, params=None, json=None):
+        sent_bodies.append(dict(json or {}))
+        r = pages[call_count["n"]]
+        call_count["n"] += 1
+        return r
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+
+    result = await search_records("app", "tbl", automatic_fields=True)
+    assert result == [{"record_id": "x"}]
+    assert sent_bodies[0].get("automatic_fields") is True
+    assert "automatic_fields" not in sent_bodies[1]
+
+
+@pytest.mark.asyncio
+async def test_search_records_does_not_strip_on_other_error(monkeypatch):
+    """非 automatic_fields 错误不剥离参数，直接抛 RuntimeError。"""
+    async def fake_post(url, headers=None, params=None, json=None):
+        return _resp({"code": 1254005, "msg": "InvalidSort"})
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+
+    with pytest.raises(RuntimeError, match="1254005"):
+        await search_records("app", "tbl", automatic_fields=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_update_chunks_at_500(monkeypatch):
+    """1201 条切 500/500/201 三片（v4 修订）。"""
+    chunks_seen: list[int] = []
+
+    async def fake_post(url, headers=None, json=None):
+        chunks_seen.append(len(json["records"]))
+        return _resp({"code": 0, "data": {"records": json["records"]}})
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+
+    records = [{"record_id": f"r{i}", "fields": {"x": i}} for i in range(1201)]
+    n = await batch_update_records("app", "tbl", records)
+    assert n == 1201
+    assert chunks_seen == [500, 500, 201]
+
+
+@pytest.mark.asyncio
+async def test_batch_update_falls_back_serial_on_chunk_failure(monkeypatch):
+    """整片失败时 fallback 逐条串行 update_record；严禁 gather。"""
+    serial_calls: list[str] = []
+
+    async def fake_post(url, headers=None, json=None):
+        return _resp({"code": 1254005, "msg": "BatchPartialFail"})
+
+    async def fake_update(app_token, table_id, rid, fields):
+        serial_calls.append(rid)
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops.update_record", fake_update)
+
+    records = [{"record_id": f"r{i}", "fields": {"x": i}} for i in range(3)]
+    n = await batch_update_records("app", "tbl", records)
+    assert n == 3
+    assert serial_calls == ["r0", "r1", "r2"]  # 严格按顺序，不并发
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_chunks_at_500(monkeypatch):
+    chunks_seen: list[int] = []
+
+    async def fake_post(url, headers=None, json=None):
+        chunks_seen.append(len(json["records"]))
+        return _resp({"code": 0})
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+
+    ids = [f"r{i}" for i in range(501)]
+    n = await batch_delete_records("app", "tbl", ids)
+    assert n == 501
+    assert chunks_seen == [500, 1]

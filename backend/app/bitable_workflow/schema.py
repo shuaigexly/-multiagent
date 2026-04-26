@@ -137,8 +137,25 @@ TASK_FIELDS = [
         "ui_type": "ModifiedTime",
         "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
     },
-    {"field_name": "完成时间", "type": TEXT_FIELD_TYPE},
+    {"field_name": "完成时间", "type": TEXT_FIELD_TYPE},  # v8.6.x 旧字段，保留兼容老 base
+    # v8.6.19 新增 — 双字段过渡，DateTime 类型可被甘特视图识别为时间轴端点
+    {
+        "field_name": "完成日期",
+        "type": DATE_FIELD_TYPE,
+        "ui_type": "DateTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
+    },
+    # v8.6.19 — 负责人字段（仅 UI 协作；scheduler 不写）
+    {
+        "field_name": "负责人",
+        "type": PERSON_FIELD_TYPE,
+        "ui_type": "User",
+        "property": {"multiple": False},
+    },
 ]
+# v8.6.19：综合评分（Formula）+ 健康度数值（Formula）不进 schema —— 公式表达式
+# 必须用 field_id 引用（bitable::$table[tid].$field[fid] 形式），field_id 只有
+# 字段创建后才能拿到。改在 runner._create_formula_fields() 中 deferred creation。
 
 
 def agent_output_fields(task_table_id: str) -> list[dict]:
