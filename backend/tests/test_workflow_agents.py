@@ -8,6 +8,7 @@ from app.bitable_workflow.workflow_agents import (
     _is_failed_result,
     _build_task_description,
     _format_sections,
+    _estimate_urgency,
 )
 
 
@@ -139,6 +140,73 @@ class TestWriteAgentOutputs:
                 "app_token", "tbl_out", "任务", [ok_result, failed_result]
             )
         assert count == 1  # 财务顾问写入失败，只成功1条
+
+
+class TestEstimateUrgency:
+    """v8.6.20-r3：紧急度按健康度设上限，避免 🟢 健康 + 紧急度=5 的逻辑悖论。"""
+
+    def test_green_health_caps_at_3(self):
+        """🟢 健康 → 即便正文出现 🔴/P0，紧急度最高 3。"""
+        result = AgentResult(
+            agent_id="ceo", agent_name="CEO 助理",
+            sections=[
+                ResultSection(title="总体评级", content="🟢 健康"),
+                ResultSection(title="重要风险", content="🔴 竞争对手加速布局"),
+            ],
+            action_items=[],
+            raw_output="总体评级：🟢 健康\n## 重要风险\n🔴 紧急 P0 威胁",
+            health_hint="🟢",
+            structured_actions=[{"summary": "x", "priority": "P0"}],
+        )
+        assert _estimate_urgency(result) == 3
+
+    def test_yellow_health_caps_at_4(self):
+        """🟡 关注 → P0 也最多 4。"""
+        result = AgentResult(
+            agent_id="ceo", agent_name="CEO 助理",
+            sections=[ResultSection(title="总体评级", content="🟡 关注")],
+            action_items=[],
+            raw_output="总体评级：🟡 关注",
+            health_hint="🟡",
+            structured_actions=[{"summary": "x", "priority": "P0"}],
+        )
+        assert _estimate_urgency(result) == 4
+
+    def test_red_health_no_cap(self):
+        """🔴 预警 → 不设上限，P0 取 5。"""
+        result = AgentResult(
+            agent_id="ceo", agent_name="CEO 助理",
+            sections=[ResultSection(title="总体评级", content="🔴 预警")],
+            action_items=[],
+            raw_output="总体评级：🔴 预警",
+            health_hint="🔴",
+            structured_actions=[{"summary": "x", "priority": "P0"}],
+        )
+        assert _estimate_urgency(result) == 5
+
+    def test_green_health_p2_unchanged(self):
+        """🟢 健康 + P2 → 3（cap 等于原值，不下调）。"""
+        result = AgentResult(
+            agent_id="ceo", agent_name="CEO 助理",
+            sections=[ResultSection(title="总体评级", content="🟢 健康")],
+            action_items=[],
+            raw_output="总体评级：🟢 健康",
+            health_hint="🟢",
+            structured_actions=[{"summary": "x", "priority": "P2"}],
+        )
+        assert _estimate_urgency(result) == 3
+
+    def test_emoji_heuristic_with_green_cap(self):
+        """无 structured_actions：emoji 启发式 + 健康度 cap 联动。"""
+        result = AgentResult(
+            agent_id="ceo", agent_name="CEO 助理",
+            sections=[ResultSection(title="总体评级", content="🟢 健康")],
+            action_items=[],
+            raw_output="总体评级：🟢 健康\n虽然有 🔴 风险点但整体可控",
+            health_hint="🟢",
+        )
+        # raw_output 含 🔴 → emoji 启发式给 5；但 🟢 健康 cap → 3
+        assert _estimate_urgency(result) == 3
 
 
 class TestWriteCeoReport:

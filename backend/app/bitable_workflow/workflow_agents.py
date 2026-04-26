@@ -600,7 +600,12 @@ def _estimate_confidence(result: AgentResult) -> int:
 
 
 def _estimate_urgency(ceo_result: AgentResult) -> int:
-    """决策紧急度：优先从 CEO 的 metadata.actions 提取最高优先级。"""
+    """决策紧急度（v8.6.20-r3 修：与健康度联动，避免 🟢 健康 + 紧急度=5 的矛盾）：
+      1. 优先 CEO 的 metadata.structured_actions 最高 P 级
+      2. emoji 启发式（旧逻辑）
+      3. **按健康度设上限**：🟢→cap 3，🟡→cap 4，🔴→可 5（避免逻辑悖论）
+    """
+    raw_score = 3  # default
     if ceo_result.structured_actions:
         priority_score = {"P0": 5, "P1": 4, "P2": 3, "P3": 2}
         max_score = max(
@@ -608,15 +613,23 @@ def _estimate_urgency(ceo_result: AgentResult) -> int:
             default=0,
         )
         if max_score:
-            return max_score
-    combined = (ceo_result.raw_output or "").lower()
-    if "🔴" in ceo_result.raw_output or "紧急" in combined or "p0" in combined:
-        return 5
-    if "🟡" in ceo_result.raw_output or "重要" in combined:
-        return 4
-    if "🟢" in ceo_result.raw_output:
-        return 2
-    return 3
+            raw_score = max_score
+    else:
+        combined = (ceo_result.raw_output or "").lower()
+        if "🔴" in ceo_result.raw_output or "紧急" in combined or "p0" in combined:
+            raw_score = 5
+        elif "🟡" in ceo_result.raw_output or "重要" in combined:
+            raw_score = 4
+        elif "🟢" in ceo_result.raw_output:
+            raw_score = 2
+
+    # v8.6.20-r3：按健康度 cap 紧急度上限，避免「🟢 健康 + 紧急度=5」逻辑矛盾
+    health = _extract_health(ceo_result)
+    if "🟢" in health:
+        return min(raw_score, 3)  # 🟢 健康 → 紧急度不超过 3（中等）
+    if "🟡" in health:
+        return min(raw_score, 4)  # 🟡 关注 → 紧急度不超过 4
+    return raw_score  # 🔴 预警 / ⚪ 数据不足 → 不 cap，原值（最高 5）
 
 
 def _format_sections(result: AgentResult, max_chars: int = 2000) -> str:
