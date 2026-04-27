@@ -103,6 +103,22 @@ export async function listRecords(
   return resp.data;
 }
 
+export async function confirmTaskWorkflow(
+  app_token: string,
+  table_id: string,
+  record_id: string,
+  action: 'approve' | 'execute' | 'retrospective',
+  actor = '',
+): Promise<void> {
+  await api.post('/api/v1/workflow/confirm', {
+    app_token,
+    table_id,
+    record_id,
+    action,
+    actor,
+  });
+}
+
 export interface ProgressEvent {
   task_id: string;
   event_type: 'task.started' | 'wave.completed' | 'task.done' | 'task.error' | 'agent.token';

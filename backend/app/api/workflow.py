@@ -1,6 +1,7 @@
 """工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析任务 + SSE 进度流"""
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -14,6 +15,7 @@ from app.core.auth import issue_stream_token, require_api_key, verify_stream_tok
 
 _VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
 _VALID_STATUSES: set[str] = set(ALL_STATUSES)
+_VALID_CONFIRM_ACTIONS: set[str] = {"approve", "execute", "retrospective"}
 
 router = APIRouter(
     prefix="/api/v1/workflow",
@@ -78,6 +80,21 @@ class SeedRequest(BaseModel):
         if self.template and not self.template_name:
             self.template_name = self.template
         return self
+
+
+class ConfirmRequest(BaseModel):
+    app_token: str
+    table_id: str
+    record_id: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+    actor: str = ""
+
+    @field_validator("action")
+    @classmethod
+    def check_action(cls, v: str) -> str:
+        if v not in _VALID_CONFIRM_ACTIONS:
+            raise ValueError(f"action 必须是以下之一: {sorted(_VALID_CONFIRM_ACTIONS)}")
+        return v
 
 
 def _boolish(value: object) -> bool:
@@ -268,6 +285,105 @@ async def workflow_seed(req: SeedRequest):
         payload={"title": req.title, "dimension": req.dimension, "app_token": req.app_token},
     )
     return {"record_id": record_id}
+
+
+@router.post("/confirm", dependencies=[Depends(require_api_key)])
+async def workflow_confirm(req: ConfirmRequest):
+    """回写主表管理确认字段：拍板、执行落地、进入复盘。"""
+    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+    actor = req.actor.strip() or "驾驶舱操作"
+    fields: dict[str, object] = {}
+    optional_keys: list[str] = []
+    action_name = ""
+    action_status = "已完成"
+    action_summary = ""
+
+    if req.action == "approve":
+        fields.update(
+            {
+                "是否已拍板": True,
+                "拍板人": actor,
+                "拍板时间": now_ms,
+            }
+        )
+        optional_keys.extend(["拍板人", "拍板时间"])
+        action_name = "管理拍板确认"
+        action_summary = f"{actor} 已回写拍板结果"
+    elif req.action == "execute":
+        fields.update(
+            {
+                "是否已执行落地": True,
+                "执行完成时间": now_ms,
+            }
+        )
+        optional_keys.append("执行完成时间")
+        action_name = "执行落地确认"
+        action_summary = "已回写执行完成时间"
+    elif req.action == "retrospective":
+        fields.update({"是否进入复盘": True})
+        action_name = "进入复盘确认"
+        action_summary = "已标记任务进入复盘"
+
+    await bitable_ops.update_record_optional_fields(
+        req.app_token,
+        req.table_id,
+        req.record_id,
+        fields,
+        optional_keys=optional_keys,
+    )
+    await record_audit(
+        "workflow.confirm",
+        target=req.record_id,
+        payload={"action": req.action, "actor": actor, "app_token": req.app_token},
+    )
+
+    table_ids = _state.get("table_ids") or {}
+    action_tid = table_ids.get("action")
+    automation_log_tid = table_ids.get("automation_log")
+    task_title = ""
+    route = ""
+    try:
+        task_record = await bitable_ops.get_record(req.app_token, req.table_id, req.record_id)
+        task_fields = task_record.get("fields") or {}
+        task_title = str(task_fields.get("任务标题") or "").strip()
+        route = str(task_fields.get("工作流路由") or "").strip()
+    except Exception as exc:
+        logger.warning("confirm fetch task record failed record=%s: %s", req.record_id, exc)
+
+    if action_tid and task_title:
+        await bitable_ops.create_record_optional_fields(
+            req.app_token,
+            action_tid,
+            {
+                "动作标题": f"{action_name} · {task_title}",
+                "任务标题": task_title,
+                "动作类型": "工作流记录",
+                "动作状态": action_status,
+                "工作流路由": route,
+                "动作内容": action_summary,
+                "执行结果": f"{actor} 通过驾驶舱回写 {req.action}",
+                "关联记录ID": req.record_id,
+            },
+            optional_keys=["工作流路由", "关联记录ID"],
+        )
+    if automation_log_tid and task_title:
+        await bitable_ops.create_record_optional_fields(
+            req.app_token,
+            automation_log_tid,
+            {
+                "日志标题": f"{action_name} · {task_title}",
+                "任务标题": task_title,
+                "节点名称": action_name,
+                "触发来源": "驾驶舱回写",
+                "执行状态": action_status,
+                "工作流路由": route,
+                "日志摘要": action_summary,
+                "详细结果": f"{actor} 于驾驶舱执行 {req.action}，已同步回写主表字段。",
+                "关联记录ID": req.record_id,
+            },
+            optional_keys=["工作流路由", "触发来源", "详细结果", "关联记录ID"],
+        )
+    return {"record_id": req.record_id, "action": req.action, "updated": fields}
 
 
 @router.post("/stream-token/{task_record_id}", dependencies=[Depends(require_api_key)])

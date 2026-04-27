@@ -336,6 +336,7 @@ TASK_FIELDS = [
         "ui_type": "DateTime",
         "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
     },
+    {"field_name": "是否进入复盘", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
     {
         "field_name": "创建时间",
         "type": CREATED_TIME_FIELD_TYPE,

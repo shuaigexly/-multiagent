@@ -309,6 +309,56 @@ async def test_workflow_seed_explicit_fields_override_template_defaults(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_workflow_confirm_updates_management_fields(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {"logs": []}
+
+    async def fake_update_record(_app_token, _table_id, _record_id, fields, optional_keys=None):
+        captured["fields"] = fields
+        captured["optional_keys"] = optional_keys or []
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {"fields": {"任务标题": "增长复盘任务", "工作流路由": "等待拍板"}}
+
+    async def fake_create_record(_app_token, _table_id, fields, optional_keys=None):
+        captured["logs"].append((_table_id, fields, optional_keys or []))
+        return "rec_log"
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update_record)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", fake_create_record)
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log"}})
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_1",
+        action="approve",
+        actor="CEO",
+    )
+
+    result = await workflow.workflow_confirm(req)
+
+    assert result["record_id"] == "rec_1"
+    assert result["action"] == "approve"
+    assert captured["fields"]["是否已拍板"] is True
+    assert captured["fields"]["拍板人"] == "CEO"
+    assert "拍板时间" in captured["fields"]
+    assert "拍板时间" in captured["optional_keys"]
+    assert len(captured["logs"]) == 2
+    assert captured["logs"][0][0] == "tbl_action"
+    assert captured["logs"][1][0] == "tbl_log"
+
+
+@pytest.mark.asyncio
 async def test_delete_task_rejects_running_task_before_hard_delete():
     from fastapi import HTTPException
     from app.api import tasks

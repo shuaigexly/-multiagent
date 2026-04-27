@@ -26,6 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { toast } from '@/hooks/use-toast';
 import {
+  confirmTaskWorkflow,
   getStatus,
   listRecords,
   seedTask,
@@ -290,6 +291,10 @@ function taskWorkflowRoute(task: TaskRecord | null | undefined) {
   return textValue(taskField(task, '工作流路由'));
 }
 
+function yesNoLabel(value: unknown) {
+  return booleanValue(value) ? '是' : '否';
+}
+
 function scoreStars(score: unknown) {
   const clamped = clampScore(score);
   return `${'★'.repeat(clamped)}${'☆'.repeat(Math.max(0, 5 - clamped))}`;
@@ -546,6 +551,20 @@ export default function BitableWorkflow() {
     }
   };
 
+  const handleManagementConfirm = async (
+    action: 'approve' | 'execute' | 'retrospective',
+    successTitle: string,
+  ) => {
+    if (!setup || !selectedTask) return;
+    try {
+      await confirmTaskWorkflow(setup.app_token, setup.table_ids.task, selectedTask.record_id, action);
+      toast({ title: successTitle, description: '已回写到分析任务主表' });
+      refreshTasks();
+    } catch (err) {
+      toast({ title: '回写失败', description: String(err), variant: 'destructive' });
+    }
+  };
+
   const prioritizedTasks = useMemo(() => {
     return [...tasks].sort((left, right) => {
       const leftRank = STATUS_ORDER.indexOf((textValue(left.fields?.状态) || '待分析') as (typeof STATUS_ORDER)[number]);
@@ -680,6 +699,26 @@ export default function BitableWorkflow() {
     return { completed, skipped, failed, total: automationLogRecords.length };
   }, [automationLogRecords]);
 
+  const managementOverview = useMemo(() => {
+    let pendingApproval = 0;
+    let approved = 0;
+    let pendingExecution = 0;
+    let executed = 0;
+    let inRetrospective = 0;
+    tasks.forEach((task) => {
+      const route = taskWorkflowRoute(task);
+      const approvedFlag = booleanValue(task.fields?.是否已拍板);
+      const executedFlag = booleanValue(task.fields?.是否已执行落地);
+      const retroFlag = booleanValue(task.fields?.是否进入复盘);
+      if (route === '等待拍板' && !approvedFlag) pendingApproval += 1;
+      if (approvedFlag) approved += 1;
+      if (route === '直接执行' && !executedFlag) pendingExecution += 1;
+      if (executedFlag) executed += 1;
+      if (retroFlag) inRetrospective += 1;
+    });
+    return { pendingApproval, approved, pendingExecution, executed, inRetrospective };
+  }, [tasks]);
+
   const templateOverview = useMemo(() => {
     const byRoute: Record<string, number> = {};
     activeTemplates.forEach((record) => {
@@ -780,6 +819,33 @@ export default function BitableWorkflow() {
     });
     return { hard, inferred, pending };
   }, [selectedEvidence]);
+
+  const selectedManagementFlags = [
+    {
+      label: '是否已拍板',
+      value: yesNoLabel(selectedTask?.fields?.是否已拍板),
+      note: textValue(selectedTask?.fields?.拍板人) || '待回写拍板人',
+      tone: booleanValue(selectedTask?.fields?.是否已拍板)
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+        : 'border-rose-200 bg-rose-50 text-rose-700',
+    },
+    {
+      label: '是否已执行落地',
+      value: yesNoLabel(selectedTask?.fields?.是否已执行落地),
+      note: formatDateValue(selectedTask?.fields?.执行完成时间),
+      tone: booleanValue(selectedTask?.fields?.是否已执行落地)
+        ? 'border-sky-200 bg-sky-50 text-sky-700'
+        : 'border-amber-200 bg-amber-50 text-amber-700',
+    },
+    {
+      label: '是否进入复盘',
+      value: yesNoLabel(selectedTask?.fields?.是否进入复盘),
+      note: textValue(selectedTask?.fields?.归档状态) || '未进入复盘流程',
+      tone: booleanValue(selectedTask?.fields?.是否进入复盘)
+        ? 'border-violet-200 bg-violet-50 text-violet-700'
+        : 'border-slate-200 bg-slate-100 text-slate-600',
+    },
+  ];
 
   const selectedFollowups = useMemo(() => {
     if (!selectedTask) return [];
@@ -884,6 +950,30 @@ export default function BitableWorkflow() {
       note: '消息包、执行包与负责人默认值模板',
       icon: Sparkles,
       surface: 'from-violet-100 via-white to-fuchsia-50',
+      accent: 'text-violet-700',
+    },
+    {
+      label: '待拍板确认',
+      value: managementOverview.pendingApproval,
+      note: '等待管理层在主表回写拍板结果',
+      icon: ShieldAlert,
+      surface: 'from-rose-100 via-white to-orange-50',
+      accent: 'text-rose-700',
+    },
+    {
+      label: '待执行落地',
+      value: managementOverview.pendingExecution,
+      note: '已进入执行路由但尚未回写落地完成',
+      icon: ArrowUpRight,
+      surface: 'from-sky-100 via-white to-cyan-50',
+      accent: 'text-sky-700',
+    },
+    {
+      label: '进入复盘',
+      value: managementOverview.inRetrospective,
+      note: '已完成交付并进入复盘阶段的任务数',
+      icon: RefreshCw,
+      surface: 'from-violet-100 via-white to-indigo-50',
       accent: 'text-violet-700',
     },
   ];
@@ -1492,6 +1582,77 @@ export default function BitableWorkflow() {
                               </div>
                               <div className="mt-4 text-xs text-slate-500">
                                 建议复核时间：{formatDateValue(selectedTask.fields?.建议复核时间)}
+                              </div>
+                            </div>
+                          </div>
+                        </section>
+
+                        <section className="rounded-[28px] border border-slate-200 bg-white p-6">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Management Loop</p>
+                              <h3 className="mt-2 text-2xl font-semibold text-slate-950">管理确认闭环</h3>
+                            </div>
+                            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                              主表回写驱动
+                            </div>
+                          </div>
+
+                          <div className="mt-5 grid gap-4 md:grid-cols-3">
+                            {selectedManagementFlags.map((item) => (
+                              <div key={item.label} className={`rounded-[22px] border p-4 ${item.tone}`}>
+                                <div className="text-xs uppercase tracking-[0.18em] opacity-70">{item.label}</div>
+                                <div className="mt-2 text-2xl font-semibold">{item.value}</div>
+                                <div className="mt-3 text-xs leading-6 opacity-80">{item.note}</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-5 flex flex-wrap gap-3">
+                            <Button
+                              variant="outline"
+                              className="rounded-full"
+                              disabled={booleanValue(selectedTask.fields?.是否已拍板)}
+                              onClick={() => handleManagementConfirm('approve', '已确认拍板')}
+                            >
+                              <ShieldAlert className="mr-2 h-4 w-4" /> 回写拍板
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="rounded-full"
+                              disabled={booleanValue(selectedTask.fields?.是否已执行落地)}
+                              onClick={() => handleManagementConfirm('execute', '已确认执行落地')}
+                            >
+                              <ArrowUpRight className="mr-2 h-4 w-4" /> 回写执行完成
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="rounded-full"
+                              disabled={booleanValue(selectedTask.fields?.是否进入复盘)}
+                              onClick={() => handleManagementConfirm('retrospective', '已标记进入复盘')}
+                            >
+                              <RefreshCw className="mr-2 h-4 w-4" /> 标记进入复盘
+                            </Button>
+                          </div>
+
+                          <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                            <div className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                              <div className="text-sm font-semibold text-slate-950">确认责任人</div>
+                              <div className="mt-3 grid gap-3 text-sm text-slate-700">
+                                <div>汇报对象：{textValue(selectedTask.fields?.汇报对象) || '未指定'}</div>
+                                <div>执行负责人：{textValue(selectedTask.fields?.执行负责人) || '未指定'}</div>
+                                <div>复核负责人：{textValue(selectedTask.fields?.复核负责人) || '未指定'}</div>
+                                <div>拍板人：{textValue(selectedTask.fields?.拍板人) || '待回写'}</div>
+                              </div>
+                            </div>
+
+                            <div className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                              <div className="text-sm font-semibold text-slate-950">确认时间轴</div>
+                              <div className="mt-3 grid gap-3 text-sm text-slate-700">
+                                <div>拍板时间：{formatDateValue(selectedTask.fields?.拍板时间)}</div>
+                                <div>执行截止时间：{formatDateValue(selectedTask.fields?.执行截止时间)}</div>
+                                <div>执行完成时间：{formatDateValue(selectedTask.fields?.执行完成时间)}</div>
+                                <div>建议复核时间：{formatDateValue(selectedTask.fields?.建议复核时间)}</div>
                               </div>
                             </div>
                           </div>

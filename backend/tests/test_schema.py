@@ -93,6 +93,11 @@ class TestFieldCompleteness:
         assert "归档状态" in names
         assert "执行负责人" in names
         assert "复核负责人" in names
+        assert "是否已拍板" in names
+        assert "拍板时间" in names
+        assert "是否已执行落地" in names
+        assert "执行完成时间" in names
+        assert "是否进入复盘" in names
 
     def test_agent_output_required_columns(self):
         fields = agent_output_fields("tbl_x")
