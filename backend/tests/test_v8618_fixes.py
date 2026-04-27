@@ -164,6 +164,8 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
     assert result["native_assets"]["form_blueprints"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["status_summary"]["counts"]["created"] == 1
     assert result["native_assets"]["status_summary"]["counts"]["blueprint_ready"] >= 1
+    assert result["native_assets"]["advperm_blueprints"][0]["lifecycle_state"] == "blueprint_ready"
+    assert any(group["key"] == "advperm" for group in result["native_assets"]["asset_groups"])
     assert result["native_assets"]["manual_finish_checklist"][1]["done"] is True
     assert result["native_manifest"]["manifest_version"] == "v2"
     assert result["native_manifest"]["install_order"][0]["title"] == "启用高级权限"
@@ -757,3 +759,25 @@ def test_native_role_field_rules_cover_all_non_system_fields():
 
     review_history_expected = expected_fields(workflow_schema.REVIEW_HISTORY_FIELDS)
     assert set(_review_history_field_rule()["field_perms"].keys()) == review_history_expected
+
+
+def test_refresh_native_assets_includes_advperm_group():
+    from app.bitable_workflow.native_installer import _refresh_native_assets
+
+    assets = {
+        "advperm_state": "manual_finish_required",
+        "form_blueprints": [{"lifecycle_state": "created", "shared_url": "https://feishu.cn/form"}],
+        "automation_templates": [],
+        "workflow_blueprints": [],
+        "dashboard_blueprints": [],
+        "role_blueprints": [],
+        "manual_finish_checklist": [],
+    }
+
+    _refresh_native_assets(assets)
+
+    assert assets["status_summary"]["total_assets"] == 2
+    assert assets["status_summary"]["counts"]["manual_finish_required"] == 1
+    assert assets["status_summary"]["counts"]["created"] == 1
+    assert any(group["key"] == "advperm" for group in assets["asset_groups"])
+    assert assets["advperm_blueprints"][0]["lifecycle_state"] == "manual_finish_required"

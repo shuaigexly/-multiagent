@@ -33,6 +33,7 @@ export interface WorkflowSetup {
       state: string;
       counts: Record<string, number>;
     }>;
+    advperm_blueprints?: Array<Record<string, unknown>>;
     form_blueprints?: Array<Record<string, unknown>>;
     automation_templates?: Array<Record<string, unknown>>;
     workflow_blueprints?: Array<Record<string, unknown>>;

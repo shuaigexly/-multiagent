@@ -700,6 +700,18 @@ def _build_native_assets(
     dashboard_specs = build_dashboard_specs()
     role_specs = build_role_specs()
     form_spec = build_form_spec()
+    advperm_blueprints = [
+        {
+            "name": "Base 高级权限",
+            "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "advperm",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "先启用 Base 高级权限，再继续创建角色与角色工作面。",
+            "blocking_reason": "当前仍需 Base 管理员权限启用高级权限。",
+        }
+    ]
     task_forms = view_assets.get("forms") or []
     intake_form = next((item for item in task_forms if item.get("view_name") == "📥 需求收集表"), None)
     form_blueprints = [
@@ -795,6 +807,7 @@ def _build_native_assets(
         for spec in role_specs
     ]
     asset_groups = [
+        {"key": "advperm", "label": "高级权限", "items": advperm_blueprints},
         {"key": "forms", "label": "表单入口", "items": form_blueprints},
         {"key": "automations", "label": "自动化模板", "items": automation_templates},
         {"key": "workflows", "label": "工作流蓝图", "items": workflow_blueprints},
@@ -812,6 +825,7 @@ def _build_native_assets(
         "base_meta": base_meta,
         "base_url": base_url,
         "app_token": app_token,
+        "advperm_blueprints": advperm_blueprints,
         "form_blueprints": form_blueprints,
         "automation_templates": automation_templates,
         "workflow_blueprints": workflow_blueprints,

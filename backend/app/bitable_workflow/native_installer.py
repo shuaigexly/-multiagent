@@ -419,6 +419,24 @@ def _asset_list(assets: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return value if isinstance(value, list) else []
 
 
+def _advperm_items(assets: dict[str, Any]) -> list[dict[str, Any]]:
+    items = _asset_list(assets, "advperm_blueprints")
+    if items:
+        state = str(assets.get("advperm_state") or items[0].get("lifecycle_state") or "blueprint_ready")
+        items[0]["lifecycle_state"] = state
+        return items
+    state = str(assets.get("advperm_state") or "blueprint_ready")
+    synthesized = {
+        "name": "Base 高级权限",
+        "lifecycle_state": state,
+        "native_surface": "advperm",
+        "delivery_mode": "manual_native_config",
+        "api_readiness": "not_connected",
+    }
+    assets["advperm_blueprints"] = [synthesized]
+    return assets["advperm_blueprints"]
+
+
 def _resp_data(resp: dict[str, Any]) -> dict[str, Any]:
     data = resp.get("data")
     return data if isinstance(data, dict) else {}
@@ -468,6 +486,7 @@ def _normalize_block_config(block_config: dict[str, Any], table_ids: dict[str, s
 
 def _refresh_native_assets(assets: dict[str, Any]) -> None:
     groups = [
+        {"key": "advperm", "label": "高级权限", "items": _advperm_items(assets)},
         {"key": "forms", "label": "表单入口", "items": _asset_list(assets, "form_blueprints")},
         {"key": "automations", "label": "自动化模板", "items": _asset_list(assets, "automation_templates")},
         {"key": "workflows", "label": "工作流蓝图", "items": _asset_list(assets, "workflow_blueprints")},
