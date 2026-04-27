@@ -139,6 +139,7 @@ const EXCEPTION_STATUS_STYLE: Record<string, string> = {
 const ACTION_STATUS_STYLE: Record<string, string> = {
   已完成: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   已跳过: 'border-slate-200 bg-slate-100 text-slate-600',
+  待补完: 'border-amber-200 bg-amber-50 text-amber-700',
   执行失败: 'border-rose-200 bg-rose-50 text-rose-700',
   待执行: 'border-amber-200 bg-amber-50 text-amber-700',
 };
@@ -843,15 +844,17 @@ export default function BitableWorkflow() {
 
   const automationOverview = useMemo(() => {
     let completed = 0;
+    let manual = 0;
     let skipped = 0;
     let failed = 0;
     automationLogRecords.forEach((record) => {
       const status = textValue(record.fields?.执行状态);
       if (status === '已完成') completed += 1;
+      if (status === '待补完') manual += 1;
       if (status === '已跳过') skipped += 1;
       if (status === '执行失败') failed += 1;
     });
-    return { completed, skipped, failed, total: automationLogRecords.length };
+    return { completed, manual, skipped, failed, total: automationLogRecords.length };
   }, [automationLogRecords]);
   const nativeInstallLogs = useMemo(
     () =>
@@ -2941,6 +2944,7 @@ export default function BitableWorkflow() {
                             <div className="flex flex-wrap gap-2 text-xs">
                               {[
                                 { label: '成功', value: selectedAutomationLogs.filter((item) => textValue(item.fields?.执行状态) === '已完成').length, cls: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+                                { label: '待补完', value: selectedAutomationLogs.filter((item) => textValue(item.fields?.执行状态) === '待补完').length, cls: 'border-amber-200 bg-amber-50 text-amber-700' },
                                 { label: '跳过', value: selectedAutomationLogs.filter((item) => textValue(item.fields?.执行状态) === '已跳过').length, cls: 'border-slate-200 bg-slate-100 text-slate-600' },
                                 { label: '失败', value: selectedAutomationLogs.filter((item) => textValue(item.fields?.执行状态) === '执行失败').length, cls: 'border-rose-200 bg-rose-50 text-rose-700' },
                               ].map((item) => (
@@ -2952,7 +2956,7 @@ export default function BitableWorkflow() {
                           </div>
                           {selectedAutomationLogs.length === 0 ? (
                             <div className="mt-5">
-                              <EmptyState text="当前任务还没有自动化节点审计。随着消息通知、执行任务、复核任务和归档节点运行，这里会记录每个节点的成功、跳过和失败。" />
+                              <EmptyState text="当前任务还没有自动化节点审计。随着消息通知、执行任务、复核任务和归档节点运行，这里会记录每个节点的成功、待补完、跳过和失败。" />
                             </div>
                           ) : (
                             <div className="mt-5 space-y-3">

@@ -755,14 +755,24 @@ async def _apply_template_config(
     merged["套用模板"] = str(selected.get("模板名称") or selected_template_name or "").strip()
     if not str(merged.get("汇报对象") or "").strip():
         merged["汇报对象"] = str(selected.get("默认汇报对象") or "").strip()
+    if not str(merged.get("汇报对象OpenID") or "").strip():
+        merged["汇报对象OpenID"] = str(selected.get("默认汇报对象OpenID") or "").strip()
     if not str(merged.get("拍板负责人") or "").strip():
         merged["拍板负责人"] = str(selected.get("默认拍板负责人") or "").strip()
+    if not str(merged.get("拍板负责人OpenID") or "").strip():
+        merged["拍板负责人OpenID"] = str(selected.get("默认拍板负责人OpenID") or "").strip()
     if not str(merged.get("执行负责人") or "").strip():
         merged["执行负责人"] = str(selected.get("默认执行负责人") or "").strip()
+    if not str(merged.get("执行负责人OpenID") or "").strip():
+        merged["执行负责人OpenID"] = str(selected.get("默认执行负责人OpenID") or "").strip()
     if not str(merged.get("复核负责人") or "").strip():
         merged["复核负责人"] = str(selected.get("默认复核负责人") or "").strip()
+    if not str(merged.get("复核负责人OpenID") or "").strip():
+        merged["复核负责人OpenID"] = str(selected.get("默认复核负责人OpenID") or "").strip()
     if not str(merged.get("复盘负责人") or "").strip():
         merged["复盘负责人"] = str(selected.get("默认复盘负责人") or "").strip()
+    if not str(merged.get("复盘负责人OpenID") or "").strip():
+        merged["复盘负责人OpenID"] = str(selected.get("默认复盘负责人OpenID") or "").strip()
     if int(merged.get("复核SLA小时") or 0) <= 0:
         merged["复核SLA小时"] = int(selected.get("默认复核SLA小时") or 0)
     route_buckets = _derive_workflow_route(review_fields, ceo_result)[1]

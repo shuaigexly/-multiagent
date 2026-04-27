@@ -86,7 +86,17 @@ async def apply_native_manifest(
 async def _apply_advperm(app_token: str, report: list[dict[str, Any]]) -> None:
     try:
         resp = await cli_base("+advperm-enable", "--base-token", app_token)
-        report.append({"surface": "role", "name": "启用高级权限", "status": "created", "response": resp})
+        data = _resp_data(resp)
+        success = _resp_success(data)
+        report.append(
+            {
+                "surface": "role",
+                "name": "启用高级权限",
+                "status": "created" if success else "manual_finish_required",
+                "response": resp,
+                "error": "" if success else "高级权限启用返回未确认 success=true",
+            }
+        )
     except Exception as exc:
         logger.warning("advperm enable failed: %s", exc)
         report.append({"surface": "role", "name": "启用高级权限", "status": _error_state(exc), "error": str(exc)})
@@ -109,6 +119,9 @@ async def _apply_form(
     if not force and str(form.get("lifecycle_state") or "") == "created":
         report.append({"surface": "form", "name": str(form.get("name") or "任务收集表单"), "status": "skipped", "reason": "already_created"})
         return
+    form_id = ""
+    created_question_count = 0
+    questions = list(form_spec.get("questions") or [])
     try:
         resp = await cli_base(
             "+form-create",
@@ -123,9 +136,25 @@ async def _apply_form(
         )
         data = _resp_data(resp)
         form_id = str(data.get("id") or "")
-        questions = list(form_spec.get("questions") or [])
-        created_question_count = 0
-        if form_id and questions:
+        if not form_id:
+            form["lifecycle_state"] = "manual_finish_required"
+            form["cloud_object_id"] = ""
+            form["applied_at"] = applied_at
+            form["question_count"] = 0
+            form["questions"] = questions
+            form["description"] = str(form_spec["description"])
+            form["next_step"] = "请先在飞书内确认表单是否已创建成功，再继续补题目和共享范围"
+            form["blocking_reason"] = "表单创建返回中缺少 form_id"
+            report.append(
+                {
+                    "surface": "form",
+                    "name": str(form.get("name") or "任务收集表单"),
+                    "status": "manual_finish_required",
+                    "error": "表单创建返回中缺少 form_id",
+                }
+            )
+            return
+        if questions:
             for idx in range(0, len(questions), 10):
                 batch = questions[idx : idx + 10]
                 await cli_base(
@@ -159,8 +188,24 @@ async def _apply_form(
         )
     except Exception as exc:
         form["lifecycle_state"] = _error_state(exc)
+        form["cloud_object_id"] = form_id
+        form["applied_at"] = applied_at
+        form["question_count"] = created_question_count
+        form["questions"] = questions
+        form["description"] = str(form_spec["description"])
+        if form_id:
+            form["next_step"] = "表单对象已经创建，但题目或后续配置未完整落下，请在飞书里补齐后重试"
         form["blocking_reason"] = str(exc)
-        report.append({"surface": "form", "name": str(form.get("name") or "任务收集表单"), "status": form["lifecycle_state"], "error": str(exc)})
+        report.append(
+            {
+                "surface": "form",
+                "name": str(form.get("name") or "任务收集表单"),
+                "status": form["lifecycle_state"],
+                "object_id": form_id,
+                "question_count": created_question_count,
+                "error": str(exc),
+            }
+        )
 
 
 async def _apply_workflows(
@@ -180,13 +225,20 @@ async def _apply_workflows(
             resp = await cli_base("+workflow-create", "--base-token", app_token, "--json", _json(spec["body"]))
             data = _resp_data(resp)
             workflow_id = str(data.get("workflow_id") or "")
+            enabled = False
             if workflow_id:
-                await cli_base("+workflow-enable", "--base-token", app_token, "--workflow-id", workflow_id)
-            item["lifecycle_state"] = "created" if workflow_id else "manual_finish_required"
+                enable_resp = await cli_base("+workflow-enable", "--base-token", app_token, "--workflow-id", workflow_id)
+                enabled = _workflow_enabled(_resp_data(enable_resp), workflow_id)
+            item["lifecycle_state"] = "created" if workflow_id and enabled else "manual_finish_required"
             item["cloud_object_id"] = workflow_id
             item["applied_at"] = applied_at
             item["next_step"] = "如需更强业务逻辑，可继续在飞书工作流里补成员映射、审批链和任务卡片动作"
-            item["blocking_reason"] = "" if workflow_id else "工作流创建返回中缺少 workflow_id"
+            if not workflow_id:
+                item["blocking_reason"] = "工作流创建返回中缺少 workflow_id"
+            elif not enabled:
+                item["blocking_reason"] = "工作流已创建，但启用返回未确认 status=enabled"
+            else:
+                item["blocking_reason"] = ""
             report.append(
                 {
                     "surface": "workflow",
@@ -219,13 +271,20 @@ async def _apply_automations(
             resp = await cli_base("+workflow-create", "--base-token", app_token, "--json", _json(spec["body"]))
             data = _resp_data(resp)
             workflow_id = str(data.get("workflow_id") or "")
+            enabled = False
             if workflow_id:
-                await cli_base("+workflow-enable", "--base-token", app_token, "--workflow-id", workflow_id)
-            item["lifecycle_state"] = "created" if workflow_id else "manual_finish_required"
+                enable_resp = await cli_base("+workflow-enable", "--base-token", app_token, "--workflow-id", workflow_id)
+                enabled = _workflow_enabled(_resp_data(enable_resp), workflow_id)
+            item["lifecycle_state"] = "created" if workflow_id and enabled else "manual_finish_required"
             item["cloud_object_id"] = workflow_id
             item["applied_at"] = applied_at
             item["next_step"] = "继续在飞书工作流中把消息、任务、审批和负责人映射替换为真实业务动作"
-            item["blocking_reason"] = "" if workflow_id else "自动化 scaffold 创建后未返回 workflow_id"
+            if not workflow_id:
+                item["blocking_reason"] = "自动化 scaffold 创建后未返回 workflow_id"
+            elif not enabled:
+                item["blocking_reason"] = "自动化 scaffold 已创建，但启用返回未确认 status=enabled"
+            else:
+                item["blocking_reason"] = ""
             report.append(
                 {
                     "surface": "automation",
@@ -267,8 +326,8 @@ async def _apply_dashboards(
             )
             data = _resp_data(created)
             dashboard_id = str(data.get("dashboard_id") or "")
+            created_block_count = 0
             if dashboard_id:
-                created_blocks: list[str] = []
                 for _, block_name, block_type, block_config in spec["block_specs"]:
                     normalized = _normalize_block_config(block_config, table_ids, table_ids["task"])
                     block_resp = await cli_base(
@@ -286,15 +345,22 @@ async def _apply_dashboards(
                     )
                     block_id = str((_resp_data(block_resp).get("block") or {}).get("block_id") or "")
                     if block_id:
-                        created_blocks.append(block_id)
-                if created_blocks:
+                        created_block_count += 1
+                if created_block_count:
                     await cli_base("+dashboard-arrange", "--base-token", app_token, "--dashboard-id", dashboard_id)
-            item["lifecycle_state"] = "created" if dashboard_id else "manual_finish_required"
+            expected_block_count = len(spec["block_specs"])
+            dashboard_ready = bool(dashboard_id) and created_block_count == expected_block_count
+            item["lifecycle_state"] = "created" if dashboard_ready else "manual_finish_required"
             item["cloud_object_id"] = dashboard_id
-            item["cloud_block_count"] = len(spec["block_specs"]) if dashboard_id else 0
+            item["cloud_block_count"] = created_block_count
             item["applied_at"] = applied_at
             item["next_step"] = "可继续在飞书仪表盘中补更多图表块并按需智能重排"
-            item["blocking_reason"] = "" if dashboard_id else "仪表盘创建返回中缺少 dashboard_id"
+            if not dashboard_id:
+                item["blocking_reason"] = "仪表盘创建返回中缺少 dashboard_id"
+            elif created_block_count != expected_block_count:
+                item["blocking_reason"] = f"仪表盘 block 创建不完整：期望 {expected_block_count}，实际 {created_block_count}"
+            else:
+                item["blocking_reason"] = ""
             report.append(
                 {
                     "surface": "dashboard",
@@ -302,6 +368,7 @@ async def _apply_dashboards(
                     "status": item["lifecycle_state"],
                     "object_id": dashboard_id,
                     "block_count": item.get("cloud_block_count", 0),
+                    "expected_block_count": expected_block_count,
                     "summary": str(spec.get("narrative") or ""),
                 }
             )
@@ -325,16 +392,17 @@ async def _apply_roles(
             report.append({"surface": "role", "name": str(item.get("name") or ""), "status": "skipped", "reason": "already_created"})
             continue
         try:
-            await cli_base("+role-create", "--base-token", app_token, "--json", _json(spec["config"]))
-            item["lifecycle_state"] = "created"
+            resp = await cli_base("+role-create", "--base-token", app_token, "--json", _json(spec["config"]))
+            success = _resp_success(_resp_data(resp))
+            item["lifecycle_state"] = "created" if success else "manual_finish_required"
             item["applied_at"] = applied_at
             item["next_step"] = "继续在飞书中给该角色分配成员，并细化字段/视图级权限"
-            item["blocking_reason"] = ""
+            item["blocking_reason"] = "" if success else "角色创建返回未确认 success=true"
             report.append(
                 {
                     "surface": "role",
                     "name": str(item.get("name") or ""),
-                    "status": "created",
+                    "status": item["lifecycle_state"],
                     "summary": str(spec.get("native_goal") or ""),
                 }
             )
@@ -352,6 +420,14 @@ def _asset_list(assets: dict[str, Any], key: str) -> list[dict[str, Any]]:
 def _resp_data(resp: dict[str, Any]) -> dict[str, Any]:
     data = resp.get("data")
     return data if isinstance(data, dict) else {}
+
+
+def _resp_success(data: dict[str, Any]) -> bool:
+    return bool(data.get("success") is True)
+
+
+def _workflow_enabled(data: dict[str, Any], workflow_id: str) -> bool:
+    return str(data.get("workflow_id") or "") == workflow_id and str(data.get("status") or "").lower() == "enabled"
 
 
 def _error_state(exc: Exception) -> str:
@@ -432,15 +508,32 @@ def _refresh_native_assets(assets: dict[str, Any]) -> None:
     assets["asset_groups"] = group_states
 
     checklist = _asset_list(assets, "manual_finish_checklist")
-    form_created = any(str(item.get("lifecycle_state") or "") == "created" for item in _asset_list(assets, "form_blueprints"))
-    workflow_created = any(str(item.get("lifecycle_state") or "") == "created" for item in _asset_list(assets, "workflow_blueprints"))
-    dashboard_created = any(str(item.get("lifecycle_state") or "") == "created" for item in _asset_list(assets, "dashboard_blueprints"))
-    role_created = any(str(item.get("lifecycle_state") or "") == "created" for item in _asset_list(assets, "role_blueprints"))
+    form_items = _asset_list(assets, "form_blueprints")
+    automation_items = _asset_list(assets, "automation_templates")
+    workflow_items = _asset_list(assets, "workflow_blueprints")
+    dashboard_items = _asset_list(assets, "dashboard_blueprints")
+    role_items = _asset_list(assets, "role_blueprints")
+    form_state = _group_state(form_items)
+    automation_state = _group_state(automation_items)
+    workflow_state = _group_state(workflow_items)
+    dashboard_state = _group_state(dashboard_items)
+    role_state = _group_state(role_items)
+    form_done = any(str(item.get("shared_url") or "").strip() for item in form_items)
+    automation_done = bool(automation_items) and all(str(item.get("lifecycle_state") or "") == "created" for item in automation_items)
+    workflow_done = bool(workflow_items) and all(str(item.get("lifecycle_state") or "") == "created" for item in workflow_items)
+    dashboard_done = bool(dashboard_items) and all(str(item.get("lifecycle_state") or "") == "created" for item in dashboard_items)
+    role_done = bool(role_items) and all(str(item.get("lifecycle_state") or "") == "created" for item in role_items)
     if len(checklist) >= 5:
-        checklist[0]["done"] = form_created
-        checklist[2]["done"] = workflow_created
-        checklist[3]["done"] = dashboard_created
-        checklist[4]["done"] = role_created
+        checklist[0]["state"] = form_state
+        checklist[0]["done"] = form_done
+        checklist[1]["state"] = automation_state
+        checklist[1]["done"] = automation_done
+        checklist[2]["state"] = workflow_state
+        checklist[2]["done"] = workflow_done
+        checklist[3]["state"] = dashboard_state
+        checklist[3]["done"] = dashboard_done
+        checklist[4]["state"] = role_state
+        checklist[4]["done"] = role_done
 
 
 async def _write_native_install_logs(
@@ -455,7 +548,7 @@ async def _write_native_install_logs(
         return
     for item in report:
         status = str(item.get("status") or "manual_finish_required")
-        mapped_status = "已完成" if status == "created" else "已跳过" if status == "skipped" else "执行失败"
+        mapped_status = _automation_log_status(status)
         detail_parts = [
             f"surface={item.get('surface', '')}",
             f"status={status}",
@@ -467,6 +560,8 @@ async def _write_native_install_logs(
             detail_parts.append(f"object_id={item.get('object_id')}")
         if item.get("block_count") is not None:
             detail_parts.append(f"block_count={item.get('block_count')}")
+        if item.get("expected_block_count") is not None:
+            detail_parts.append(f"expected_block_count={item.get('expected_block_count')}")
         if item.get("reason"):
             detail_parts.append(f"reason={item.get('reason')}")
         if item.get("error"):
@@ -495,3 +590,33 @@ async def _write_native_install_logs(
             )
         except Exception as exc:
             logger.warning("write native install automation log failed item=%s: %s", item.get("name"), exc)
+
+
+def _group_state(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "blueprint_ready"
+    priority = {
+        "permission_blocked": 5,
+        "manual_finish_required": 4,
+        "blueprint_ready": 3,
+        "api_supported": 2,
+        "created": 1,
+    }
+    state = "created"
+    for item in items:
+        current = str(item.get("lifecycle_state") or "blueprint_ready")
+        if current not in priority:
+            current = "blueprint_ready"
+        if priority[current] > priority[state]:
+            state = current
+    return state
+
+
+def _automation_log_status(status: str) -> str:
+    if status == "created":
+        return "已完成"
+    if status == "skipped":
+        return "已跳过"
+    if status == "manual_finish_required":
+        return "待补完"
+    return "执行失败"

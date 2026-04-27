@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from typing import Any
 
 from app.bitable_workflow.native_specs import (
@@ -71,7 +72,7 @@ def build_native_manifest(
             "key": "advperm",
             "label": "高级权限",
             "surface": "role",
-            "status": "blueprint_ready",
+            "status": _surface_state(native_assets, "role"),
             "commands": [
                 f"lark-cli base +advperm-enable --base-token {app_token}",
             ],
@@ -84,7 +85,7 @@ def build_native_manifest(
             "key": "form",
             "label": "原生表单",
             "surface": "form",
-            "status": "manual_finish_required",
+            "status": _surface_state(native_assets, "form"),
             "commands": _form_commands(app_token, table_ids["task"], form_spec),
             "notes": [
                 "当前 setup 已创建表单视图；这里补的是独立表单对象与题目。",
@@ -96,7 +97,7 @@ def build_native_manifest(
             "key": "automation",
             "label": "自动化 scaffold",
             "surface": "automation",
-            "status": "blueprint_ready",
+            "status": _surface_state(native_assets, "automation"),
             "commands": _workflow_create_commands(app_token, automation_specs),
             "notes": [
                 "这里用 workflow scaffold 承接自动化模板，避免自动化永远停在 blueprint 状态。",
@@ -108,7 +109,7 @@ def build_native_manifest(
             "key": "workflow",
             "label": "路由工作流",
             "surface": "workflow",
-            "status": "blueprint_ready",
+            "status": _surface_state(native_assets, "workflow"),
             "commands": _workflow_create_commands(app_token, workflow_specs),
             "notes": [
                 "创建后建议立即启用，并继续补成员映射、审批链和任务动作。",
@@ -120,7 +121,7 @@ def build_native_manifest(
             "key": "dashboard",
             "label": "管理仪表盘",
             "surface": "dashboard",
-            "status": "blueprint_ready",
+            "status": _surface_state(native_assets, "dashboard"),
             "commands": _dashboard_commands(app_token, dashboard_specs),
             "notes": [
                 "每个仪表盘都带可直接落地的 block 配置，按顺序串行创建即可。",
@@ -131,7 +132,7 @@ def build_native_manifest(
             "key": "role",
             "label": "角色权限",
             "surface": "role",
-            "status": "blueprint_ready",
+            "status": _surface_state(native_assets, "role"),
             "commands": _role_commands(app_token, role_specs),
             "notes": [
                 "角色配置里已经带了 dashboard_rule_map、view_rule 和 edit/read 工作面差异。",
@@ -164,15 +165,39 @@ def _workflow_create_commands(app_token: str, specs: list[dict[str, Any]]) -> li
     commands: list[str] = []
     for spec in specs:
         commands.append(f"# {spec['name']}")
-        commands.append(f"lark-cli base +workflow-create --base-token {app_token} --json {json.dumps(spec['body'], ensure_ascii=False)}")
+        commands.append(
+            " ".join(
+                [
+                    "lark-cli base +workflow-create",
+                    f"--base-token {_shell_arg(app_token)}",
+                    f"--json {_json_arg(spec['body'])}",
+                ]
+            )
+        )
     return commands
 
 
 def _form_commands(app_token: str, table_id: str, spec: dict[str, Any]) -> list[str]:
     return [
-        f"lark-cli base +form-create --base-token {app_token} --table-id {table_id} --name '{spec['name']}' --description '{spec['description']}'",
+        " ".join(
+            [
+                "lark-cli base +form-create",
+                f"--base-token {_shell_arg(app_token)}",
+                f"--table-id {_shell_arg(table_id)}",
+                f"--name {_shell_arg(spec['name'])}",
+                f"--description {_shell_arg(spec['description'])}",
+            ]
+        ),
         "# 记录上一步返回的 <form_id>，再创建题目：",
-        f"lark-cli base +form-questions-create --base-token {app_token} --table-id {table_id} --form-id <form_id> --questions {json.dumps(spec['questions'], ensure_ascii=False)}",
+        " ".join(
+            [
+                "lark-cli base +form-questions-create",
+                f"--base-token {_shell_arg(app_token)}",
+                f"--table-id {_shell_arg(table_id)}",
+                "--form-id <form_id>",
+                f"--questions {_json_arg(spec['questions'])}",
+            ]
+        ),
     ]
 
 
@@ -180,7 +205,16 @@ def _dashboard_commands(app_token: str, specs: list[dict[str, Any]]) -> list[str
     commands: list[str] = []
     for spec in specs:
         commands.append(f"# {spec['name']}")
-        commands.append(f"lark-cli base +dashboard-create --base-token {app_token} --name '{spec['name']}' --theme-style SimpleBlue")
+        commands.append(
+            " ".join(
+                [
+                    "lark-cli base +dashboard-create",
+                    f"--base-token {_shell_arg(app_token)}",
+                    f"--name {_shell_arg(spec['name'])}",
+                    "--theme-style SimpleBlue",
+                ]
+            )
+        )
         commands.append("# 创建后按 block_specs 顺序串行执行 +dashboard-block-create，再调用 +dashboard-arrange")
     return commands
 
@@ -189,8 +223,24 @@ def _role_commands(app_token: str, specs: list[dict[str, Any]]) -> list[str]:
     commands: list[str] = []
     for spec in specs:
         commands.append(f"# {spec['name']}")
-        commands.append(f"lark-cli base +role-create --base-token {app_token} --json {json.dumps(spec['config'], ensure_ascii=False)}")
+        commands.append(
+            " ".join(
+                [
+                    "lark-cli base +role-create",
+                    f"--base-token {_shell_arg(app_token)}",
+                    f"--json {_json_arg(spec['config'])}",
+                ]
+            )
+        )
     return commands
+
+
+def _shell_arg(value: Any) -> str:
+    return shlex.quote(str(value))
+
+
+def _json_arg(value: Any) -> str:
+    return shlex.quote(json.dumps(value, ensure_ascii=False))
 
 
 def _manifest_markdown(
@@ -234,3 +284,32 @@ def _manifest_markdown(
         lines.append("```")
         lines.append("")
     return "\n".join(lines)
+
+
+def _surface_state(native_assets: dict[str, Any], surface: str) -> str:
+    key_map = {
+        "form": "form_blueprints",
+        "automation": "automation_templates",
+        "workflow": "workflow_blueprints",
+        "dashboard": "dashboard_blueprints",
+        "role": "role_blueprints",
+    }
+    items = native_assets.get(key_map[surface]) or []
+    if not isinstance(items, list) or not items:
+        return "blueprint_ready"
+
+    priority = {
+        "permission_blocked": 5,
+        "manual_finish_required": 4,
+        "blueprint_ready": 3,
+        "api_supported": 2,
+        "created": 1,
+    }
+    state = "created"
+    for item in items:
+        current = str((item or {}).get("lifecycle_state") or "blueprint_ready")
+        if current not in priority:
+            current = "blueprint_ready"
+        if priority[current] > priority[state]:
+            state = current
+    return state

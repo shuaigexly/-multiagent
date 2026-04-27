@@ -175,6 +175,13 @@ ACTION_STATUS_OPTIONS = [
     {"name": "执行失败", "color": 1},
 ]
 
+AUTOMATION_LOG_STATUS_OPTIONS = [
+    {"name": "已完成", "color": 4},
+    {"name": "已跳过", "color": 0},
+    {"name": "待补完", "color": 2},
+    {"name": "执行失败", "color": 1},
+]
+
 AUTOMATION_EXECUTION_STATUS_OPTIONS = [
     {"name": "未触发", "color": 0},
     {"name": "执行中", "color": 3},
@@ -857,7 +864,7 @@ AUTOMATION_LOG_FIELDS = [
         "field_name": "执行状态",
         "type": SINGLE_SELECT_FIELD_TYPE,
         "ui_type": "SingleSelect",
-        "options": ACTION_STATUS_OPTIONS,
+        "options": AUTOMATION_LOG_STATUS_OPTIONS,
     },
     {
         "field_name": "工作流路由",

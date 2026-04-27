@@ -150,10 +150,15 @@ export async function seedTask(
     referenced_dataset?: string;
     template_name?: string;
     report_audience?: string;
+    report_audience_open_id?: string;
     approval_owner?: string;
+    approval_owner_open_id?: string;
     execution_owner?: string;
+    execution_owner_open_id?: string;
     review_owner?: string;
+    review_owner_open_id?: string;
     retrospective_owner?: string;
+    retrospective_owner_open_id?: string;
     review_sla_hours?: number;
   },
 ): Promise<{ record_id: string }> {

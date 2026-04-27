@@ -223,16 +223,27 @@ async def workflow_setup(req: SetupRequest):
         )
     result = await runner.setup_workflow(req.name, mode=req.mode, base_type=req.base_type)
     if req.apply_native:
-        native_apply = await apply_native_manifest(
-            app_token=result["app_token"],
-            base_url=result["url"],
-            table_ids=result["table_ids"],
-            base_meta=result["base_meta"],
-            native_assets=result["native_assets"],
-        )
-        result["native_assets"] = native_apply["native_assets"]
-        result["native_manifest"] = native_apply["native_manifest"]
-        result["native_apply_report"] = native_apply["report"]
+        try:
+            native_apply = await apply_native_manifest(
+                app_token=result["app_token"],
+                base_url=result["url"],
+                table_ids=result["table_ids"],
+                base_meta=result["base_meta"],
+                native_assets=result["native_assets"],
+            )
+            result["native_assets"] = native_apply["native_assets"]
+            result["native_manifest"] = native_apply["native_manifest"]
+            result["native_apply_report"] = native_apply["report"]
+        except Exception as exc:
+            logger.warning("setup native apply failed app=%s: %s", result.get("app_token"), exc)
+            result["native_apply_report"] = [
+                {
+                    "surface": "setup",
+                    "name": "原生安装执行",
+                    "status": "manual_finish_required",
+                    "error": str(exc),
+                }
+            ]
     _state.update(result)
     await record_audit(
         "workflow.setup",
