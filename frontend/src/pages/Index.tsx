@@ -5,7 +5,7 @@ import ModuleCard from '../components/ModuleCard';
 import ExecutionTimeline from '../components/ExecutionTimeline';
 import ContextSuggestions, { type Suggestion } from '../components/ContextSuggestions';
 import { cancelTask, confirmTask, createSSEConnection, getTaskStatus, listAgents, submitTask } from '../services/api';
-import { isStoredLLMConfigured } from '../services/config';
+import { getConfig, isStoredLLMConfigured, setStoredLLMConfigured } from '../services/config';
 import { getFeishuContext, getChats, type FeishuContext } from '../services/feishu';
 import type { AgentInfo, SSEEvent, TaskPlanResponse } from '../services/types';
 import { Button } from '@/components/ui/button';
@@ -141,12 +141,10 @@ export default function Workbench() {
     listAgents().then(setAgents).catch(() => setError('加载团队成员失败'));
     // 从后端同步 LLM 配置状态到 localStorage，确保 isStoredLLMConfigured() 准确
     // 同时检查飞书是否已配置
-    import('../services/config').then(({ getConfig, setStoredLLMConfigured }) => {
-      getConfig().then(cfg => {
-        setStoredLLMConfigured(Boolean(cfg.llm_api_key?.set));
-        setFeishuConfigured(Boolean(cfg.feishu_app_id?.set && cfg.feishu_app_secret?.set));
-      }).catch(() => {});
-    });
+    getConfig().then(cfg => {
+      setStoredLLMConfigured(Boolean(cfg.llm_api_key?.set));
+      setFeishuConfigured(Boolean(cfg.feishu_app_id?.set && cfg.feishu_app_secret?.set));
+    }).catch(() => {});
     Promise.all([
       getFeishuContext(),
       getChats().catch(() => [] as Array<{ chat_id: string; name: string; description: string | null; chat_type: string }>),

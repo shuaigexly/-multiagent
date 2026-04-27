@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { SSEEvent } from '../services/types';
-import { AGENT_PERSONAS } from './ModuleCard';
+import { AGENT_PERSONAS } from './agentPersonas';
 
 interface Props {
   events: SSEEvent[];

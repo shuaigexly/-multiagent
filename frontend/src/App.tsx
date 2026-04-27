@@ -1,16 +1,19 @@
+import { lazy, Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppLayout from "./components/AppLayout";
-import Index from "./pages/Index";
-import ResultView from "./pages/ResultView";
-import History from "./pages/History";
-import FeishuWorkspace from "./pages/FeishuWorkspace";
-import BitableWorkflow from "./pages/BitableWorkflow";
-import Settings from "./pages/Settings";
-import NotFound from "./pages/NotFound";
+import { Loader2 } from "lucide-react";
+
+const Index = lazy(() => import("./pages/Index"));
+const ResultView = lazy(() => import("./pages/ResultView"));
+const History = lazy(() => import("./pages/History"));
+const FeishuWorkspace = lazy(() => import("./pages/FeishuWorkspace"));
+const BitableWorkflow = lazy(() => import("./pages/BitableWorkflow"));
+const Settings = lazy(() => import("./pages/Settings"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +28,13 @@ const queryClient = new QueryClient({
   },
 });
 
+const RouteFallback = () => (
+  <div className="flex min-h-[60vh] items-center justify-center gap-2 text-sm text-muted-foreground">
+    <Loader2 className="h-4 w-4 animate-spin" />
+    页面加载中...
+  </div>
+);
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -32,15 +42,17 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AppLayout>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/results/:taskId" element={<ResultView />} />
-            <Route path="/history" element={<History />} />
-            <Route path="/workflow" element={<BitableWorkflow />} />
-            <Route path="/workspace" element={<FeishuWorkspace />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/results/:taskId" element={<ResultView />} />
+              <Route path="/history" element={<History />} />
+              <Route path="/workflow" element={<BitableWorkflow />} />
+              <Route path="/workspace" element={<FeishuWorkspace />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
         </AppLayout>
       </BrowserRouter>
     </TooltipProvider>

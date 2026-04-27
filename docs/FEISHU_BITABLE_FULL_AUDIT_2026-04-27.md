@@ -79,6 +79,42 @@
 - 风险：统计面板重复计算，lint 持续报警
 - 结果：已修复依赖稳定性
 
+### F8. `Index` 页面存在无效动态导入
+
+- 位置：`frontend/src/pages/Index.tsx`
+- 问题：`config.ts` 被动态导入，但同一模块又在其他页面静态导入
+- 风险：不会产生真实分包，只会留下构建告警并增加依赖图复杂度
+- 结果：已改为静态导入
+
+### F9. 页面路由未做懒加载，前端主包偏大
+
+- 位置：`frontend/src/App.tsx`
+- 问题：首页、结果页、工作流页、设置页等全部静态进入主路由树
+- 风险：初始加载负担过重，构建产物过大
+- 结果：已改为 `React.lazy + Suspense` 路由懒加载
+
+### F10. `ResultView` 图表库耦合导致单 chunk 过大
+
+- 位置：
+  - `frontend/src/pages/ResultView.tsx`
+  - `frontend/src/components/ResultCharts.tsx`
+- 问题：`recharts` 直接跟随结果页打进同一个 chunk，结果页单包一度超过 500k
+- 风险：构建告警持续存在，结果页首次加载成本过高
+- 结果：已把图表渲染拆成独立懒加载组件，500k chunk 告警消失
+
+### F11. lint 剩余 warning 来自组件导出组织
+
+- 位置：
+  - `frontend/src/components/ModuleCard.tsx`
+  - `frontend/src/components/agentPersonas.ts`
+  - `frontend/src/components/ui/*`
+- 问题：persona 常量与 shadcn/ui 样式工厂导出触发 `react-refresh/only-export-components`
+- 风险：静态检查长期噪音，真正 warning 容易被淹没
+- 结果：
+  - `AGENT_PERSONAS` 已拆到独立文件
+  - `src/components/ui/**/*` 加了定向 ESLint 例外
+  - `npm run lint` 已清零
+
 ---
 
 ## 3. 全量验证结果
@@ -102,7 +138,8 @@ npm run build
 结果：
 
 - 构建通过
-- 仍有 bundle 体积 warning，但不是阻断错误
+- 500k chunk 告警已消失
+- 仍有 `vite:react-swc` 的 `esbuild` deprecation warning，属于工具链升级项，不是业务代码错误
 
 ### 前端静态检查
 
@@ -113,8 +150,7 @@ npm run lint
 结果：
 
 - 无 error
-- 仍有 8 条 `react-refresh/only-export-components` warning
-- 这些 warning 主要来自 shadcn/ui 风格文件导出常量，不影响生产构建，但建议单独治理
+- 无 warning
 
 ---
 
@@ -134,11 +170,9 @@ npm run lint
 
 这些不是本轮已确认的线上 bug，但仍建议后续继续治理：
 
-1. 前端 lint 仍有 8 条 warning
-   - 主要来自 shadcn/ui 文件的导出组织方式
-2. 前端打包体积偏大
-   - 需要后续做代码分包与按需加载
-3. 真实飞书租户写入权限仍受外部环境限制
+1. `vite:react-swc` 仍提示 `esbuild` deprecation
+   - 属于工具链升级项，可后续评估迁移到推荐的 `oxc` 配置
+2. 真实飞书租户写入权限仍受外部环境限制
    - 当前仓库只能证明代码链路和 mock/测试链路正确
    - 不能在没有真实租户权限的情况下声称“线上飞书原生写入全部实测通过”
 
