@@ -13,6 +13,7 @@ export interface WorkflowSetup {
   native_assets?: {
     status?: string;
     overall_state?: string;
+    advperm_state?: string;
     state_descriptions?: Record<string, string>;
     status_summary?: {
       overall_state?: string;
