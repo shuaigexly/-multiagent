@@ -445,8 +445,10 @@ class TestTemplateCenter:
                 "汇报模板": "任务：{task_title}\\n对象：{audience}",
                 "执行模板": "负责人：{execution_owner}\\n执行项：{execute_items}",
                 "默认汇报对象": "经营会",
+                "默认拍板负责人": "经营拍板人",
                 "默认执行负责人": "运营负责人A",
                 "默认复核负责人": "分析负责人B",
+                "默认复盘负责人": "复盘负责人C",
                 "默认复核SLA小时": 12,
             },
         }]
@@ -482,8 +484,10 @@ class TestTemplateCenter:
         assert "负责人：运营负责人A" in payload["工作流执行包"]
         assert payload["套用模板"] == "执行跟进默认模板"
         assert payload["汇报对象"] == "经营会"
+        assert payload["拍板负责人"] == "经营拍板人"
         assert payload["执行负责人"] == "运营负责人A"
         assert payload["复核负责人"] == "分析负责人B"
+        assert payload["复盘负责人"] == "复盘负责人C"
         assert payload["复核SLA小时"] == 12
 
     @pytest.mark.asyncio
@@ -498,6 +502,7 @@ class TestTemplateCenter:
                     "适用输出目的": "执行跟进",
                     "汇报模板": "任务：{task_title}\\n对象：{audience}",
                     "执行模板": "负责人：{execution_owner}",
+                    "默认拍板负责人": "默认拍板人A",
                     "默认执行负责人": "运营负责人A",
                 },
             },
@@ -510,6 +515,7 @@ class TestTemplateCenter:
                     "适用输出目的": "管理决策",
                     "汇报模板": "专项任务：{task_title}",
                     "执行模板": "专项执行人：{execution_owner}",
+                    "默认拍板负责人": "专项拍板人",
                     "默认执行负责人": "专项负责人",
                 },
             },
@@ -538,6 +544,7 @@ class TestTemplateCenter:
         assert payload["工作流消息包"].startswith("专项任务：增长复盘任务")
         assert payload["工作流执行包"].startswith("专项执行人：专项负责人")
         assert payload["套用模板"] == "CEO 专项模板"
+        assert payload["拍板负责人"] == "专项拍板人"
         assert payload["执行负责人"] == "专项负责人"
 
 
@@ -596,6 +603,10 @@ class TestTaskDeliverySnapshot:
         assert snapshot["汇报就绪度"] == 4
         assert snapshot["工作流路由"] == "补数复核"
         assert snapshot["待安排复核"] is True
+        assert snapshot["当前责任角色"] == "复核人"
+        assert snapshot["当前原生动作"] == "安排复核"
+        assert snapshot["异常状态"] == "需关注"
+        assert snapshot["异常类型"] == "责任人待指派"
         assert "增长复盘任务" in snapshot["工作流消息包"]
 
 

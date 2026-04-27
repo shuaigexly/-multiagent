@@ -300,6 +300,33 @@ def _derive_review_owner(task_fields: dict, route: str) -> str:
     return ""
 
 
+def _derive_approval_owner(task_fields: dict, route: str) -> str:
+    existing = str(task_fields.get("拍板负责人") or "").strip()
+    if existing:
+        return existing
+    fallback = str(task_fields.get("汇报对象") or task_fields.get("目标对象") or "").strip()
+    if fallback:
+        return fallback
+    if route == "等待拍板":
+        return "待指派"
+    return ""
+
+
+def _derive_retrospective_owner(task_fields: dict, route: str) -> str:
+    existing = str(task_fields.get("复盘负责人") or "").strip()
+    if existing:
+        return existing
+    review_owner = str(task_fields.get("复核负责人") or "").strip()
+    if review_owner:
+        return review_owner
+    execution_owner = str(task_fields.get("执行负责人") or "").strip()
+    if execution_owner:
+        return execution_owner
+    if route in {"直接执行", "补数复核", "重新分析"}:
+        return "待指派"
+    return ""
+
+
 def _derive_review_sla_hours(task_fields: dict, route: str) -> int:
     current = int(task_fields.get("复核SLA小时") or 0)
     if current > 0:
@@ -316,6 +343,133 @@ def _render_template_text(template: str, context: dict[str, str]) -> str:
     for key, value in context.items():
         rendered = rendered.replace(f"{{{key}}}", str(value or ""))
     return rendered
+
+
+def _is_unassigned_owner(value: object) -> bool:
+    owner = str(value or "").strip()
+    if not owner:
+        return True
+    lowered = owner.lower()
+    return any(marker in lowered for marker in ("待指派", "未指定", "待补充", "未分配"))
+
+
+def _boolish(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value > 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return False
+
+
+def _hours_from_now(value: object, now: datetime | None = None) -> int:
+    dt = _parse_feishu_time(value)
+    if dt is None:
+        return 0
+    current = now or datetime.now(tz=timezone.utc)
+    return max(0, int((current - dt).total_seconds() // 3600))
+
+
+def _hours_overdue(value: object, now: datetime | None = None) -> int:
+    dt = _parse_feishu_time(value)
+    if dt is None:
+        return 0
+    current = now or datetime.now(tz=timezone.utc)
+    if dt >= current:
+        return 0
+    return max(0, int((current - dt).total_seconds() // 3600))
+
+
+def _derive_native_bitable_contract(task_fields: dict | None, workflow_fields: dict | None = None) -> dict[str, object]:
+    fields = dict(task_fields or {})
+    if workflow_fields:
+        fields.update(workflow_fields)
+    route = str(fields.get("工作流路由") or "").strip()
+    status = str(fields.get("状态") or "").strip()
+    pending_report = _boolish(fields.get("待发送汇报"))
+    pending_approval = _boolish(fields.get("待拍板确认"))
+    pending_execution = _boolish(fields.get("待执行确认"))
+    pending_review = _boolish(fields.get("待安排复核"))
+    pending_retro = _boolish(fields.get("待复盘确认"))
+    in_retro = _boolish(fields.get("是否进入复盘"))
+    archived = status == Status.ARCHIVED or str(fields.get("归档状态") or "").strip() == "已归档"
+
+    if archived:
+        current_role = "已归档"
+        current_owner = "归档库"
+        current_action = "归档沉淀"
+    elif pending_approval:
+        current_role = "拍板人"
+        current_owner = _derive_approval_owner(fields, route) or "待指派"
+        current_action = "管理拍板"
+    elif pending_execution:
+        current_role = "执行人"
+        current_owner = _derive_execution_owner(fields, route) or "待指派"
+        current_action = "执行落地"
+    elif pending_review:
+        current_role = "复核人"
+        current_owner = _derive_review_owner(fields, route) or "待指派"
+        current_action = "安排复核"
+    elif pending_retro or in_retro:
+        current_role = "复盘负责人"
+        current_owner = _derive_retrospective_owner(fields, route) or "待指派"
+        current_action = "进入复盘" if pending_retro else "归档沉淀"
+    elif pending_report or route == "直接汇报" or (route == "等待拍板" and not pending_approval):
+        current_role = "汇报对象"
+        current_owner = str(fields.get("汇报对象") or fields.get("目标对象") or "").strip() or "待指派"
+        current_action = "发送汇报"
+    else:
+        current_role = "系统调度"
+        current_owner = "系统"
+        current_action = "等待分析完成" if status != Status.COMPLETED else "归档沉淀"
+
+    exception_status = "正常"
+    exception_type = "无"
+    exception_note = ""
+    now = datetime.now(tz=timezone.utc)
+
+    if pending_approval:
+        approval_hours = _hours_from_now(fields.get("完成日期") or fields.get("最近更新"), now)
+        if approval_hours >= 24:
+            exception_status = "已异常"
+            exception_type = "拍板滞留"
+            exception_note = f"已等待拍板 {approval_hours} 小时"
+    elif pending_execution:
+        overdue_hours = _hours_overdue(fields.get("执行截止时间"), now)
+        if overdue_hours > 0:
+            exception_status = "已异常"
+            exception_type = "执行超期"
+            exception_note = f"执行已超期 {overdue_hours} 小时"
+    elif pending_review:
+        overdue_hours = _hours_overdue(fields.get("建议复核时间"), now)
+        if overdue_hours > 0:
+            exception_status = "已异常"
+            exception_type = "复核超时"
+            exception_note = f"复核已超时 {overdue_hours} 小时"
+    elif pending_retro:
+        retro_hours = _hours_from_now(fields.get("执行完成时间") or fields.get("最近更新"), now)
+        if retro_hours >= 48:
+            exception_status = "已异常"
+            exception_type = "复盘滞留"
+            exception_note = f"执行完成后 {retro_hours} 小时仍未进入复盘"
+
+    if exception_type == "无" and current_role in {"汇报对象", "拍板人", "执行人", "复核人", "复盘负责人"}:
+        if _is_unassigned_owner(current_owner):
+            exception_status = "需关注"
+            exception_type = "责任人待指派"
+            exception_note = f"{current_role}尚未明确责任人"
+
+    return {
+        "拍板负责人": _derive_approval_owner(fields, route),
+        "复盘负责人": _derive_retrospective_owner(fields, route),
+        "当前责任角色": current_role,
+        "当前责任人": current_owner,
+        "当前原生动作": current_action,
+        "异常状态": exception_status,
+        "异常类型": exception_type,
+        "异常说明": exception_note,
+    }
 
 
 async def _resolve_template_defaults(
@@ -356,8 +510,10 @@ async def _resolve_template_defaults(
     return {
         "template_name": str(selected.get("模板名称") or "").strip(),
         "report_audience": str(selected.get("默认汇报对象") or "").strip(),
+        "approval_owner": str(selected.get("默认拍板负责人") or "").strip(),
         "execution_owner": str(selected.get("默认执行负责人") or "").strip(),
         "review_owner": str(selected.get("默认复核负责人") or "").strip(),
+        "retrospective_owner": str(selected.get("默认复盘负责人") or "").strip(),
         "review_sla_hours": int(selected.get("默认复核SLA小时") or 0),
     }
 
@@ -468,7 +624,7 @@ def _build_workflow_payload(
     if route == "直接执行":
         execution_due_at_ms = int((now + timedelta(hours=72)).timestamp() * 1000)
 
-    return {
+    payload = {
         "工作流路由": route,
         "工作流消息包": truncate_with_marker("\n".join(message_lines), 1800, "\n...[已截断]"),
         "工作流执行包": truncate_with_marker("\n\n".join(execution_lines), 1800, "\n...[已截断]"),
@@ -480,11 +636,15 @@ def _build_workflow_payload(
         "待复盘确认": False,
         "建议复核时间": review_at_ms,
         "汇报对象": str(task_fields.get("汇报对象") or task_fields.get("目标对象") or "").strip(),
+        "拍板负责人": _derive_approval_owner(task_fields, route),
         "执行负责人": _derive_execution_owner(task_fields, route),
         "执行截止时间": execution_due_at_ms or task_fields.get("执行截止时间"),
         "复核负责人": _derive_review_owner(task_fields, route),
+        "复盘负责人": _derive_retrospective_owner(task_fields, route),
         "复核SLA小时": _derive_review_sla_hours(task_fields, route),
     }
+    payload.update(_derive_native_bitable_contract(task_fields, payload))
+    return payload
 
 
 async def _apply_template_config(
@@ -540,10 +700,14 @@ async def _apply_template_config(
     merged["套用模板"] = str(selected.get("模板名称") or selected_template_name or "").strip()
     if not str(merged.get("汇报对象") or "").strip():
         merged["汇报对象"] = str(selected.get("默认汇报对象") or "").strip()
+    if not str(merged.get("拍板负责人") or "").strip():
+        merged["拍板负责人"] = str(selected.get("默认拍板负责人") or "").strip()
     if not str(merged.get("执行负责人") or "").strip():
         merged["执行负责人"] = str(selected.get("默认执行负责人") or "").strip()
     if not str(merged.get("复核负责人") or "").strip():
         merged["复核负责人"] = str(selected.get("默认复核负责人") or "").strip()
+    if not str(merged.get("复盘负责人") or "").strip():
+        merged["复盘负责人"] = str(selected.get("默认复盘负责人") or "").strip()
     if int(merged.get("复核SLA小时") or 0) <= 0:
         merged["复核SLA小时"] = int(selected.get("默认复核SLA小时") or 0)
     route_buckets = _derive_workflow_route(review_fields, ceo_result)[1]
@@ -551,8 +715,10 @@ async def _apply_template_config(
     template_task_fields.update(
         {
             "汇报对象": merged.get("汇报对象") or task_fields.get("汇报对象"),
+            "拍板负责人": merged.get("拍板负责人") or task_fields.get("拍板负责人"),
             "执行负责人": merged.get("执行负责人") or task_fields.get("执行负责人"),
             "复核负责人": merged.get("复核负责人") or task_fields.get("复核负责人"),
+            "复盘负责人": merged.get("复盘负责人") or task_fields.get("复盘负责人"),
             "复核SLA小时": merged.get("复核SLA小时") or task_fields.get("复核SLA小时"),
         }
     )
@@ -563,6 +729,7 @@ async def _apply_template_config(
         merged["工作流消息包"] = truncate_with_marker(_render_template_text(report_template, context), 1800, "\n...[已截断]")
     if execute_template:
         merged["工作流执行包"] = truncate_with_marker(_render_template_text(execute_template, context), 1800, "\n...[已截断]")
+    merged.update(_derive_native_bitable_contract(task_fields, merged))
     return merged
 
 
@@ -630,6 +797,49 @@ def _build_task_delivery_snapshot(
         "需补数条数": need_data_count,
         **workflow_payload,
     }
+
+
+async def _sync_native_workflow_contracts(app_token: str, task_tid: str) -> None:
+    """周期性刷新已完成/已归档任务的原生责任与异常契约字段。"""
+    synced = 0
+    for status in (Status.COMPLETED, Status.ARCHIVED):
+        try:
+            rows = await bitable_ops.list_records(
+                app_token,
+                task_tid,
+                filter_expr=f'CurrentValue.[状态]="{status}"',
+                page_size=100,
+                max_records=200,
+            )
+        except Exception as exc:
+            logger.warning("native contract sync lookup failed status=%s: %s", status, exc)
+            continue
+        for row in rows:
+            record_id = row.get("record_id")
+            if not record_id:
+                continue
+            fields = _flatten_record_fields(row.get("fields") or {})
+            contract = _derive_native_bitable_contract(fields)
+            changed = {
+                key: value
+                for key, value in contract.items()
+                if str(fields.get(key) or "") != str(value or "")
+            }
+            if not changed:
+                continue
+            try:
+                await bitable_ops.update_record_optional_fields(
+                    app_token,
+                    task_tid,
+                    record_id,
+                    changed,
+                    optional_keys=list(contract.keys()),
+                )
+                synced += 1
+            except Exception as exc:
+                logger.warning("native contract sync failed record=%s: %s", record_id, exc)
+    if synced:
+        logger.info("Native Bitable contracts synced count=%d", synced)
 
 
 async def _hydrate_task_dataset_reference(
@@ -1196,10 +1406,14 @@ async def _create_followup_tasks(
             record_fields["套用模板"] = str(template_defaults["template_name"])
         if template_defaults.get("report_audience"):
             record_fields["汇报对象"] = str(template_defaults["report_audience"])
+        if template_defaults.get("approval_owner"):
+            record_fields["拍板负责人"] = str(template_defaults["approval_owner"])
         if template_defaults.get("execution_owner"):
             record_fields["执行负责人"] = str(template_defaults["execution_owner"])
         if template_defaults.get("review_owner"):
             record_fields["复核负责人"] = str(template_defaults["review_owner"])
+        if template_defaults.get("retrospective_owner"):
+            record_fields["复盘负责人"] = str(template_defaults["retrospective_owner"])
         if int(template_defaults.get("review_sla_hours") or 0) > 0:
             record_fields["复核SLA小时"] = int(template_defaults["review_sla_hours"])
         # v8.6.7：跟进任务自动指向原任务，构建依赖图
@@ -1211,7 +1425,16 @@ async def _create_followup_tasks(
                 app_token,
                 task_tid,
                 record_fields,
-                optional_keys=["综合评分", "套用模板", "汇报对象", "执行负责人", "复核负责人", "复核SLA小时"],
+                optional_keys=[
+                    "综合评分",
+                    "套用模板",
+                    "汇报对象",
+                    "拍板负责人",
+                    "执行负责人",
+                    "复核负责人",
+                    "复盘负责人",
+                    "复核SLA小时",
+                ],
             )
             await _write_action_record(
                 app_token,
@@ -1333,10 +1556,14 @@ async def _create_review_recheck_task(
         fields["套用模板"] = str(template_defaults["template_name"])
     if template_defaults.get("report_audience"):
         fields["汇报对象"] = str(template_defaults["report_audience"])
+    if template_defaults.get("approval_owner"):
+        fields["拍板负责人"] = str(template_defaults["approval_owner"])
     if template_defaults.get("execution_owner"):
         fields["执行负责人"] = str(template_defaults["execution_owner"])
     if template_defaults.get("review_owner"):
         fields["复核负责人"] = str(template_defaults["review_owner"])
+    if template_defaults.get("retrospective_owner"):
+        fields["复盘负责人"] = str(template_defaults["retrospective_owner"])
     if int(template_defaults.get("review_sla_hours") or 0) > 0:
         fields["复核SLA小时"] = int(template_defaults["review_sla_hours"])
     if parent_task_number:
@@ -1346,7 +1573,18 @@ async def _create_review_recheck_task(
             app_token,
             task_tid,
             fields,
-            optional_keys=["输出目的", "成功标准", "综合评分", "套用模板", "汇报对象", "执行负责人", "复核负责人", "复核SLA小时"],
+            optional_keys=[
+                "输出目的",
+                "成功标准",
+                "综合评分",
+                "套用模板",
+                "汇报对象",
+                "拍板负责人",
+                "执行负责人",
+                "复核负责人",
+                "复盘负责人",
+                "复核SLA小时",
+            ],
         )
         await _write_action_record(
             app_token,
@@ -1526,6 +1764,9 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     logger.warning("Recovered stuck ANALYZING record=%s (serial, flag off)", entry["record_id"])
                 except Exception as exc:
                     logger.error("Failed to recover ANALYZING record=%s: %s", entry["record_id"], exc)
+
+    # Phase 0.5: 同步已完成任务的原生责任/异常字段，让多维表格视图和自动化直接消费主表
+    await _sync_native_workflow_contracts(app_token, task_tid)
 
     # Phase 1: 领取待分析任务（v8.6.19：search + 综合评分 server sort，三层降级）
     pending_pool_size = int(os.getenv("WORKFLOW_PENDING_POOL_SIZE", "200"))
@@ -1822,10 +2063,18 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     "待复盘确认",
                     "建议复核时间",
                     "汇报对象",
+                    "拍板负责人",
                     "执行负责人",
                     "执行截止时间",
                     "复核负责人",
+                    "复盘负责人",
                     "复核SLA小时",
+                    "当前责任角色",
+                    "当前责任人",
+                    "当前原生动作",
+                    "异常状态",
+                    "异常类型",
+                    "异常说明",
                     "汇报版本号",
                     "归档状态",
                 ],

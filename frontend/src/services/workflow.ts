@@ -76,8 +76,10 @@ export async function seedTask(
     referenced_dataset?: string;
     template_name?: string;
     report_audience?: string;
+    approval_owner?: string;
     execution_owner?: string;
     review_owner?: string;
+    retrospective_owner?: string;
     review_sla_hours?: number;
   },
 ): Promise<{ record_id: string }> {

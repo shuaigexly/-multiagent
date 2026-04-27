@@ -220,8 +220,10 @@ async def test_workflow_seed_applies_template_defaults_and_tracks_template(monke
                         "模板名称": "经营汇报模板",
                         "适用输出目的": "汇报展示",
                         "默认汇报对象": "CEO",
+                        "默认拍板负责人": "董事长",
                         "默认执行负责人": "增长负责人",
                         "默认复核负责人": "数据负责人",
+                        "默认复盘负责人": "经营分析负责人",
                         "默认复核SLA小时": 24,
                     },
                 }
@@ -242,8 +244,10 @@ async def test_workflow_seed_applies_template_defaults_and_tracks_template(monke
     assert result == {"record_id": "rec_template"}
     assert captured["套用模板"] == "经营汇报模板"
     assert captured["汇报对象"] == "CEO"
+    assert captured["拍板负责人"] == "董事长"
     assert captured["执行负责人"] == "增长负责人"
     assert captured["复核负责人"] == "数据负责人"
+    assert captured["复盘负责人"] == "经营分析负责人"
     assert captured["复核SLA小时"] == 24
 
 
@@ -277,8 +281,10 @@ async def test_workflow_seed_explicit_fields_override_template_defaults(monkeypa
                         "模板名称": "执行跟进模板",
                         "适用输出目的": "执行跟进",
                         "默认汇报对象": "经营会",
+                        "默认拍板负责人": "默认拍板人",
                         "默认执行负责人": "默认执行人",
                         "默认复核负责人": "默认复核人",
+                        "默认复盘负责人": "默认复盘人",
                         "默认复核SLA小时": 48,
                     },
                 }
@@ -293,8 +299,10 @@ async def test_workflow_seed_explicit_fields_override_template_defaults(monkeypa
         title="task",
         output_purpose="执行跟进",
         report_audience="项目周会",
+        approval_owner="指定拍板人",
         execution_owner="区域运营负责人",
         review_owner="数据 PM",
+        retrospective_owner="指定复盘人",
         review_sla_hours=6,
     )
 
@@ -303,8 +311,10 @@ async def test_workflow_seed_explicit_fields_override_template_defaults(monkeypa
     assert result == {"record_id": "rec_template_override"}
     assert captured["套用模板"] == "执行跟进模板"
     assert captured["汇报对象"] == "项目周会"
+    assert captured["拍板负责人"] == "指定拍板人"
     assert captured["执行负责人"] == "区域运营负责人"
     assert captured["复核负责人"] == "数据 PM"
+    assert captured["复盘负责人"] == "指定复盘人"
     assert captured["复核SLA小时"] == 6
 
 
@@ -324,7 +334,14 @@ async def test_workflow_confirm_updates_management_fields(monkeypatch):
         captured["optional_keys"] = optional_keys or []
 
     async def fake_get_record(_app_token, _table_id, _record_id):
-        return {"fields": {"任务标题": "增长复盘任务", "工作流路由": "等待拍板"}}
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "等待拍板",
+                "拍板负责人": "CEO",
+                "汇报对象": "CEO",
+            }
+        }
 
     async def fake_create_record(_app_token, _table_id, fields, optional_keys=None):
         captured["logs"].append((_table_id, fields, optional_keys or []))
@@ -352,6 +369,8 @@ async def test_workflow_confirm_updates_management_fields(monkeypatch):
     assert captured["fields"]["是否已拍板"] is True
     assert captured["fields"]["待拍板确认"] is False
     assert captured["fields"]["拍板人"] == "CEO"
+    assert captured["fields"]["当前责任角色"] == "汇报对象"
+    assert captured["fields"]["当前原生动作"] == "发送汇报"
     assert "拍板时间" in captured["fields"]
     assert "拍板时间" in captured["optional_keys"]
     assert len(captured["logs"]) == 2

@@ -102,6 +102,41 @@ WORKFLOW_ROUTE_OPTIONS = [
     {"name": "重新分析", "color": 2},
 ]
 
+RESPONSIBILITY_ROLE_OPTIONS = [
+    {"name": "系统调度", "color": 0},
+    {"name": "汇报对象", "color": 5},
+    {"name": "拍板人", "color": 1},
+    {"name": "执行人", "color": 6},
+    {"name": "复核人", "color": 3},
+    {"name": "复盘负责人", "color": 7},
+    {"name": "已归档", "color": 4},
+]
+
+NATIVE_ACTION_OPTIONS = [
+    {"name": "等待分析完成", "color": 0},
+    {"name": "发送汇报", "color": 5},
+    {"name": "管理拍板", "color": 1},
+    {"name": "执行落地", "color": 6},
+    {"name": "安排复核", "color": 3},
+    {"name": "进入复盘", "color": 7},
+    {"name": "归档沉淀", "color": 4},
+]
+
+EXCEPTION_STATUS_OPTIONS = [
+    {"name": "正常", "color": 4},
+    {"name": "需关注", "color": 3},
+    {"name": "已异常", "color": 1},
+]
+
+EXCEPTION_TYPE_OPTIONS = [
+    {"name": "无", "color": 0},
+    {"name": "责任人待指派", "color": 3},
+    {"name": "拍板滞留", "color": 1},
+    {"name": "执行超期", "color": 1},
+    {"name": "复核超时", "color": 2},
+    {"name": "复盘滞留", "color": 7},
+]
+
 ACTION_TYPE_OPTIONS = [
     {"name": "发送汇报", "color": 5},
     {"name": "创建执行任务", "color": 4},
@@ -300,6 +335,7 @@ TASK_FIELDS = [
         "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
     },
     {"field_name": "汇报对象", "type": TEXT_FIELD_TYPE},
+    {"field_name": "拍板负责人", "type": TEXT_FIELD_TYPE},
     {"field_name": "执行负责人", "type": TEXT_FIELD_TYPE},
     {
         "field_name": "执行截止时间",
@@ -308,12 +344,39 @@ TASK_FIELDS = [
         "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
     },
     {"field_name": "复核负责人", "type": TEXT_FIELD_TYPE},
+    {"field_name": "复盘负责人", "type": TEXT_FIELD_TYPE},
     {
         "field_name": "复核SLA小时",
         "type": NUMBER_FIELD_TYPE,
         "ui_type": "Number",
         "property": {"formatter": "0"},
     },
+    {
+        "field_name": "当前责任角色",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": RESPONSIBILITY_ROLE_OPTIONS,
+    },
+    {"field_name": "当前责任人", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "当前原生动作",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": NATIVE_ACTION_OPTIONS,
+    },
+    {
+        "field_name": "异常状态",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": EXCEPTION_STATUS_OPTIONS,
+    },
+    {
+        "field_name": "异常类型",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": EXCEPTION_TYPE_OPTIONS,
+    },
+    {"field_name": "异常说明", "type": TEXT_FIELD_TYPE},
     {"field_name": "汇报版本号", "type": TEXT_FIELD_TYPE},
     {
         "field_name": "归档状态",
@@ -772,8 +835,10 @@ TEMPLATE_CENTER_FIELDS = [
     {"field_name": "汇报模板", "type": TEXT_FIELD_TYPE},
     {"field_name": "执行模板", "type": TEXT_FIELD_TYPE},
     {"field_name": "默认汇报对象", "type": TEXT_FIELD_TYPE},
+    {"field_name": "默认拍板负责人", "type": TEXT_FIELD_TYPE},
     {"field_name": "默认执行负责人", "type": TEXT_FIELD_TYPE},
     {"field_name": "默认复核负责人", "type": TEXT_FIELD_TYPE},
+    {"field_name": "默认复盘负责人", "type": TEXT_FIELD_TYPE},
     {
         "field_name": "默认复核SLA小时",
         "type": NUMBER_FIELD_TYPE,

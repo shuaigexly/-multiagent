@@ -109,6 +109,32 @@ const ROUTE_STYLE: Record<string, string> = {
   重新分析: 'border-orange-200 bg-orange-50 text-orange-700',
 };
 
+const RESPONSIBILITY_STYLE: Record<string, string> = {
+  系统调度: 'border-slate-200 bg-slate-100 text-slate-700',
+  汇报对象: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+  拍板人: 'border-rose-200 bg-rose-50 text-rose-700',
+  执行人: 'border-sky-200 bg-sky-50 text-sky-700',
+  复核人: 'border-amber-200 bg-amber-50 text-amber-700',
+  复盘负责人: 'border-violet-200 bg-violet-50 text-violet-700',
+  已归档: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+};
+
+const NATIVE_ACTION_STYLE: Record<string, string> = {
+  等待分析完成: 'border-slate-200 bg-slate-100 text-slate-700',
+  发送汇报: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+  管理拍板: 'border-rose-200 bg-rose-50 text-rose-700',
+  执行落地: 'border-sky-200 bg-sky-50 text-sky-700',
+  安排复核: 'border-amber-200 bg-amber-50 text-amber-700',
+  进入复盘: 'border-violet-200 bg-violet-50 text-violet-700',
+  归档沉淀: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+};
+
+const EXCEPTION_STATUS_STYLE: Record<string, string> = {
+  正常: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  需关注: 'border-amber-200 bg-amber-50 text-amber-700',
+  已异常: 'border-rose-200 bg-rose-50 text-rose-700',
+};
+
 const ACTION_STATUS_STYLE: Record<string, string> = {
   已完成: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   已跳过: 'border-slate-200 bg-slate-100 text-slate-600',
@@ -212,11 +238,6 @@ function hoursSince(value: unknown) {
   return Math.max(0, Math.round((Date.now() - ts) / 3_600_000));
 }
 
-function isPastDue(value: unknown) {
-  const ts = parseTimeValue(value);
-  return ts > 0 && ts < Date.now();
-}
-
 function splitListText(value: unknown, limit = 4) {
   return textValue(value)
     .split(/\n+/)
@@ -302,6 +323,22 @@ function taskWorkflowRoute(task: TaskRecord | null | undefined) {
   return textValue(taskField(task, '工作流路由'));
 }
 
+function taskResponsibilityRole(task: TaskRecord | null | undefined) {
+  return textValue(taskField(task, '当前责任角色'));
+}
+
+function taskNativeAction(task: TaskRecord | null | undefined) {
+  return textValue(taskField(task, '当前原生动作'));
+}
+
+function taskExceptionStatus(task: TaskRecord | null | undefined) {
+  return textValue(taskField(task, '异常状态'));
+}
+
+function taskExceptionType(task: TaskRecord | null | undefined) {
+  return textValue(taskField(task, '异常类型'));
+}
+
 function yesNoLabel(value: unknown) {
   return booleanValue(value) ? '是' : '否';
 }
@@ -348,8 +385,10 @@ export default function BitableWorkflow() {
   const [newTaskConstraints, setNewTaskConstraints] = useState('');
   const [newTaskDatasetRef, setNewTaskDatasetRef] = useState('');
   const [newTaskReportAudience, setNewTaskReportAudience] = useState('');
+  const [newTaskApprovalOwner, setNewTaskApprovalOwner] = useState('');
   const [newTaskExecutionOwner, setNewTaskExecutionOwner] = useState('');
   const [newTaskReviewOwner, setNewTaskReviewOwner] = useState('');
+  const [newTaskRetrospectiveOwner, setNewTaskRetrospectiveOwner] = useState('');
   const [newTaskReviewSla, setNewTaskReviewSla] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const progressSubscriptionsRef = useRef<Map<string, () => void>>(new Map());
@@ -544,8 +583,10 @@ export default function BitableWorkflow() {
             activeTemplates.find((record) => record.record_id === selectedTemplateId)?.fields?.模板名称,
           ),
           report_audience: newTaskReportAudience.trim(),
+          approval_owner: newTaskApprovalOwner.trim(),
           execution_owner: newTaskExecutionOwner.trim(),
           review_owner: newTaskReviewOwner.trim(),
+          retrospective_owner: newTaskRetrospectiveOwner.trim(),
           review_sla_hours: Number(newTaskReviewSla) || undefined,
         },
       );
@@ -557,8 +598,10 @@ export default function BitableWorkflow() {
       setNewTaskConstraints('');
       setNewTaskDatasetRef('');
       setNewTaskReportAudience('');
+      setNewTaskApprovalOwner('');
       setNewTaskExecutionOwner('');
       setNewTaskReviewOwner('');
+      setNewTaskRetrospectiveOwner('');
       setNewTaskReviewSla('');
       setSelectedTemplateId('');
       toast({ title: '任务已写入', description: '调度器将在下一轮自动领取并生成决策产物' });
@@ -739,46 +782,29 @@ export default function BitableWorkflow() {
   }, [tasks]);
   const roleWorkspace = useMemo(() => {
     const approval = sortTasksByLatest(
-      tasks.filter((task) => booleanValue(task.fields?.待拍板确认)),
+      tasks.filter((task) => taskResponsibilityRole(task) === '拍板人'),
     );
     const execution = sortTasksByLatest(
-      tasks.filter((task) => booleanValue(task.fields?.待执行确认)),
+      tasks.filter((task) => taskResponsibilityRole(task) === '执行人'),
     );
-    const review = sortTasksByLatest(tasks.filter((task) => booleanValue(task.fields?.待安排复核)));
+    const review = sortTasksByLatest(tasks.filter((task) => taskResponsibilityRole(task) === '复核人'));
     const retrospective = sortTasksByLatest(
-      tasks.filter((task) => booleanValue(task.fields?.待复盘确认)),
+      tasks.filter((task) => taskResponsibilityRole(task) === '复盘负责人'),
     );
     return { approval, execution, review, retrospective };
   }, [tasks]);
   const exceptionWorkspace = useMemo(() => {
     const approvalStale = sortTasksByLatest(
-      tasks.filter(
-        (task) =>
-          booleanValue(task.fields?.待拍板确认) &&
-          hoursSince(task.fields?.完成日期 || task.fields?.最近更新) >= 24,
-      ),
+      tasks.filter((task) => taskExceptionType(task) === '拍板滞留'),
     );
     const executionOverdue = sortTasksByLatest(
-      tasks.filter(
-        (task) =>
-          booleanValue(task.fields?.待执行确认) &&
-          isPastDue(task.fields?.执行截止时间),
-      ),
+      tasks.filter((task) => taskExceptionType(task) === '执行超期'),
     );
     const reviewOverdue = sortTasksByLatest(
-      tasks.filter(
-        (task) =>
-          booleanValue(task.fields?.待安排复核) &&
-          !booleanValue(task.fields?.是否已执行落地) &&
-          isPastDue(task.fields?.建议复核时间),
-      ),
+      tasks.filter((task) => taskExceptionType(task) === '复核超时'),
     );
     const retrospectiveStale = sortTasksByLatest(
-      tasks.filter(
-        (task) =>
-          booleanValue(task.fields?.待复盘确认) &&
-          hoursSince(task.fields?.执行完成时间) >= 48,
-      ),
+      tasks.filter((task) => taskExceptionType(task) === '复盘滞留'),
     );
     return { approvalStale, executionOverdue, reviewOverdue, retrospectiveStale };
   }, [tasks]);
@@ -1052,11 +1078,17 @@ export default function BitableWorkflow() {
     if (!newTaskReportAudience.trim()) {
       setNewTaskReportAudience(textValue(fields.默认汇报对象));
     }
+    if (!newTaskApprovalOwner.trim()) {
+      setNewTaskApprovalOwner(textValue(fields.默认拍板负责人));
+    }
     if (!newTaskExecutionOwner.trim()) {
       setNewTaskExecutionOwner(textValue(fields.默认执行负责人));
     }
     if (!newTaskReviewOwner.trim()) {
       setNewTaskReviewOwner(textValue(fields.默认复核负责人));
+    }
+    if (!newTaskRetrospectiveOwner.trim()) {
+      setNewTaskRetrospectiveOwner(textValue(fields.默认复盘负责人));
     }
     if (!newTaskReviewSla.trim() && numberValue(fields.默认复核SLA小时) > 0) {
       setNewTaskReviewSla(String(numberValue(fields.默认复核SLA小时)));
@@ -1064,7 +1096,7 @@ export default function BitableWorkflow() {
     if (!newTaskAudience.trim() && textValue(fields.默认汇报对象)) {
       setNewTaskAudience(textValue(fields.默认汇报对象));
     }
-  }, [newTaskAudience, newTaskExecutionOwner, newTaskReportAudience, newTaskReviewOwner, newTaskReviewSla]);
+  }, [newTaskApprovalOwner, newTaskAudience, newTaskExecutionOwner, newTaskReportAudience, newTaskRetrospectiveOwner, newTaskReviewOwner, newTaskReviewSla]);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(15,118,110,0.12),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(14,165,233,0.14),_transparent_24%),radial-gradient(circle_at_bottom_right,_rgba(244,63,94,0.08),_transparent_22%),linear-gradient(180deg,_rgba(255,255,255,0.88),_rgba(242,243,245,1))] px-4 py-6 md:px-6 lg:px-8">
@@ -1854,6 +1886,16 @@ export default function BitableWorkflow() {
                                         依赖 {textValue(task.fields?.依赖任务编号)}
                                       </span>
                                     )}
+                                    {taskResponsibilityRole(task) && (
+                                      <span className={`rounded-full border px-2.5 py-1 ${RESPONSIBILITY_STYLE[taskResponsibilityRole(task)] || 'border-slate-200 bg-white text-slate-600'}`}>
+                                        {taskResponsibilityRole(task)}
+                                      </span>
+                                    )}
+                                    {taskExceptionStatus(task) && taskExceptionStatus(task) !== '正常' && (
+                                      <span className={`rounded-full border px-2.5 py-1 ${EXCEPTION_STATUS_STYLE[taskExceptionStatus(task)] || 'border-slate-200 bg-white text-slate-600'}`}>
+                                        {taskExceptionType(task) || taskExceptionStatus(task)}
+                                      </span>
+                                    )}
                                   </div>
                                 </button>
                               ))}
@@ -1884,6 +1926,44 @@ export default function BitableWorkflow() {
                               </div>
                             ))}
                           </div>
+
+                          <div className="mt-5 grid gap-4 xl:grid-cols-4">
+                            {[
+                              {
+                                label: '当前责任角色',
+                                value: taskResponsibilityRole(selectedTask) || '系统调度',
+                                style: RESPONSIBILITY_STYLE[taskResponsibilityRole(selectedTask)] || 'border-slate-200 bg-slate-50 text-slate-600',
+                              },
+                              {
+                                label: '当前责任人',
+                                value: textValue(selectedTask.fields?.当前责任人) || '未指定',
+                                style: 'border-slate-200 bg-slate-50 text-slate-700',
+                              },
+                              {
+                                label: '当前原生动作',
+                                value: taskNativeAction(selectedTask) || '待生成',
+                                style: NATIVE_ACTION_STYLE[taskNativeAction(selectedTask)] || 'border-slate-200 bg-slate-50 text-slate-600',
+                              },
+                              {
+                                label: '异常状态',
+                                value: taskExceptionType(selectedTask) && taskExceptionType(selectedTask) !== '无'
+                                  ? `${taskExceptionStatus(selectedTask) || '正常'} · ${taskExceptionType(selectedTask)}`
+                                  : taskExceptionStatus(selectedTask) || '正常',
+                                style: EXCEPTION_STATUS_STYLE[taskExceptionStatus(selectedTask)] || 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                              },
+                            ].map((item) => (
+                              <div key={item.label} className="rounded-2xl border border-slate-200 bg-white/90 p-4">
+                                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
+                                <div className={`mt-3 inline-flex rounded-full border px-3 py-1 text-sm font-medium ${item.style}`}>{item.value}</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {textValue(selectedTask.fields?.异常说明) && (
+                            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-sm leading-7 text-amber-900">
+                              {textValue(selectedTask.fields?.异常说明)}
+                            </div>
+                          )}
 
                           <div className="mt-5 grid gap-4 xl:grid-cols-2">
                             <div className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
@@ -2385,16 +2465,18 @@ export default function BitableWorkflow() {
                               <div className="text-xs uppercase tracking-[0.18em] text-slate-500">默认配置</div>
                               <div className="mt-3 space-y-2">
                                 <div>汇报对象：{textValue(selectedTemplate.fields?.默认汇报对象) || '未指定'}</div>
+                                <div>拍板负责人：{textValue(selectedTemplate.fields?.默认拍板负责人) || '未指定'}</div>
                                 <div>执行负责人：{textValue(selectedTemplate.fields?.默认执行负责人) || '未指定'}</div>
                                 <div>复核负责人：{textValue(selectedTemplate.fields?.默认复核负责人) || '未指定'}</div>
+                                <div>复盘负责人：{textValue(selectedTemplate.fields?.默认复盘负责人) || '未指定'}</div>
                                 <div>复核 SLA：{numberValue(selectedTemplate.fields?.默认复核SLA小时) > 0 ? `${numberValue(selectedTemplate.fields?.默认复核SLA小时)} 小时` : '未指定'}</div>
                               </div>
                             </div>
                             <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-700">
                               <div className="text-xs uppercase tracking-[0.18em] text-slate-500">生效方式</div>
                               <div className="mt-3 space-y-2">
-                                <div>写入任务后自动记录 `套用模板`，在多维表格中可回溯。</div>
-                                <div>后端会自动回填模板默认负责人与复核 SLA。</div>
+                              <div>写入任务后自动记录 `套用模板`，在多维表格中可回溯。</div>
+                                <div>后端会自动回填拍板、执行、复核、复盘负责人和复核 SLA。</div>
                                 <div>进入交付阶段后，消息包与执行包优先按此模板渲染。</div>
                               </div>
                             </div>
@@ -2448,6 +2530,14 @@ export default function BitableWorkflow() {
                         className="h-12 rounded-2xl border-slate-200 bg-slate-50/80"
                       />
                       <Input
+                        placeholder="拍板负责人，如：CEO / 总经理 / 区域负责人"
+                        value={newTaskApprovalOwner}
+                        onChange={(e) => setNewTaskApprovalOwner(e.target.value)}
+                        className="h-12 rounded-2xl border-slate-200 bg-slate-50/80"
+                      />
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Input
                         placeholder="执行负责人，如：增长负责人 / 区域运营"
                         value={newTaskExecutionOwner}
                         onChange={(e) => setNewTaskExecutionOwner(e.target.value)}
@@ -2461,6 +2551,14 @@ export default function BitableWorkflow() {
                         onChange={(e) => setNewTaskReviewOwner(e.target.value)}
                         className="h-12 rounded-2xl border-slate-200 bg-slate-50/80"
                       />
+                      <Input
+                        placeholder="复盘负责人，如：经营复盘负责人"
+                        value={newTaskRetrospectiveOwner}
+                        onChange={(e) => setNewTaskRetrospectiveOwner(e.target.value)}
+                        className="h-12 rounded-2xl border-slate-200 bg-slate-50/80"
+                      />
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
                       <Input
                         placeholder="复核 SLA 小时，如：24"
                         value={newTaskReviewSla}
@@ -2542,8 +2640,10 @@ export default function BitableWorkflow() {
                             </div>
                             <div className="mt-3 grid gap-2 text-xs text-slate-500">
                               <div>默认汇报对象：{textValue(record.fields?.默认汇报对象) || '未指定'}</div>
+                              <div>默认拍板负责人：{textValue(record.fields?.默认拍板负责人) || '未指定'}</div>
                               <div>默认执行负责人：{textValue(record.fields?.默认执行负责人) || '未指定'}</div>
                               <div>默认复核负责人：{textValue(record.fields?.默认复核负责人) || '未指定'}</div>
+                              <div>默认复盘负责人：{textValue(record.fields?.默认复盘负责人) || '未指定'}</div>
                             </div>
                             <div className="mt-3 grid gap-3 md:grid-cols-2">
                               <div className="rounded-2xl border border-white/80 bg-white/90 p-3 text-xs leading-6 text-slate-600">

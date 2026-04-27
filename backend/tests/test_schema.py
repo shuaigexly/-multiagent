@@ -91,8 +91,16 @@ class TestFieldCompleteness:
         assert "建议复核时间" in names
         assert "汇报版本号" in names
         assert "归档状态" in names
+        assert "拍板负责人" in names
         assert "执行负责人" in names
         assert "复核负责人" in names
+        assert "复盘负责人" in names
+        assert "当前责任角色" in names
+        assert "当前责任人" in names
+        assert "当前原生动作" in names
+        assert "异常状态" in names
+        assert "异常类型" in names
+        assert "异常说明" in names
         assert "是否已拍板" in names
         assert "待拍板确认" in names
         assert "拍板时间" in names
@@ -157,6 +165,8 @@ class TestFieldCompleteness:
         assert "适用工作流路由" in names
         assert "汇报模板" in names
         assert "执行模板" in names
+        assert "默认拍板负责人" in names
+        assert "默认复盘负责人" in names
         assert "启用" in names
 
     def test_report_required_columns(self):
