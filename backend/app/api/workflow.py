@@ -284,8 +284,12 @@ async def _resolve_seed_template_defaults(
     template_name: str,
     output_purpose: str,
 ) -> dict[str, object]:
-    state_app_token = str(_state.get("app_token") or "").strip()
-    template_tid = (_state.get("table_ids") or {}).get("template")
+    # v8.6.20-r8（审计 #7）：原子快照 _state 防 setup/seed 并发交错（Python dict 单 key
+    # 读原子，但跨多 key 读会被中间的 setup 写交错，导致 app_token 来自 base A、
+    # template_tid 来自 base B 这种不一致状态，下游查到 base A 的错表 / 404）。
+    state_snapshot = dict(_state)
+    state_app_token = str(state_snapshot.get("app_token") or "").strip()
+    template_tid = (state_snapshot.get("table_ids") or {}).get("template")
     if not template_tid or (state_app_token and state_app_token != app_token):
         return {}
 

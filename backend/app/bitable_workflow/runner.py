@@ -672,13 +672,16 @@ async def _create_extra_views(
                 "view_id": view_id or "",
             }
             # v8.6.19 — form 视图建好后尽力共享，得到 shared_url
+            # v8.6.20-r8（审计 #6）：表单视图不论 share 是否成功都要进 form_views，
+            # 让下游 _build_native_assets 能拿到 view_id 关联到「需求收集表」蓝图。
+            # 之前 share 失败 → form_views 空 → form_blueprints[0].view_id="" → 用户
+            # 即使到飞书 UI 手动开启共享，cockpit 也找不到该视图链接。
             if vtype == "form" and view_id:
                 shared_url = await _share_form_view(app_token, table_id, view_id)
                 if shared_url:
                     view_meta["shared_url"] = shared_url
-                    form_views.append(view_meta)
-                if shared_url:
                     logger.info("Form view %r shared at %s", name, shared_url)
+                form_views.append(view_meta)
             created_views.append(view_meta)
         except Exception as exc:
             logger.warning("创建视图失败 table=%s name=%s: %s", table_id, name, exc)
@@ -1074,7 +1077,19 @@ async def _share_form_view(app_token: str, table_id: str, view_id: str) -> str |
                 return shared_url
             r2 = await h.get(url, headers={"Authorization": f"Bearer {token}"})
             body2 = _safe_json(r2)
+            # v8.6.20-r8（审计 #5）：之前不检查第二 GET 的 status / code / shared 标志
+            # 就直接拿 .shared_url，会把飞书错误响应里的 expired/error URL 误当成有效
+            # 共享地址回写到 manifest，下游用户点开看到 404。
+            if r2.status_code != 200 or body2.get("code") != 0:
+                logger.warning(
+                    "GET form metadata after share failed: status=%s code=%s msg=%s",
+                    r2.status_code, body2.get("code"), body2.get("msg"),
+                )
+                return None
             form_data = (body2.get("data") or {}).get("form") or {}
+            if not form_data.get("shared"):
+                logger.warning("GET form metadata returned shared=false; share may not have taken effect")
+                return None
             return form_data.get("shared_url")
     except Exception as exc:
         logger.warning("_share_form_view failed (non-fatal): %s", exc)

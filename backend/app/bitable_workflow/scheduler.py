@@ -220,7 +220,15 @@ async def _build_dep_index(app_token: str, task_tid: str) -> dict[str, str]:
             raw_num = str(int(num))
         normalized = _normalize_task_number(raw_num)
         if normalized:
-            index[normalized] = f.get("状态") or ""
+            # v8.6.20-r8（审计 #4）：状态 SingleSelect 在某些 list_records/搜索路径
+            # 会返回富文本数组 / dict，str-vs-list 比较 _unmet_dependencies 永远
+            # 当成"未完成"，依赖检查会无脑挡住后续任务。统一拍平。
+            status_raw = f.get("状态")
+            if isinstance(status_raw, list):
+                status_raw = "".join(seg.get("text", "") for seg in status_raw if isinstance(seg, dict))
+            elif isinstance(status_raw, dict):
+                status_raw = status_raw.get("text") or status_raw.get("name") or ""
+            index[normalized] = str(status_raw or "")
     return index
 
 
@@ -1857,9 +1865,14 @@ async def run_one_cycle(app_token: str, table_ids: dict) -> int:
         cycle_task = asyncio.create_task(_run_one_cycle_locked(app_token, table_ids))
         if renew_task is None:
             return await cycle_task
+        # v8.6.20-r8 BLOCKER 修复：之前用 FIRST_EXCEPTION，但 _renew_cycle_lock 是
+        # while True 永远不会主动 done，FIRST_EXCEPTION 在 cycle 干净完成（无异常）时
+        # 会等到 ALL_COMPLETED — 导致每次成功 cycle 后整个 loop 永远 hang，没有第二轮。
+        # 改为 FIRST_COMPLETED：cycle 一完就返回，下面的 if renew_task in done 仍能
+        # 捕获 renew 早死场景（renew 异常也会让它进 done）。
         done, _pending = await asyncio.wait(
             {cycle_task, renew_task},
-            return_when=asyncio.FIRST_EXCEPTION,
+            return_when=asyncio.FIRST_COMPLETED,
         )
         if renew_task in done:
             renew_exc = renew_task.exception()

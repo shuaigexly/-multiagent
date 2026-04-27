@@ -142,11 +142,15 @@ async def _send_card_message_impl(
             ],
         })
 
+    # v8.6.20-r8（审计 #2）：飞书卡片 plain_text 标题硬上限 ~250 字符，超长会
+    # 触发 MessageContentInvalid。task_title 来自 SeedRequest（无 max_length）/
+    # 或 LLM 生成的跟进任务标题，必须截断。
+    safe_title = truncate_with_marker(title, 200, "…")
     card = {
         "schema": "2.0",
         "body": {"elements": elements},
         "header": {
-            "title": {"tag": "plain_text", "content": title},
+            "title": {"tag": "plain_text", "content": safe_title},
             "template": template,
         },
     }

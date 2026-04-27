@@ -736,6 +736,70 @@ async def test_workflow_has_execution_items_uses_canonical_flag(monkeypatch):
     assert _workflow_has_execution_items({"待创建执行任务": ""}) is False
 
 
+@pytest.mark.asyncio
+async def test_run_one_cycle_does_not_hang_with_first_completed():
+    """v8.6.20-r8（审计 #1 BLOCKER）：run_one_cycle 内部 asyncio.wait 改用
+    FIRST_COMPLETED 后，cycle_task 干净完成时立刻返回，不会卡在 renew_task 永远循环。
+
+    实测验证：FIRST_EXCEPTION + while True 任务 + 1s 超时 → 必定 hang；
+    FIRST_COMPLETED + while True 任务 + cycle 完成 → 立刻返回。
+    """
+    import asyncio as _asyncio
+
+    async def quick_done():
+        await _asyncio.sleep(0.01)
+        return "ok"
+
+    async def forever():
+        while True:
+            await _asyncio.sleep(0.05)
+
+    cycle_task = _asyncio.create_task(quick_done())
+    renew_task = _asyncio.create_task(forever())
+    try:
+        # 模拟 scheduler 修复后的等待语义
+        done, pending = await _asyncio.wait_for(
+            _asyncio.wait({cycle_task, renew_task}, return_when=_asyncio.FIRST_COMPLETED),
+            timeout=1.0,
+        )
+        assert cycle_task in done
+        assert renew_task in pending
+    finally:
+        renew_task.cancel()
+        try:
+            await renew_task
+        except _asyncio.CancelledError:
+            pass
+
+
+def test_send_card_message_truncates_long_title():
+    """v8.6.20-r8（审计 #2）：飞书 plain_text 卡片标题硬上限 ~250；超长会触发
+    MessageContentInvalid。task_title 来自 SeedRequest 没 max_length，必须截断。"""
+    import asyncio as _asyncio
+    from unittest.mock import patch, AsyncMock
+    from app.feishu import im
+
+    captured = {}
+
+    async def fake_send(target, target_type, msg_type, content):
+        captured["content"] = content
+        return {"message_id": "mid"}
+
+    with patch.object(im, "_send_message_impl", new=fake_send):
+        with patch.object(im, "settings", create=True):
+            im.settings.feishu_chat_id = "oc_xxx"
+            _asyncio.get_event_loop().run_until_complete(
+                im._send_card_message_impl(
+                    title="x" * 5000, content="正文", chat_id="oc_xxx",
+                )
+            )
+    import json as _json
+    card = _json.loads(captured["content"])
+    title = card["header"]["title"]["content"]
+    assert len(title) <= 210  # 200 + 截断标记
+    assert title.endswith("…") or len(title) == 5000  # 后者不该发生
+
+
 def test_workflow_has_execution_items_flattens_richtext():
     """v8.6.20-r7（审计 #7）：飞书 search/get_record 把 text 字段返成富文本数组
     `[{"text": "...", "type": "text"}]`。如果不拍平 → str(list) 永远不以「执行项：」

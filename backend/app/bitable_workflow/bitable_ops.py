@@ -220,7 +220,8 @@ async def _list_records_impl(
 
         resp = await http.get(url, headers={"Authorization": f"Bearer {token}"}, params=params)
         resp.raise_for_status()
-        data = resp.json()
+        # v8.6.20-r8（审计 #3）：用 _safe_json 兜底飞书偶发 200 OK + 非 JSON 网关响应
+        data = _safe_json(resp)
         if data.get("code") != 0:
             raise RuntimeError(f"list records failed: code={data.get('code')} msg={data.get('msg')}")
 
@@ -250,7 +251,7 @@ async def _create_record_impl(app_token: str, table_id: str, fields: dict) -> st
         json={"fields": fields},
     )
     resp.raise_for_status()
-    data = resp.json()
+    data = _safe_json(resp)
     if data.get("code") != 0:
         raise RuntimeError(f"create record failed: code={data.get('code')} msg={data.get('msg')}")
     try:
@@ -269,7 +270,7 @@ async def _get_record_impl(app_token: str, table_id: str, record_id: str) -> dic
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}"
     resp = await _get_http_client().get(url, headers={"Authorization": f"Bearer {token}"})
     resp.raise_for_status()
-    data = resp.json()
+    data = _safe_json(resp)
     if data.get("code") != 0:
         raise RuntimeError(f"get record failed: code={data.get('code')} msg={data.get('msg')}")
     try:
@@ -292,7 +293,7 @@ async def _update_record_impl(app_token: str, table_id: str, record_id: str, fie
         json={"fields": fields},
     )
     resp.raise_for_status()
-    data = resp.json()
+    data = _safe_json(resp)
     if data.get("code") != 0:
         raise RuntimeError(f"update record failed: code={data.get('code')} msg={data.get('msg')}")
 
@@ -307,7 +308,7 @@ async def _delete_record_impl(app_token: str, table_id: str, record_id: str) -> 
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}"
     resp = await _get_http_client().delete(url, headers={"Authorization": f"Bearer {token}"})
     resp.raise_for_status()
-    data = resp.json()
+    data = _safe_json(resp)
     if data.get("code") != 0:
         raise RuntimeError(f"delete record failed: code={data.get('code')} msg={data.get('msg')}")
 
