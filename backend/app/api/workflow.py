@@ -1,6 +1,7 @@
 """工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析任务 + SSE 进度流"""
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -26,6 +27,7 @@ router = APIRouter(
     tags=["workflow"],
 )
 logger = logging.getLogger(__name__)
+_ARCHIVE_VERSION_RE = re.compile(r"^v(\d+)$", re.IGNORECASE)
 
 # 运行时状态（单进程内有效）
 _state: dict = {}
@@ -185,6 +187,61 @@ def _workflow_has_execution_items(task_fields: dict[str, object]) -> bool:
     if not payload:
         return False
     return any(line.strip().startswith(("执行项：", "执行项:")) for line in payload.splitlines())
+
+
+def _archive_version_rank(row: dict[str, object]) -> int:
+    fields = (row.get("fields") if isinstance(row, dict) else None) or {}
+    version = str(fields.get("汇报版本号") or "").strip()
+    match = _ARCHIVE_VERSION_RE.match(version)
+    if match:
+        return int(match.group(1))
+    return 0
+
+
+async def _sync_delivery_archive(
+    app_token: str,
+    archive_tid: str | None,
+    record_id: str,
+    task_title: str,
+    fields: dict[str, object],
+    optional_keys: list[str],
+) -> None:
+    if not archive_tid:
+        return
+    archive_rows: list[dict[str, object]] = []
+    try:
+        if record_id:
+            safe_record_id = bitable_ops.quote_filter_value(record_id)
+            archive_rows = await bitable_ops.list_records(
+                app_token,
+                archive_tid,
+                filter_expr=f"CurrentValue.[关联记录ID]={safe_record_id}",
+                max_records=20,
+            )
+        if not archive_rows and task_title:
+            safe_title = bitable_ops.quote_filter_value(task_title)
+            archive_rows = await bitable_ops.list_records(
+                app_token,
+                archive_tid,
+                filter_expr=f"CurrentValue.[任务标题]={safe_title}",
+                max_records=20,
+            )
+    except Exception as exc:
+        logger.warning("archive sync lookup failed record=%s title=%s: %s", record_id, task_title, exc)
+        return
+    if not archive_rows:
+        return
+    latest_row = max(archive_rows, key=_archive_version_rank)
+    archive_fields = {key: value for key, value in fields.items() if key in {"工作流路由", "归档状态", "关联记录ID"}}
+    if not archive_fields:
+        return
+    await bitable_ops.update_record_optional_fields(
+        app_token,
+        archive_tid,
+        str(latest_row.get("record_id") or ""),
+        archive_fields,
+        optional_keys=[key for key in optional_keys if key in archive_fields],
+    )
 
 
 async def _resolve_seed_template_defaults(
@@ -551,10 +608,31 @@ async def workflow_confirm(req: ConfirmRequest):
         action_name = "执行落地确认"
         action_summary = "已回写执行完成时间"
     elif req.action == "retrospective":
-        fields.update({"是否进入复盘": True, "待复盘确认": False})
-        optional_keys.append("待复盘确认")
+        fields.update(
+            {
+                "是否进入复盘": True,
+                "待复盘确认": False,
+                "状态": Status.ARCHIVED,
+                "归档状态": "已归档",
+                "待发送汇报": False,
+                "待创建执行任务": False,
+                "待执行确认": False,
+                "待安排复核": False,
+            }
+        )
+        optional_keys.extend(
+            [
+                "待复盘确认",
+                "状态",
+                "归档状态",
+                "待发送汇报",
+                "待创建执行任务",
+                "待执行确认",
+                "待安排复核",
+            ]
+        )
         action_name = "进入复盘确认"
-        action_summary = "已标记任务进入复盘"
+        action_summary = "已完成复盘并归档"
 
     merged_task_fields = dict(task_fields)
     merged_task_fields.update(fields)
@@ -591,6 +669,7 @@ async def workflow_confirm(req: ConfirmRequest):
     table_ids = _state.get("table_ids") or {}
     action_tid = table_ids.get("action")
     automation_log_tid = table_ids.get("automation_log")
+    archive_tid = table_ids.get("archive")
     if action_tid and task_title:
         await bitable_ops.create_record_optional_fields(
             req.app_token,
@@ -623,6 +702,30 @@ async def workflow_confirm(req: ConfirmRequest):
                 "关联记录ID": req.record_id,
             },
             optional_keys=["工作流路由", "触发来源", "详细结果", "关联记录ID"],
+        )
+    archive_sync_fields: dict[str, object] = {}
+    archive_sync_optional_keys: list[str] = []
+    if req.action == "approve" and promote_to_execution:
+        archive_sync_fields = {
+            "工作流路由": "直接执行",
+            "归档状态": "待执行",
+            "关联记录ID": req.record_id,
+        }
+        archive_sync_optional_keys = ["工作流路由", "归档状态", "关联记录ID"]
+    elif req.action == "retrospective":
+        archive_sync_fields = {
+            "归档状态": "已归档",
+            "关联记录ID": req.record_id,
+        }
+        archive_sync_optional_keys = ["归档状态", "关联记录ID"]
+    if archive_sync_fields:
+        await _sync_delivery_archive(
+            req.app_token,
+            archive_tid,
+            req.record_id,
+            task_title,
+            archive_sync_fields,
+            archive_sync_optional_keys,
         )
     return {"record_id": req.record_id, "action": req.action, "updated": fields}
 

@@ -435,6 +435,177 @@ async def test_workflow_confirm_approve_promotes_waiting_approval_task_to_execut
 
 
 @pytest.mark.asyncio
+async def test_workflow_confirm_approve_syncs_latest_archive_record_to_execution(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    update_calls = []
+
+    async def fake_update_record(_app_token, table_id, record_id, fields, optional_keys=None):
+        update_calls.append(
+            {
+                "table_id": table_id,
+                "record_id": record_id,
+                "fields": dict(fields),
+                "optional_keys": list(optional_keys or []),
+            }
+        )
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "等待拍板",
+                "待拍板确认": True,
+                "工作流执行包": "路由：等待拍板\n\n执行项：\n- 跟进重点客户",
+            }
+        }
+
+    async def fake_list_records(_app_token, table_id, filter_expr=None, max_records=20):
+        assert table_id == "tbl_archive"
+        assert "关联记录ID" in (filter_expr or "")
+        assert max_records == 20
+        return [
+            {"record_id": "rec_archive_v1", "fields": {"汇报版本号": "v1", "任务标题": "增长复盘任务"}},
+            {"record_id": "rec_archive_v3", "fields": {"汇报版本号": "v3", "任务标题": "增长复盘任务"}},
+            {"record_id": "rec_archive_v2", "fields": {"汇报版本号": "v2", "任务标题": "增长复盘任务"}},
+        ]
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update_record)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", fake_list_records)
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update(
+        {
+            "table_ids": {
+                "action": "tbl_action",
+                "automation_log": "tbl_log",
+                "archive": "tbl_archive",
+            }
+        }
+    )
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_1",
+        action="approve",
+        actor="CEO",
+    )
+
+    result = await workflow.workflow_confirm(req)
+
+    assert result["action"] == "approve"
+    assert len(update_calls) == 2
+    main_call = next(call for call in update_calls if call["table_id"] == "tbl")
+    archive_call = next(call for call in update_calls if call["table_id"] == "tbl_archive")
+    assert main_call["fields"]["工作流路由"] == "直接执行"
+    assert archive_call["record_id"] == "rec_archive_v3"
+    assert archive_call["fields"] == {
+        "工作流路由": "直接执行",
+        "归档状态": "待执行",
+        "关联记录ID": "rec_1",
+    }
+    assert archive_call["optional_keys"] == ["工作流路由", "归档状态", "关联记录ID"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_retrospective_archives_main_and_archive_record(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    update_calls = []
+
+    async def fake_update_record(_app_token, table_id, record_id, fields, optional_keys=None):
+        update_calls.append(
+            {
+                "table_id": table_id,
+                "record_id": record_id,
+                "fields": dict(fields),
+                "optional_keys": list(optional_keys or []),
+            }
+        )
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "经营复盘任务",
+                "工作流路由": "直接执行",
+                "待复盘确认": True,
+                "是否已执行落地": True,
+                "执行负责人": "区域负责人",
+                "复盘负责人": "经营分析负责人",
+                "状态": "已完成",
+                "归档状态": "待复核",
+            }
+        }
+
+    async def fake_list_records(_app_token, table_id, filter_expr=None, max_records=20):
+        assert table_id == "tbl_archive"
+        assert "关联记录ID" in (filter_expr or "")
+        assert max_records == 20
+        return [
+            {"record_id": "rec_archive_v2", "fields": {"汇报版本号": "v2", "任务标题": "经营复盘任务"}},
+        ]
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update_record)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", fake_list_records)
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update(
+        {
+            "table_ids": {
+                "action": "tbl_action",
+                "automation_log": "tbl_log",
+                "archive": "tbl_archive",
+            }
+        }
+    )
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_2",
+        action="retrospective",
+        actor="经营分析负责人",
+    )
+
+    result = await workflow.workflow_confirm(req)
+
+    assert result["action"] == "retrospective"
+    assert len(update_calls) == 2
+    main_call = next(call for call in update_calls if call["table_id"] == "tbl")
+    archive_call = next(call for call in update_calls if call["table_id"] == "tbl_archive")
+    assert main_call["fields"]["是否进入复盘"] is True
+    assert main_call["fields"]["待复盘确认"] is False
+    assert main_call["fields"]["状态"] == "已归档"
+    assert main_call["fields"]["归档状态"] == "已归档"
+    assert main_call["fields"]["当前责任角色"] == "已归档"
+    assert main_call["fields"]["当前责任人"] == "归档库"
+    assert main_call["fields"]["当前原生动作"] == "归档沉淀"
+    assert "状态" in main_call["optional_keys"]
+    assert "归档状态" in main_call["optional_keys"]
+    assert archive_call["record_id"] == "rec_archive_v2"
+    assert archive_call["fields"] == {
+        "归档状态": "已归档",
+        "关联记录ID": "rec_2",
+    }
+    assert archive_call["optional_keys"] == ["归档状态", "关联记录ID"]
+
+
+@pytest.mark.asyncio
 async def test_workflow_confirm_rejects_mismatched_action(monkeypatch):
     sse_pkg = ModuleType("sse_starlette")
     sse_mod = ModuleType("sse_starlette.sse")
