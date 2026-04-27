@@ -43,8 +43,9 @@ async def apply_native_manifest(
 
     applied_at = int(time.time())
 
+    advperm_ready = True
     if "role" in targets:
-        await _apply_advperm(app_token, assets, report)
+        advperm_ready = await _apply_advperm(app_token, assets, report)
 
     if "form" in targets:
         await _apply_form(app_token, table_ids, assets, report, force=force, applied_at=applied_at)
@@ -55,7 +56,10 @@ async def apply_native_manifest(
     if "dashboard" in targets:
         await _apply_dashboards(app_token, table_ids, assets, report, force=force, applied_at=applied_at)
     if "role" in targets:
-        await _apply_roles(app_token, assets, report, force=force, applied_at=applied_at)
+        if advperm_ready:
+            await _apply_roles(app_token, assets, report, force=force, applied_at=applied_at)
+        else:
+            _mark_roles_waiting_advperm(assets, report, applied_at=applied_at)
 
     await _write_native_install_logs(
         app_token=app_token,
@@ -83,7 +87,7 @@ async def apply_native_manifest(
     }
 
 
-async def _apply_advperm(app_token: str, assets: dict[str, Any], report: list[dict[str, Any]]) -> None:
+async def _apply_advperm(app_token: str, assets: dict[str, Any], report: list[dict[str, Any]]) -> bool:
     try:
         resp = await cli_base("+advperm-enable", "--base-token", app_token)
         data = _resp_data(resp)
@@ -98,10 +102,12 @@ async def _apply_advperm(app_token: str, assets: dict[str, Any], report: list[di
                 "error": "" if success else "高级权限启用返回未确认 success=true",
             }
         )
+        return success
     except Exception as exc:
         logger.warning("advperm enable failed: %s", exc)
         assets["advperm_state"] = _error_state(exc)
         report.append({"surface": "advperm", "name": "启用高级权限", "status": assets["advperm_state"], "error": str(exc)})
+        return False
 
 
 async def _apply_form(
@@ -412,6 +418,26 @@ async def _apply_roles(
             item["lifecycle_state"] = _error_state(exc)
             item["blocking_reason"] = str(exc)
             report.append({"surface": "role", "name": str(item.get("name") or ""), "status": item["lifecycle_state"], "error": str(exc)})
+
+
+def _mark_roles_waiting_advperm(
+    assets: dict[str, Any],
+    report: list[dict[str, Any]],
+    *,
+    applied_at: int,
+) -> None:
+    for item in _asset_list(assets, "role_blueprints"):
+        item["lifecycle_state"] = "manual_finish_required"
+        item["applied_at"] = applied_at
+        item["blocking_reason"] = "高级权限未确认启用，已跳过角色创建"
+        report.append(
+            {
+                "surface": "role",
+                "name": str(item.get("name") or ""),
+                "status": "skipped",
+                "reason": "advperm_not_ready",
+            }
+        )
 
 
 def _asset_list(assets: dict[str, Any], key: str) -> list[dict[str, Any]]:

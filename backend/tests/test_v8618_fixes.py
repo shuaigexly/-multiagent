@@ -571,10 +571,14 @@ async def test_apply_native_manifest_marks_dashboard_manual_when_blocks_partial(
 async def test_apply_native_manifest_requires_success_true_for_advperm_and_role(monkeypatch):
     from app.bitable_workflow.native_installer import apply_native_manifest
 
+    role_create_called = False
+
     async def fake_cli_base(shortcut: str, *args: str):
+        nonlocal role_create_called
         if shortcut == "+advperm-enable":
             return {"ok": True, "data": {"success": False}}
         if shortcut == "+role-create":
+            role_create_called = True
             return {"ok": True, "data": {"success": False}}
         raise AssertionError(f"unexpected shortcut {shortcut}")
 
@@ -605,9 +609,12 @@ async def test_apply_native_manifest_requires_success_true_for_advperm_and_role(
 
     assert result["report"][0]["name"] == "启用高级权限"
     assert result["report"][0]["status"] == "manual_finish_required"
+    assert result["report"][1]["status"] == "skipped"
+    assert result["report"][1]["reason"] == "advperm_not_ready"
     assert result["native_assets"]["advperm_state"] == "manual_finish_required"
     assert result["native_assets"]["role_blueprints"][0]["lifecycle_state"] == "manual_finish_required"
-    assert "success=true" in result["native_assets"]["role_blueprints"][0]["blocking_reason"]
+    assert "高级权限未确认启用" in result["native_assets"]["role_blueprints"][0]["blocking_reason"]
+    assert role_create_called is False
 
 
 @pytest.mark.asyncio
