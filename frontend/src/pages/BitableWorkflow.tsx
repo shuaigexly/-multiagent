@@ -10,6 +10,7 @@ import {
   FileSearch,
   Flame,
   Layers3,
+  Lock,
   Loader2,
   Pause,
   Play,
@@ -150,6 +151,15 @@ const ACTION_TYPE_STYLE: Record<string, string> = {
   创建复核任务: 'border-amber-200 bg-amber-50 text-amber-700',
   自动跟进任务: 'border-violet-200 bg-violet-50 text-violet-700',
   工作流记录: 'border-slate-200 bg-slate-100 text-slate-700',
+};
+
+const NATIVE_SURFACE_LABEL: Record<string, string> = {
+  advperm: '高级权限',
+  role: '角色权限',
+  form: '表单',
+  automation: '自动化',
+  workflow: '工作流',
+  dashboard: '仪表盘',
 };
 
 const ARCHIVE_STATUS_STYLE: Record<string, string> = {
@@ -1703,6 +1713,7 @@ export default function BitableWorkflow() {
                     ) : (
                       nativeCommandPacks.map((pack) => {
                         const status = textValue(pack.status) || 'blueprint_ready';
+                        const surfaceLabel = NATIVE_SURFACE_LABEL[textValue(pack.surface)] || textValue(pack.surface) || '原生';
                         const commands = Array.isArray(pack.commands) ? (pack.commands as unknown[]) : [];
                         const notes = Array.isArray(pack.notes) ? (pack.notes as unknown[]) : [];
                         return (
@@ -1710,7 +1721,7 @@ export default function BitableWorkflow() {
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
                                 <div className="text-sm font-semibold text-slate-950">{textValue(pack.label)}</div>
-                                <div className="mt-1 text-xs text-slate-500">{textValue(pack.surface)} 原生能力</div>
+                                <div className="mt-1 text-xs text-slate-500">{surfaceLabel} 原生能力</div>
                               </div>
                               <div className={`rounded-full border px-3 py-1 text-xs font-medium ${ASSET_STATE_STYLE[status] || 'border-slate-200 bg-white text-slate-600'}`}>
                                 {ASSET_STATE_LABEL[status] || status}
@@ -1759,12 +1770,13 @@ export default function BitableWorkflow() {
                   ) : (
                     nativeApplyReport.map((item) => {
                       const status = textValue(item.status) || 'manual_finish_required';
+                      const surfaceLabel = NATIVE_SURFACE_LABEL[textValue(item.surface)] || textValue(item.surface) || '原生';
                       return (
                         <div key={`${textValue(item.surface)}-${textValue(item.name)}`} className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
                               <div className="text-sm font-semibold text-slate-950">{textValue(item.name) || '未命名对象'}</div>
-                              <div className="mt-1 text-xs text-slate-500">{textValue(item.surface)} 原生能力</div>
+                              <div className="mt-1 text-xs text-slate-500">{surfaceLabel} 原生能力</div>
                             </div>
                             <div className={`rounded-full border px-3 py-1 text-xs font-medium ${APPLY_REPORT_STYLE[status] || 'border-slate-200 bg-white text-slate-600'}`}>
                               {status === 'created'
