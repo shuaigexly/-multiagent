@@ -3,6 +3,22 @@ import { api, BASE_URL } from './http';
 export interface WorkflowSetup {
   app_token: string;
   url: string;
+  base_meta?: {
+    base_type: string;
+    mode: string;
+    schema_version: string;
+    initialized_at: string;
+    source_template: string;
+  };
+  native_assets?: {
+    status?: string;
+    form_blueprints?: Array<Record<string, unknown>>;
+    automation_templates?: Array<Record<string, unknown>>;
+    workflow_blueprints?: Array<Record<string, unknown>>;
+    dashboard_blueprints?: Array<Record<string, unknown>>;
+    role_blueprints?: Array<Record<string, unknown>>;
+    template_center_table_id?: string;
+  };
   table_ids: {
     task: string;
     output: string;
@@ -34,8 +50,15 @@ export interface RecordListResponse<T = TaskRecord> {
   records: T[];
 }
 
-export async function setupWorkflow(name = '内容运营虚拟组织'): Promise<WorkflowSetup> {
-  const resp = await api.post('/api/v1/workflow/setup', { name });
+export async function setupWorkflow(
+  name = '内容运营虚拟组织',
+  options?: { mode?: 'seed_demo' | 'prod_empty' | 'template_only'; base_type?: 'template' | 'production' | 'validation' },
+): Promise<WorkflowSetup> {
+  const resp = await api.post('/api/v1/workflow/setup', {
+    name,
+    mode: options?.mode ?? 'seed_demo',
+    base_type: options?.base_type ?? 'validation',
+  });
   return resp.data;
 }
 
@@ -68,6 +91,9 @@ export async function seedTask(
   dimension = '综合分析',
   background = '',
   metadata?: {
+    task_source?: string;
+    business_owner?: string;
+    audience_level?: string;
     target_audience?: string;
     output_purpose?: string;
     success_criteria?: string;

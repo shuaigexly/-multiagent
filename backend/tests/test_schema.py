@@ -80,6 +80,8 @@ class TestFieldCompleteness:
         assert "状态" in names
         assert "分析维度" in names
         assert "创建时间" in names
+        assert "任务来源" in names
+        assert "业务归属" in names
         assert "最新评审动作" in names
         assert "汇报就绪度" in names
         assert "证据条数" in names
@@ -91,6 +93,7 @@ class TestFieldCompleteness:
         assert "建议复核时间" in names
         assert "汇报版本号" in names
         assert "归档状态" in names
+        assert "汇报对象级别" in names
         assert "拍板负责人" in names
         assert "执行负责人" in names
         assert "复核负责人" in names
@@ -101,6 +104,7 @@ class TestFieldCompleteness:
         assert "异常状态" in names
         assert "异常类型" in names
         assert "异常说明" in names
+        assert "自动化执行状态" in names
         assert "是否已拍板" in names
         assert "待拍板确认" in names
         assert "拍板时间" in names

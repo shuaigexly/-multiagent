@@ -362,6 +362,10 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
+function objectList(value: unknown) {
+  return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+}
+
 export default function BitableWorkflow() {
   const [setup, setSetupState] = useState<WorkflowSetup | null>(null);
   const [running, setRunning] = useState(false);
@@ -402,6 +406,8 @@ export default function BitableWorkflow() {
           setSetupState({
             app_token: st.state.app_token,
             url: st.state.url || '',
+            base_meta: st.state.base_meta,
+            native_assets: st.state.native_assets,
             table_ids: st.state.table_ids as WorkflowSetup['table_ids'],
           });
         }
@@ -863,6 +869,11 @@ export default function BitableWorkflow() {
         .slice(0, 4),
     [templateOverview],
   );
+  const nativeFormBlueprints = objectList(setup?.native_assets?.form_blueprints);
+  const nativeAutomationTemplates = objectList(setup?.native_assets?.automation_templates);
+  const nativeWorkflowBlueprints = objectList(setup?.native_assets?.workflow_blueprints);
+  const nativeDashboardBlueprints = objectList(setup?.native_assets?.dashboard_blueprints);
+  const nativeRoleBlueprints = objectList(setup?.native_assets?.role_blueprints);
   const selectedTaskNumber = textValue(taskField(selectedTask, '任务编号'));
   const selectedProgress = selectedLive
     ? Math.max(safeProgress(taskField(selectedTask, '进度')), selectedLive.progress * 100)
@@ -1242,6 +1253,136 @@ export default function BitableWorkflow() {
                   </div>
                 );
               })}
+            </section>
+
+            <section className="rounded-[30px] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(245,247,250,0.96))] p-6 shadow-[0_20px_64px_rgba(15,23,42,0.06)]">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Native Assets</p>
+                  <h2 className="mt-2 font-serif text-3xl font-semibold text-slate-950">飞书原生交付资产包</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                    这里展示当前 Base 已经准备好的原生表单、自动化、工作流、仪表盘和角色蓝图。目标不是让前端代替飞书，而是让飞书本身成为真正的交付操作面。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                  {setup?.base_meta?.base_type && (
+                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
+                      Base 类型：{setup.base_meta.base_type}
+                    </span>
+                  )}
+                  {setup?.base_meta?.mode && (
+                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
+                      初始化模式：{setup.base_meta.mode}
+                    </span>
+                  )}
+                  {setup?.base_meta?.schema_version && (
+                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
+                      Schema：{setup.base_meta.schema_version}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 xl:grid-cols-5">
+                {[
+                  { label: '表单蓝图', value: nativeFormBlueprints.length, note: nativeFormBlueprints[0]?.shared_url ? '已生成共享入口' : '等待共享或人工启用', icon: Database, surface: 'from-cyan-100 via-white to-sky-50', accent: 'text-cyan-700' },
+                  { label: '自动化模板', value: nativeAutomationTemplates.length, note: '围绕主表字段直接触发', icon: Sparkles, surface: 'from-emerald-100 via-white to-teal-50', accent: 'text-emerald-700' },
+                  { label: '工作流蓝图', value: nativeWorkflowBlueprints.length, note: '按工作流路由拆分分支', icon: Activity, surface: 'from-rose-100 via-white to-orange-50', accent: 'text-rose-700' },
+                  { label: '仪表盘蓝图', value: nativeDashboardBlueprints.length, note: '面向管理汇报和异常跟踪', icon: Target, surface: 'from-violet-100 via-white to-indigo-50', accent: 'text-violet-700' },
+                  { label: '角色蓝图', value: nativeRoleBlueprints.length, note: '按高管/执行/复核拆分工作面', icon: Briefcase, surface: 'from-amber-100 via-white to-yellow-50', accent: 'text-amber-700' },
+                ].map((metric) => {
+                  const Icon = metric.icon;
+                  return (
+                    <div key={metric.label} className="rounded-[24px] border border-white/70 bg-white p-4 shadow-sm">
+                      <div className={`rounded-2xl bg-gradient-to-br ${metric.surface} p-4`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{metric.label}</p>
+                            <div className={`mt-3 text-3xl font-semibold ${metric.accent}`}>{metric.value}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/70 bg-white/80 p-3 shadow-sm">
+                            <Icon className={`h-5 w-5 ${metric.accent}`} />
+                          </div>
+                        </div>
+                        <p className="mt-3 text-sm leading-6 text-slate-600">{metric.note}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-6 grid gap-4 xl:grid-cols-2">
+                <div className="rounded-[24px] border border-slate-200 bg-white/90 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Form Entry</div>
+                      <div className="mt-2 text-xl font-semibold text-slate-950">多维表格原生入口</div>
+                    </div>
+                    <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                      {textValue(nativeFormBlueprints[0]?.status) || '待生成'}
+                    </div>
+                  </div>
+                  <div className="mt-4 space-y-3 text-sm text-slate-700">
+                    <div>入口表：`分析任务` → `📥 需求收集表`</div>
+                    <div>字段契约：任务标题 / 输出目的 / 优先级 / 引用数据集 / 任务图像</div>
+                    {textValue(nativeFormBlueprints[0]?.shared_url) ? (
+                      <a
+                        href={textValue(nativeFormBlueprints[0]?.shared_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-medium text-teal-700 hover:text-teal-900"
+                      >
+                        打开表单入口 <ArrowUpRight className="h-3.5 w-3.5" />
+                      </a>
+                    ) : (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-3 text-amber-900">
+                        表单视图已创建，但还没有拿到可直接分享的链接。通常需要在飞书 UI 内确认共享状态。
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200 bg-white/90 p-5">
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Execution Blueprint</div>
+                  <div className="mt-2 text-xl font-semibold text-slate-950">原生执行层就绪度</div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    {nativeWorkflowBlueprints.slice(0, 3).map((item) => (
+                      <div key={textValue(item.name)} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                        <div className="text-sm font-semibold text-slate-950">{textValue(item.name)}</div>
+                        <div className="mt-2 text-sm leading-6 text-slate-600">
+                          {textValue(item.entry_condition) || textValue(item.route_field) || '等待配置'}
+                        </div>
+                      </div>
+                    ))}
+                    {nativeWorkflowBlueprints.length === 0 && <EmptyState text="当前没有可展示的原生工作流蓝图。" />}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 xl:grid-cols-3">
+                {[
+                  { title: '自动化模板', items: nativeAutomationTemplates, style: 'border-emerald-200 bg-emerald-50 text-emerald-700', valueKey: 'condition' },
+                  { title: '仪表盘蓝图', items: nativeDashboardBlueprints, style: 'border-violet-200 bg-violet-50 text-violet-700', valueKey: 'focus_metrics' },
+                  { title: '角色蓝图', items: nativeRoleBlueprints, style: 'border-amber-200 bg-amber-50 text-amber-700', valueKey: 'focus_views' },
+                ].map((lane) => (
+                  <div key={lane.title} className="rounded-[24px] border border-slate-200 bg-white/90 p-4 shadow-sm">
+                    <div className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${lane.style}`}>{lane.title}</div>
+                    <div className="mt-4 space-y-3">
+                      {lane.items.slice(0, 4).map((item) => (
+                        <div key={textValue(item.name)} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                          <div className="text-sm font-semibold text-slate-950">{textValue(item.name)}</div>
+                          <div className="mt-2 text-sm leading-6 text-slate-600">
+                            {Array.isArray(item[lane.valueKey])
+                              ? (item[lane.valueKey] as unknown[]).slice(0, 3).map((value) => String(value || '')).filter(Boolean).join(' / ')
+                              : textValue(item[lane.valueKey]) || '等待配置'}
+                          </div>
+                        </div>
+                      ))}
+                      {lane.items.length === 0 && <EmptyState text={`当前没有可展示的${lane.title}。`} />}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
 
             <section className="rounded-[30px] border border-white/70 bg-white/90 p-6 shadow-[0_20px_64px_rgba(15,23,42,0.06)]">

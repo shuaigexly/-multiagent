@@ -187,7 +187,9 @@ async def test_workflow_seed_does_not_write_auto_created_time(monkeypatch):
     result = await workflow.workflow_seed(req)
 
     assert result == {"record_id": "rec_1"}
-    assert len(captured) == 4
+    assert captured["任务来源"] == "手工创建"
+    assert captured["自动化执行状态"] == "未触发"
+    assert len(captured) == 6
 
 
 @pytest.mark.asyncio

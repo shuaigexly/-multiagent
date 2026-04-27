@@ -125,3 +125,36 @@ def test_seed_csv_fence_uses_csv_language_marker():
     import inspect
     src = inspect.getsource(runner._populate_base_records)
     assert "```csv" in src, "SEED 围栏应带 ```csv 语言标记，便于 markdown 高亮 + parser 提示"
+
+
+@pytest.mark.asyncio
+async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
+    from app.bitable_workflow import runner
+
+    async def fake_create_bitable(name: str) -> dict:
+        return {"app_token": "appN", "url": "https://feishu.cn/base/appN", "name": name}
+
+    async def fake_create_table(app_token: str, table_name: str, fields: list[dict]) -> str:
+        return f"tbl_{table_name}"
+
+    async def fake_create_views(*args, **kwargs):
+        return {"views": [], "forms": [{"view_name": "📥 需求收集表", "view_id": "vew_form", "shared_url": "https://feishu.cn/form/abc"}]}
+
+    async def fake_cleanup(*args, **kwargs):
+        return None
+
+    async def fake_populate(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(runner, "create_bitable", fake_create_bitable)
+    monkeypatch.setattr(runner, "create_table", fake_create_table)
+    monkeypatch.setattr(runner, "_create_extra_views", fake_create_views)
+    monkeypatch.setattr(runner, "_cleanup_auto_created_artifacts", fake_cleanup)
+    monkeypatch.setattr(runner, "_populate_base_records", fake_populate)
+
+    result = await runner.setup_workflow(name="native-demo", mode="prod_empty", base_type="production")
+
+    assert result["base_meta"]["mode"] == "prod_empty"
+    assert result["base_meta"]["base_type"] == "production"
+    assert result["native_assets"]["status"] == "blueprint_ready"
+    assert result["native_assets"]["form_blueprints"][0]["shared_url"] == "https://feishu.cn/form/abc"

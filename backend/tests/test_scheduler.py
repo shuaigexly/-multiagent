@@ -602,11 +602,14 @@ class TestTaskDeliverySnapshot:
         assert snapshot["需补数条数"] == 2
         assert snapshot["汇报就绪度"] == 4
         assert snapshot["工作流路由"] == "补数复核"
+        assert snapshot["业务归属"] == "综合经营"
+        assert snapshot["汇报对象级别"] == "负责人"
         assert snapshot["待安排复核"] is True
         assert snapshot["当前责任角色"] == "复核人"
         assert snapshot["当前原生动作"] == "安排复核"
         assert snapshot["异常状态"] == "需关注"
         assert snapshot["异常类型"] == "责任人待指派"
+        assert snapshot["自动化执行状态"] == "执行中"
         assert "增长复盘任务" in snapshot["工作流消息包"]
 
 

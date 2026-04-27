@@ -265,7 +265,7 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 # 1. 初始化（创建三张表格 + 写入种子任务）
 curl -X POST http://localhost:8000/api/v1/workflow/setup \
   -H "Content-Type: application/json" \
-  -d '{"name": "内容运营虚拟组织"}'
+  -d '{"name": "内容运营虚拟组织", "mode": "seed_demo", "base_type": "validation"}'
 # 返回 → {"app_token": "xxx", "url": "https://...", "table_ids": {"content": "tbl_A", ...}}
 
 # 2. 启动循环（每 30s 轮询，每 5 轮生成周报）
@@ -304,6 +304,17 @@ curl -X POST http://localhost:8000/api/v1/workflow/stop
 # 6. 查询已发布记录
 curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A&status=已发布"
 ```
+
+`setup` 现在支持：
+
+- `mode=seed_demo`：创建完整演示 Base，含数据源、模板、种子任务
+- `mode=prod_empty`：创建生产空 Base，只保留结构、视图、模板和原生资产蓝图
+- `mode=template_only`：创建模板 Base，用于后续复制成业务 Base
+
+同时返回：
+
+- `base_meta`：`base_type / mode / schema_version / initialized_at`
+- `native_assets`：表单入口、自动化模板、工作流蓝图、仪表盘蓝图、角色蓝图
 
 ### 注入真实数据源（让分析不再凭空估算）
 

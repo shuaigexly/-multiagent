@@ -8,6 +8,7 @@ stop_workflow()      — 停止循环
 import asyncio
 import logging
 import threading
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.bitable_workflow import bitable_ops, schema
@@ -17,12 +18,21 @@ from app.feishu.bitable import create_bitable, create_table, create_view
 
 logger = logging.getLogger(__name__)
 
+SCHEMA_VERSION = "v8.6.20-r6"
+DEFAULT_SETUP_MODE = "seed_demo"
+DEFAULT_BASE_TYPE = "validation"
+
 _running = False
 _stop_event: Optional[asyncio.Event] = None
 _state_lock = threading.Lock()
 
 
-async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
+async def setup_workflow(
+    name: str = "内容运营虚拟组织",
+    *,
+    mode: str = DEFAULT_SETUP_MODE,
+    base_type: str = DEFAULT_BASE_TYPE,
+) -> dict:
     """
     一键初始化：
     1. 创建飞书多维表格 App
@@ -33,6 +43,14 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     """
     result = await create_bitable(name)
     app_token = result["app_token"]
+    initialized_at = datetime.now(tz=timezone.utc).isoformat()
+    base_meta = {
+        "base_type": base_type,
+        "mode": mode,
+        "schema_version": SCHEMA_VERSION,
+        "initialized_at": initialized_at,
+        "source_template": "feishu-bitable-native-delivery-loop",
+    }
 
     # v8.6.18 — setup 中途任意步骤失败 → 自动 DELETE 整个 base 回滚（避免污染云空间）
     # codex 实测发现注入 _create_extra_views 抛错后会留下 6 张表 + 飞书自动「数据表」
@@ -57,7 +75,7 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
 
         # 为每张表创建附加视图（看板/画册）以提升可视化效果
         # 每张表的第一个视图是默认网格视图（创建表时自动生成），这里追加额外视图
-        await _create_extra_views(
+        view_assets = await _create_extra_views(
             app_token,
             task_tid,
             output_tid,
@@ -70,7 +88,7 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
             archive_tid,
             automation_log_tid,
             template_tid,
-        )
+        ) or {"views": [], "forms": []}
 
         # v8.6.2 修复：飞书新建多维表格 App 时会自动创建一张「数据表」作为默认表，
         # 用户打开 base URL 默认进的就是这张空表 → 看到一片空白以为整个 Bitable 没数据。
@@ -96,54 +114,79 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     # v8.6.18 — 数据写入也要补偿：如果 SEED/数据源写入中途挂了，DELETE 整个 base
     try:
         await _populate_base_records(
-            app_token, task_tid, datasource_tid, template_tid,
+            app_token,
+            task_tid,
+            datasource_tid,
+            template_tid,
+            mode=mode,
+            base_meta=base_meta,
         )
     except Exception as populate_exc:
         logger.error("populate base records failed, rolling back %s: %s", app_token, populate_exc)
         await _delete_base_best_effort(app_token)
         raise
 
+    table_ids = {
+        "task": task_tid,
+        "output": output_tid,
+        "report": report_tid,
+        "performance": performance_tid,
+        "datasource": datasource_tid,
+        "evidence": evidence_tid,
+        "review": review_tid,
+        "action": action_tid,
+        "review_history": review_history_tid,
+        "archive": archive_tid,
+        "automation_log": automation_log_tid,
+        "template": template_tid,
+    }
+    native_assets = _build_native_assets(
+        app_token=app_token,
+        base_url=result["url"],
+        table_ids=table_ids,
+        view_assets=view_assets,
+        base_meta=base_meta,
+    )
+
     logger.info("Workflow setup complete: app_token=%s url=%s", app_token, result["url"])
     return {
         "app_token": app_token,
         "url": result["url"],
-        "table_ids": {
-            "task": task_tid,
-            "output": output_tid,
-            "report": report_tid,
-            "performance": performance_tid,
-            "datasource": datasource_tid,
-            "evidence": evidence_tid,
-            "review": review_tid,
-            "action": action_tid,
-            "review_history": review_history_tid,
-            "archive": archive_tid,
-            "automation_log": automation_log_tid,
-            "template": template_tid,
-        },
+        "table_ids": table_ids,
+        "base_meta": base_meta,
+        "native_assets": native_assets,
     }
 
 
-async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: str, template_tid: str) -> None:
+async def _populate_base_records(
+    app_token: str,
+    task_tid: str,
+    datasource_tid: str,
+    template_tid: str,
+    *,
+    mode: str,
+    base_meta: dict,
+) -> None:
     """v8.6.18：把数据源表 + 引导 + SEED 任务写入抽出来，便于 setup_workflow 包补偿。"""
     from app.bitable_workflow.demo_data import DATASETS, csv_to_markdown
-    for ds_name, ds_type, field_doc, csv_text in DATASETS:
-        n_rows = max(0, len([ln for ln in csv_text.strip().splitlines() if ln.strip()]) - 1)
-        await bitable_ops.create_record(
-            app_token, datasource_tid,
-            {
-                "数据集名称": ds_name,
-                "类型": ds_type,
-                "字段说明": field_doc,
-                "数据来源": "系统内置演示数据",
-                "可信等级": "medium",
-                "适用任务类型": "经营分析/增长优化/综合分析",
-                "原始 CSV": csv_text,
-                "渲染表格": csv_to_markdown(csv_text),
-                "数据行数": n_rows,
-                "最近校验说明": "初始化导入",
-            },
-        )
+    if mode == "seed_demo":
+        for ds_name, ds_type, field_doc, csv_text in DATASETS:
+            n_rows = max(0, len([ln for ln in csv_text.strip().splitlines() if ln.strip()]) - 1)
+            await bitable_ops.create_record(
+                app_token, datasource_tid,
+                {
+                    "数据集名称": ds_name,
+                    "类型": ds_type,
+                    "字段说明": field_doc,
+                    "数据来源": "系统内置演示数据",
+                    "可信等级": "medium",
+                    "适用任务类型": "经营分析/增长优化/综合分析",
+                    "原始 CSV": csv_text,
+                    "渲染表格": csv_to_markdown(csv_text),
+                    "数据行数": n_rows,
+                    "最近校验说明": "初始化导入",
+                },
+            )
 
     # v8.6.14：先写一条 UI 配置引导记录（已归档状态，不参与分析），再写 SEED 任务。
     # 飞书 OpenAPI 不公开 kanban.group_field / gallery.cover_field，必须用户在 UI
@@ -155,6 +198,9 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
             "分析维度": "综合分析",
             "优先级": "P0 紧急",
             "输出目的": "汇报展示",
+            "任务来源": "手工创建",
+            "业务归属": "综合经营",
+            "汇报对象级别": "部门管理层",
             "状态": "已归档",
             "进度": 1.0,
             "背景说明": (
@@ -167,6 +213,8 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
                 "【综合报告/🚦 健康度看板】点顶部「分组依据」→ 选「综合健康度」\n"
                 "【综合报告/📋 报告画册】点顶部「封面字段」→ 选「图表」附件（无则留空）\n"
                 "【数字员工效能/🏅 岗位看板】点顶部「分组依据」→ 选「岗位」\n\n"
+                f"📦 当前 Base 元信息：type={base_meta['base_type']} / mode={base_meta['mode']} / "
+                f"schema={base_meta['schema_version']} / initialized_at={base_meta['initialized_at']}\n\n"
                 "📌 推荐在多维表格里继续配置 3 条原生自动化：\n"
                 "1. 当「待发送汇报」= 是时，发送飞书群消息/邮件，正文使用「工作流消息包」\n"
                 "2. 当「待创建执行任务」= 是时，创建飞书任务，正文使用「工作流执行包」\n"
@@ -179,6 +227,7 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
             ),
             "目标对象": "系统管理员",
             "成功标准": "用户能看懂视图用途并完成首次 UI 配置",
+            "自动化执行状态": "已完成",
         },
     )
 
@@ -186,29 +235,34 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
     # 飞书 PC/Web 客户端 text 字段会把 markdown 表格渲染成可视化表格，
     # CSV 留在最末段供 agent 的 data_parser 识别。
     # 围栏带 csv 语言标记（codex 验收 Top 5 #5），workflow_agents 正则 (?:csv)? 兼容。
-    for title, dimension, background, data_source in schema.SEED_TASKS:
-        rendered = (
-            f"{csv_to_markdown(data_source)}\n\n"
-            f"---\n_原始 CSV（agent 解析用，请勿编辑下方原始数据格式）：_\n```csv\n"
-            f"{data_source}\n```"
-        )
-        await bitable_ops.create_record_optional_fields(
-            app_token,
-            task_tid,
-            {
-                "任务标题": title,
-                "分析维度": dimension,
-                "优先级": "P1 高",
-                "输出目的": "经营诊断",
-                "状态": schema.Status.PENDING,
-                "进度": 0,
-                "背景说明": background,
-                "数据源": rendered,
-                # v8.6.20：综合评分由 priority_score() 算出（替代飞书公式不生效）
-                "综合评分": schema.priority_score("P1 高"),
-            },
-            optional_keys=["综合评分"],
-        )
+    if mode == "seed_demo":
+        for title, dimension, background, data_source in schema.SEED_TASKS:
+            rendered = (
+                f"{csv_to_markdown(data_source)}\n\n"
+                f"---\n_原始 CSV（agent 解析用，请勿编辑下方原始数据格式）：_\n```csv\n"
+                f"{data_source}\n```"
+            )
+            await bitable_ops.create_record_optional_fields(
+                app_token,
+                task_tid,
+                {
+                    "任务标题": title,
+                    "分析维度": dimension,
+                    "优先级": "P1 高",
+                    "输出目的": "经营诊断",
+                    "任务来源": "手工创建",
+                    "业务归属": "综合经营",
+                    "汇报对象级别": "负责人",
+                    "状态": schema.Status.PENDING,
+                    "进度": 0,
+                    "背景说明": background,
+                    "数据源": rendered,
+                    "自动化执行状态": "未触发",
+                    # v8.6.20：综合评分由 priority_score() 算出（替代飞书公式不生效）
+                    "综合评分": schema.priority_score("P1 高"),
+                },
+                optional_keys=["综合评分", "任务来源", "业务归属", "汇报对象级别", "自动化执行状态"],
+            )
 
     template_seed_rows = [
         {
@@ -456,7 +510,7 @@ async def _create_extra_views(
     archive_tid: str,
     automation_log_tid: str,
     template_tid: str,
-) -> None:
+) -> dict:
     """为四张业务表创建看板/画册/过滤视图，提升多维表格视觉可读性。
 
     v8.6.4 真相：飞书 OpenAPI 不公开 kanban group_info / gallery cover_field_id
@@ -562,19 +616,169 @@ async def _create_extra_views(
         # v8.6.19 — 表单视图（创建后调 _share_form_view 拿 shared_url）
         (task_tid, "📥 需求收集表", "form", None, None),
     ]
+    created_views: list[dict[str, str]] = []
+    form_views: list[dict[str, str]] = []
     for table_id, name, vtype, filter_field, filter_value in view_plan:
         try:
             view_id = await create_view(
                 app_token, table_id, name, vtype,
                 filter_field=filter_field, filter_value=filter_value,
             )
+            view_meta = {
+                "table_id": table_id,
+                "view_name": name,
+                "view_type": vtype,
+                "view_id": view_id or "",
+            }
             # v8.6.19 — form 视图建好后尽力共享，得到 shared_url
             if vtype == "form" and view_id:
                 shared_url = await _share_form_view(app_token, table_id, view_id)
                 if shared_url:
+                    view_meta["shared_url"] = shared_url
+                    form_views.append(view_meta)
+                if shared_url:
                     logger.info("Form view %r shared at %s", name, shared_url)
+            created_views.append(view_meta)
         except Exception as exc:
             logger.warning("创建视图失败 table=%s name=%s: %s", table_id, name, exc)
+    return {"views": created_views, "forms": form_views}
+
+
+def _build_native_assets(
+    *,
+    app_token: str,
+    base_url: str,
+    table_ids: dict,
+    view_assets: dict,
+    base_meta: dict,
+) -> dict:
+    task_tid = table_ids["task"]
+    template_tid = table_ids["template"]
+    task_forms = view_assets.get("forms") or []
+    intake_form = next((item for item in task_forms if item.get("view_name") == "📥 需求收集表"), None)
+    form_blueprints = [
+        {
+            "name": "任务收集表单",
+            "status": "ready" if intake_form and intake_form.get("shared_url") else "manual_share_required",
+            "table_id": task_tid,
+            "view_id": (intake_form or {}).get("view_id", ""),
+            "shared_url": (intake_form or {}).get("shared_url", ""),
+            "entry_fields": ["任务标题", "背景说明", "输出目的", "优先级", "目标对象", "成功标准", "引用数据集", "任务图像"],
+        }
+    ]
+    automation_templates = [
+        {
+            "name": "A1 新任务入场提醒",
+            "trigger": "添加记录时",
+            "condition": "状态 = 待分析",
+            "action": "发送飞书消息 + 写交付动作",
+            "primary_field": "任务来源",
+        },
+        {
+            "name": "A2 分析完成自动汇报",
+            "trigger": "新增/修改记录满足条件时",
+            "condition": "状态 = 已完成 且 待发送汇报 = 是",
+            "action": "发送飞书消息/邮件，正文引用工作流消息包",
+            "primary_field": "工作流消息包",
+        },
+        {
+            "name": "A3 执行任务自动创建",
+            "trigger": "新增/修改记录满足条件时",
+            "condition": "待创建执行任务 = 是",
+            "action": "创建飞书任务并回写交付动作",
+            "primary_field": "工作流执行包",
+        },
+        {
+            "name": "A4 复核提醒",
+            "trigger": "到达记录中的时间时",
+            "condition": "待安排复核 = 是",
+            "action": "提醒复核负责人 / 创建复核任务",
+            "primary_field": "建议复核时间",
+        },
+        {
+            "name": "A5 异常升级提醒",
+            "trigger": "新增/修改记录满足条件时",
+            "condition": "异常状态 = 已异常",
+            "action": "发群提醒 / 转人工接管",
+            "primary_field": "异常类型",
+        },
+    ]
+    workflow_blueprints = [
+        {
+            "name": "W1 路由总分发工作流",
+            "status": "blueprint_ready",
+            "entry_condition": "状态 = 已完成",
+            "route_field": "工作流路由",
+            "branches": ["直接汇报", "等待拍板", "直接执行", "补数复核", "重新分析"],
+        },
+        {
+            "name": "W2 拍板分支工作流",
+            "status": "blueprint_ready",
+            "entry_condition": "当前责任角色 = 拍板人",
+            "actions": ["发送高管卡片", "等待拍板回写", "回写交付动作"],
+        },
+        {
+            "name": "W3 执行分支工作流",
+            "status": "blueprint_ready",
+            "entry_condition": "当前责任角色 = 执行人",
+            "actions": ["创建飞书任务", "失败补救", "进入复盘"],
+        },
+    ]
+    dashboard_blueprints = [
+        {
+            "name": "管理汇报总览",
+            "status": "blueprint_ready",
+            "source_table": task_tid,
+            "focus_metrics": ["工作流路由分布", "待拍板确认数", "待执行确认数", "待安排复核数", "已异常任务数"],
+            "recommended_views": ["🧭 工作流路由", "🟥 已异常任务", "🧭 当前责任角色"],
+        },
+        {
+            "name": "证据与评审看板",
+            "status": "blueprint_ready",
+            "source_table": table_ids.get("evidence", ""),
+            "focus_metrics": ["硬证据数", "待验证证据数", "进入CEO汇总证据数"],
+            "recommended_views": ["🧱 硬证据", "🟡 待验证", "🧾 证据类型看板"],
+        },
+        {
+            "name": "交付异常看板",
+            "status": "blueprint_ready",
+            "source_table": task_tid,
+            "focus_metrics": ["拍板滞留", "执行超期", "复核超时", "复盘滞留"],
+            "recommended_views": ["🟥 拍板滞留", "🟥 执行超期", "🟧 复核超时", "🟪 复盘滞留"],
+        },
+    ]
+    role_blueprints = [
+        {
+            "name": "高管 / 拍板人",
+            "status": "blueprint_ready",
+            "focus_views": ["🧭 工作流路由", "👔 拍板人任务", "⏳ 待拍板确认", "🚦 健康度看板"],
+            "permissions_focus": ["综合报告", "分析任务"],
+        },
+        {
+            "name": "执行负责人",
+            "status": "blueprint_ready",
+            "focus_views": ["⚙️ 执行人任务", "🚀 待执行落地", "🧾 待执行归档"],
+            "permissions_focus": ["分析任务", "交付动作"],
+        },
+        {
+            "name": "复核负责人",
+            "status": "blueprint_ready",
+            "focus_views": ["🧪 复核人任务", "🗓 待安排复核", "🟡 补数复核历史"],
+            "permissions_focus": ["分析任务", "证据链", "产出评审", "复核历史"],
+        },
+    ]
+    return {
+        "status": "blueprint_ready",
+        "base_meta": base_meta,
+        "base_url": base_url,
+        "app_token": app_token,
+        "form_blueprints": form_blueprints,
+        "automation_templates": automation_templates,
+        "workflow_blueprints": workflow_blueprints,
+        "dashboard_blueprints": dashboard_blueprints,
+        "role_blueprints": role_blueprints,
+        "template_center_table_id": template_tid,
+    }
 
 
 # ===== v8.6.19 Phase A.2 — Formula 字段 deferred creation =====

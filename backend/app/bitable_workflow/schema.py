@@ -88,6 +88,29 @@ BUSINESS_STAGE_OPTIONS = [
     {"name": "下滑修复", "color": 1},
 ]
 
+TASK_SOURCE_OPTIONS = [
+    {"name": "手工创建", "color": 0},
+    {"name": "表单提交", "color": 5},
+    {"name": "跟进任务", "color": 6},
+    {"name": "复核任务", "color": 3},
+    {"name": "外部系统同步", "color": 7},
+]
+
+BUSINESS_OWNER_OPTIONS = [
+    {"name": "产品", "color": 7},
+    {"name": "增长", "color": 4},
+    {"name": "内容", "color": 8},
+    {"name": "运营", "color": 2},
+    {"name": "财务", "color": 3},
+    {"name": "综合经营", "color": 6},
+]
+
+AUDIENCE_LEVEL_OPTIONS = [
+    {"name": "负责人", "color": 4},
+    {"name": "部门管理层", "color": 6},
+    {"name": "CEO / CXO", "color": 1},
+]
+
 REVIEW_RECOMMEND_OPTIONS = [
     {"name": "直接采用", "color": 4},
     {"name": "补数后复核", "color": 3},
@@ -150,6 +173,13 @@ ACTION_STATUS_OPTIONS = [
     {"name": "已完成", "color": 4},
     {"name": "已跳过", "color": 0},
     {"name": "执行失败", "color": 1},
+]
+
+AUTOMATION_EXECUTION_STATUS_OPTIONS = [
+    {"name": "未触发", "color": 0},
+    {"name": "执行中", "color": 3},
+    {"name": "已完成", "color": 4},
+    {"name": "失败", "color": 1},
 ]
 
 ARCHIVE_STATUS_OPTIONS = [
@@ -245,6 +275,12 @@ TASK_FIELDS = [
         "options": OUTPUT_PURPOSE_OPTIONS,
     },
     {"field_name": "套用模板", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "任务来源",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": TASK_SOURCE_OPTIONS,
+    },
     {"field_name": "成功标准", "type": TEXT_FIELD_TYPE},
     {"field_name": "约束条件", "type": TEXT_FIELD_TYPE},
     {
@@ -252,6 +288,12 @@ TASK_FIELDS = [
         "type": SINGLE_SELECT_FIELD_TYPE,
         "ui_type": "SingleSelect",
         "options": BUSINESS_STAGE_OPTIONS,
+    },
+    {
+        "field_name": "业务归属",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": BUSINESS_OWNER_OPTIONS,
     },
     {"field_name": "引用数据集", "type": TEXT_FIELD_TYPE},
     {"field_name": "依赖任务编号", "type": TEXT_FIELD_TYPE},  # 逗号分隔任务编号，如 "1,3"；只有这些任务全部已完成才会启动本任务
@@ -335,6 +377,12 @@ TASK_FIELDS = [
         "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
     },
     {"field_name": "汇报对象", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "汇报对象级别",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": AUDIENCE_LEVEL_OPTIONS,
+    },
     {"field_name": "拍板负责人", "type": TEXT_FIELD_TYPE},
     {"field_name": "执行负责人", "type": TEXT_FIELD_TYPE},
     {
@@ -377,6 +425,12 @@ TASK_FIELDS = [
         "options": EXCEPTION_TYPE_OPTIONS,
     },
     {"field_name": "异常说明", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "自动化执行状态",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": AUTOMATION_EXECUTION_STATUS_OPTIONS,
+    },
     {"field_name": "汇报版本号", "type": TEXT_FIELD_TYPE},
     {
         "field_name": "归档状态",

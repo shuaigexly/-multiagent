@@ -17,6 +17,8 @@ from app.core.auth import issue_stream_token, require_api_key, verify_stream_tok
 _VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
 _VALID_STATUSES: set[str] = set(ALL_STATUSES)
 _VALID_CONFIRM_ACTIONS: set[str] = {"approve", "execute", "retrospective"}
+_VALID_SETUP_MODES: set[str] = {"seed_demo", "prod_empty", "template_only"}
+_VALID_BASE_TYPES: set[str] = {"template", "production", "validation"}
 
 router = APIRouter(
     prefix="/api/v1/workflow",
@@ -30,6 +32,22 @@ _state: dict = {}
 
 class SetupRequest(BaseModel):
     name: str = "内容运营虚拟组织"
+    mode: str = "seed_demo"
+    base_type: str = "validation"
+
+    @field_validator("mode")
+    @classmethod
+    def check_mode(cls, v: str) -> str:
+        if v not in _VALID_SETUP_MODES:
+            raise ValueError(f"mode 必须是以下之一: {sorted(_VALID_SETUP_MODES)}")
+        return v
+
+    @field_validator("base_type")
+    @classmethod
+    def check_base_type(cls, v: str) -> str:
+        if v not in _VALID_BASE_TYPES:
+            raise ValueError(f"base_type 必须是以下之一: {sorted(_VALID_BASE_TYPES)}")
+        return v
 
 
 class StartRequest(BaseModel):
@@ -58,6 +76,9 @@ class SeedRequest(BaseModel):
     background: str = ""
     target_audience: str = ""
     output_purpose: str = ""
+    task_source: str = "手工创建"
+    business_owner: str = ""
+    audience_level: str = ""
     success_criteria: str = ""
     constraints: str = ""
     business_stage: str = ""
@@ -174,12 +195,12 @@ async def workflow_setup(req: SetupRequest):
             status_code=409,
             detail="Workflow loop is running; call /stop first before re-setup",
         )
-    result = await runner.setup_workflow(req.name)
+    result = await runner.setup_workflow(req.name, mode=req.mode, base_type=req.base_type)
     _state.update(result)
     await record_audit(
         "workflow.setup",
         target=result.get("app_token", ""),
-        payload={"name": req.name, "url": result.get("url", "")},
+        payload={"name": req.name, "url": result.get("url", ""), "mode": req.mode, "base_type": req.base_type},
     )
     return result
 
@@ -219,6 +240,17 @@ async def workflow_status():
     return {"running": runner.is_running(), "state": _state}
 
 
+@router.get("/native-assets", dependencies=[Depends(require_api_key)])
+async def workflow_native_assets():
+    """返回当前 Base 的原生表单/自动化/工作流/仪表盘/角色蓝图。"""
+    return {
+        "app_token": _state.get("app_token", ""),
+        "url": _state.get("url", ""),
+        "base_meta": _state.get("base_meta") or {},
+        "native_assets": _state.get("native_assets") or {},
+    }
+
+
 @router.post("/seed", dependencies=[Depends(require_api_key)])
 async def workflow_seed(req: SeedRequest):
     """向分析任务表写入一条新的待处理任务。"""
@@ -226,12 +258,18 @@ async def workflow_seed(req: SeedRequest):
         "任务标题": req.title,
         "分析维度": req.dimension,
         "背景说明": req.background,
+        "任务来源": req.task_source,
         "状态": Status.PENDING,
+        "自动化执行状态": "未触发",
     }
     if req.output_purpose:
         fields["输出目的"] = req.output_purpose
     if req.target_audience:
         fields["目标对象"] = req.target_audience
+    if req.business_owner:
+        fields["业务归属"] = req.business_owner
+    if req.audience_level:
+        fields["汇报对象级别"] = req.audience_level
     if req.success_criteria:
         fields["成功标准"] = req.success_criteria
     if req.constraints:
@@ -280,6 +318,10 @@ async def workflow_seed(req: SeedRequest):
         fields,
         optional_keys=[
             "目标对象",
+            "任务来源",
+            "业务归属",
+            "汇报对象级别",
+            "自动化执行状态",
             "输出目的",
             "成功标准",
             "约束条件",
@@ -358,6 +400,8 @@ async def workflow_confirm(req: ConfirmRequest):
     fields.update(_derive_native_bitable_contract(merged_task_fields))
     optional_keys.extend(
         [
+            "业务归属",
+            "汇报对象级别",
             "拍板负责人",
             "复盘负责人",
             "当前责任角色",
@@ -366,6 +410,7 @@ async def workflow_confirm(req: ConfirmRequest):
             "异常状态",
             "异常类型",
             "异常说明",
+            "自动化执行状态",
         ]
     )
 

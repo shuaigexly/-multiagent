@@ -338,6 +338,42 @@ def _derive_review_sla_hours(task_fields: dict, route: str) -> int:
     return 0
 
 
+def _derive_business_owner(task_fields: dict) -> str:
+    existing = str(task_fields.get("业务归属") or "").strip()
+    if existing:
+        return existing
+    dimension = str(task_fields.get("分析维度") or "").strip()
+    purpose = str(task_fields.get("输出目的") or "").strip()
+    if dimension == "产品规划":
+        return "产品"
+    if dimension == "增长优化":
+        return "增长"
+    if dimension == "内容战略":
+        return "内容"
+    if dimension == "运营诊断":
+        return "运营"
+    if purpose == "执行跟进":
+        return "运营"
+    if purpose == "管理决策":
+        return "综合经营"
+    return "综合经营"
+
+
+def _derive_audience_level(task_fields: dict, route: str) -> str:
+    existing = str(task_fields.get("汇报对象级别") or "").strip()
+    if existing:
+        return existing
+    audience = str(task_fields.get("汇报对象") or task_fields.get("目标对象") or "").strip()
+    if route == "等待拍板":
+        return "CEO / CXO"
+    audience_upper = audience.upper()
+    if any(token in audience_upper for token in ("CEO", "CXO", "CFO", "COO", "CTO", "CMO")):
+        return "CEO / CXO"
+    if any(token in audience for token in ("管理层", "经营会", "委员会", "总办会")):
+        return "部门管理层"
+    return "负责人"
+
+
 def _render_template_text(template: str, context: dict[str, str]) -> str:
     rendered = str(template or "")
     for key, value in context.items():
@@ -460,7 +496,20 @@ def _derive_native_bitable_contract(task_fields: dict | None, workflow_fields: d
             exception_type = "责任人待指派"
             exception_note = f"{current_role}尚未明确责任人"
 
+    if status == Status.PENDING:
+        automation_status = "未触发"
+    elif status == Status.ANALYZING:
+        automation_status = "执行中"
+    elif archived or in_retro:
+        automation_status = "已完成"
+    elif exception_status == "已异常":
+        automation_status = "失败"
+    else:
+        automation_status = "执行中"
+
     return {
+        "业务归属": _derive_business_owner(fields),
+        "汇报对象级别": _derive_audience_level(fields, route),
         "拍板负责人": _derive_approval_owner(fields, route),
         "复盘负责人": _derive_retrospective_owner(fields, route),
         "当前责任角色": current_role,
@@ -469,6 +518,7 @@ def _derive_native_bitable_contract(task_fields: dict | None, workflow_fields: d
         "异常状态": exception_status,
         "异常类型": exception_type,
         "异常说明": exception_note,
+        "自动化执行状态": automation_status,
     }
 
 
@@ -1391,9 +1441,13 @@ async def _create_followup_tasks(
             "分析维度": "综合分析",
             "优先级": "P2 中",
             "输出目的": purpose,
+            "任务来源": "跟进任务",
+            "业务归属": "综合经营",
+            "汇报对象级别": "负责人",
             "状态": Status.PENDING,
             "进度": 0,
             "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成（类型：{kind}）",
+            "自动化执行状态": "未触发",
             # v8.6.20：跟进任务也填综合评分（由 priority_score 算出）
             "综合评分": _schema.priority_score("P2 中"),
         }
@@ -1427,6 +1481,10 @@ async def _create_followup_tasks(
                 record_fields,
                 optional_keys=[
                     "综合评分",
+                    "任务来源",
+                    "业务归属",
+                    "汇报对象级别",
+                    "自动化执行状态",
                     "套用模板",
                     "汇报对象",
                     "拍板负责人",
@@ -1541,10 +1599,14 @@ async def _create_review_recheck_task(
         "分析维度": "综合分析",
         "优先级": "P1 高" if recommend == "补数后复核" else "P0 紧急",
         "输出目的": "补数核验" if recommend == "补数后复核" else "管理决策",
+        "任务来源": "复核任务",
+        "业务归属": "综合经营",
+        "汇报对象级别": "负责人",
         "状态": Status.PENDING,
         "进度": 0,
         "背景说明": background,
         "成功标准": "补齐关键缺失证据并给出可直接采用的结论",
+        "自动化执行状态": "未触发",
         "综合评分": _schema.priority_score("P1 高" if recommend == "补数后复核" else "P0 紧急"),
     }
     template_defaults = await _resolve_template_defaults(
@@ -1574,8 +1636,12 @@ async def _create_review_recheck_task(
             task_tid,
             fields,
             optional_keys=[
+                "任务来源",
+                "业务归属",
+                "汇报对象级别",
                 "输出目的",
                 "成功标准",
+                "自动化执行状态",
                 "综合评分",
                 "套用模板",
                 "汇报对象",
@@ -2062,7 +2128,9 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     "待执行确认",
                     "待复盘确认",
                     "建议复核时间",
+                    "业务归属",
                     "汇报对象",
+                    "汇报对象级别",
                     "拍板负责人",
                     "执行负责人",
                     "执行截止时间",
@@ -2075,6 +2143,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     "异常状态",
                     "异常类型",
                     "异常说明",
+                    "自动化执行状态",
                     "汇报版本号",
                     "归档状态",
                 ],
