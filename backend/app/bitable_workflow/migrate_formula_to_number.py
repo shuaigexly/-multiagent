@@ -78,6 +78,29 @@ async def _delete_field(http: httpx.AsyncClient, app_token: str, table_id: str, 
         raise RuntimeError(f"DELETE field {field_id} 失败 status={r.status_code} code={body.get('code')} msg={body.get('msg')}")
 
 
+async def _rename_field(http: httpx.AsyncClient, app_token: str, table_id: str, field_id: str, new_name: str) -> str | None:
+    """重命名 Number 字段（PUT /fields/{field_id}，type=2 必传）。"""
+    base = get_feishu_open_base_url()
+    token = await get_tenant_access_token()
+    payload = {
+        "field_name": new_name,
+        "type": 2,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    }
+    r = await http.put(
+        f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields/{field_id}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=payload,
+    )
+    body = _safe_json(r)
+    if r.status_code != 200 or body.get("code") not in (0, None):
+        raise RuntimeError(
+            f"PUT field {field_id} 重命名失败 status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+        )
+    return field_id
+
+
 async def _create_number_field(http: httpx.AsyncClient, app_token: str, table_id: str, field_name: str) -> str:
     base = get_feishu_open_base_url()
     token = await get_tenant_access_token()
@@ -135,17 +158,23 @@ async def migrate_one(
         if dry_run:
             return {"table": table_name, "dry_run": True, "field_id": target.get("field_id")}
 
-        # 1. DELETE Formula
-        await _delete_field(http, app_token, tid, target.get("field_id"))
-        print(f"  ✓ 已删除 Formula 字段 {target.get('field_id')}")
+        # v8.6.20-r6：用「先建影子字段 → 删旧 → 重命名」替代「先删后建」，
+        # 避免中途 CREATE 失败导致原字段彻底丢失。
+        old_fid = target.get("field_id")
+        shadow_name = f"{field_name}__migrating"
+        # 防御：若上一次中途失败留了 shadow 字段，先清它
+        stale_shadow = next((f for f in fields if f.get("field_name") == shadow_name), None)
+        if stale_shadow:
+            await _delete_field(http, app_token, tid, stale_shadow.get("field_id"))
 
-        # 2. CREATE Number
-        new_fid = await _create_number_field(http, app_token, tid, field_name)
-        print(f"  ✓ 已重建 Number 字段 {new_fid}")
+        # 1. CREATE 影子 Number（成功后才碰旧字段）
+        shadow_fid = await _create_number_field(http, app_token, tid, shadow_name)
+        print(f"  ✓ 已建影子字段 {shadow_name!r} ({shadow_fid})")
 
-        # 3. 回填
+        # 2. 回填到影子字段（失败按 record 收集）
         records = await bitable_ops.list_records(app_token, tid, max_records=2000)
         bf_count = 0
+        failed_record_ids: list[str] = []
         for r in records:
             rid = r.get("record_id")
             if not rid:
@@ -154,18 +183,41 @@ async def migrate_one(
             src_val = _flatten(f.get(source_field))
             score = score_fn(src_val)
             try:
-                await bitable_ops.update_record(app_token, tid, rid, {field_name: score})
+                await bitable_ops.update_record(app_token, tid, rid, {shadow_name: score})
                 bf_count += 1
             except Exception as exc:
                 logger.warning("回填 record=%s 失败: %s", rid, exc)
+                failed_record_ids.append(rid)
         print(f"  ✓ 回填 {bf_count}/{len(records)} 条 record")
+
+        # 失败率 > 50% 视为不可用，不删旧字段保留 shadow 给用户排查
+        if records and len(failed_record_ids) > len(records) // 2:
+            return {
+                "table": table_name,
+                "shadow_field_id": shadow_fid,
+                "shadow_name": shadow_name,
+                "old_field_id": old_fid,
+                "backfilled": bf_count,
+                "total_records": len(records),
+                "failed_record_ids": failed_record_ids,
+                "issues": [f"回填失败率 {len(failed_record_ids)}/{len(records)} > 50%，已停止；旧字段保留，影子字段未替换"],
+            }
+
+        # 3. DELETE 旧 Formula
+        await _delete_field(http, app_token, tid, old_fid)
+        print(f"  ✓ 已删除原 Formula 字段 {old_fid}")
+
+        # 4. 重命名影子 → 目标名（用 _create_field_http 不支持 PATCH 名字，用底层 PUT）
+        renamed = await _rename_field(http, app_token, tid, shadow_fid, field_name)
+        print(f"  ✓ 已重命名影子字段 → {field_name!r}")
 
         return {
             "table": table_name,
-            "old_field_id": target.get("field_id"),
-            "new_field_id": new_fid,
+            "old_field_id": old_fid,
+            "new_field_id": renamed or shadow_fid,
             "backfilled": bf_count,
             "total_records": len(records),
+            "failed_record_ids": failed_record_ids,
         }
 
 

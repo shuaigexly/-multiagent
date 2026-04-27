@@ -10,7 +10,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
 from app.bitable_workflow import bitable_ops, progress_broker, runner
-from app.bitable_workflow.native_installer import apply_native_manifest
+from app.bitable_workflow.native_installer import (
+    _ALL_SURFACES as _NATIVE_ALL_SURFACES,
+    apply_native_manifest,
+)
 from app.bitable_workflow.scheduler import _derive_native_bitable_contract
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
 from app.core.audit import record_audit
@@ -183,10 +186,34 @@ def _confirm_action_allowed(action: str, task_fields: dict[str, object]) -> tupl
 
 
 def _workflow_has_execution_items(task_fields: dict[str, object]) -> bool:
+    """是否有待落地执行项 — 优先看 scheduler 写入的「待创建执行任务」布尔，
+    fallback 才扫文本（应对老 base 没有这字段的情况）。
+
+    v8.6.20-r6：审计 #5/#9 修订 —— 之前只扫 工作流执行包 文本里的「执行项：」
+    前缀，会被自定义模板/用户手改成另一个标题（如「待执行清单：」）漏判，
+    或者被「头部还在但条目已删空」误判为有执行项。直接读 scheduler 维护的
+    canonical 布尔字段 `待创建执行任务` 最可靠。
+    """
+    flag = task_fields.get("待创建执行任务")
+    if isinstance(flag, bool):
+        return flag
+    if isinstance(flag, str):
+        return flag.strip().lower() in {"true", "1", "是", "yes"}
+    if isinstance(flag, (int, float)) and not isinstance(flag, bool):
+        return bool(flag)
+    # 老 base 没有该字段 → 文本兜底
     payload = str(task_fields.get("工作流执行包") or "").strip()
     if not payload:
         return False
-    return any(line.strip().startswith(("执行项：", "执行项:")) for line in payload.splitlines())
+    lines = [line.strip() for line in payload.splitlines() if line.strip()]
+    saw_header = False
+    for ln in lines:
+        if ln.startswith(("执行项：", "执行项:")):
+            saw_header = True
+            continue
+        if saw_header and ln.startswith(("- ", "• ", "* ")):
+            return True
+    return False
 
 
 def _archive_version_rank(row: dict[str, object]) -> int:
@@ -419,7 +446,10 @@ async def workflow_apply_native_manifest(req: ApplyNativeRequest):
     await record_audit(
         "workflow.native_manifest.apply",
         target=app_token,
-        payload={"surfaces": req.surfaces or ["form", "automation", "workflow", "dashboard", "role"], "force": req.force},
+        payload={
+            "surfaces": req.surfaces or sorted(_NATIVE_ALL_SURFACES),
+            "force": req.force,
+        },
     )
     return result
 
@@ -575,22 +605,25 @@ async def workflow_confirm(req: ConfirmRequest):
                 "待拍板确认": False,
                 "拍板人": actor,
                 "拍板时间": now_ms,
+                # v8.6.20-r6：审计 #8 — 拍板成功本身就消化了「待发送汇报」状态，
+                # 否则即使 promote_to_execution=False，cockpit「📣 待发送汇报」视图
+                # 仍会卡着这条已拍板任务。
+                "待发送汇报": False,
             }
         )
-        optional_keys.extend(["待拍板确认", "拍板人", "拍板时间"])
+        optional_keys.extend(["待拍板确认", "拍板人", "拍板时间", "待发送汇报"])
         action_name = "管理拍板确认"
         action_summary = f"{actor} 已回写拍板结果"
         if promote_to_execution:
             fields.update(
                 {
                     "工作流路由": "直接执行",
-                    "待发送汇报": False,
                     "待创建执行任务": True,
                     "待执行确认": True,
                     "归档状态": "待执行",
                 }
             )
-            optional_keys.extend(["工作流路由", "待发送汇报", "待创建执行任务", "待执行确认", "归档状态"])
+            optional_keys.extend(["工作流路由", "待创建执行任务", "待执行确认", "归档状态"])
             if not task_fields.get("执行截止时间"):
                 fields["执行截止时间"] = int(datetime.now(tz=timezone.utc).timestamp() * 1000) + 72 * 3600 * 1000
                 optional_keys.append("执行截止时间")
@@ -602,12 +635,16 @@ async def workflow_confirm(req: ConfirmRequest):
                 "待执行确认": False,
                 "待复盘确认": True,
                 "执行完成时间": now_ms,
+                # v8.6.20-r6：审计 #4 — 推进归档状态到「待复盘」，否则 cockpit
+                # 按 归档状态='待复盘' 过滤的视图永远拉不到刚执行完的任务。
+                "归档状态": "待复盘",
             }
         )
-        optional_keys.extend(["待执行确认", "待复盘确认", "执行完成时间"])
+        optional_keys.extend(["待执行确认", "待复盘确认", "执行完成时间", "归档状态"])
         action_name = "执行落地确认"
         action_summary = "已回写执行完成时间"
     elif req.action == "retrospective":
+        # v8.6.20-r6：审计 #4 — 复盘完成 → 归档状态 推到「已归档」+ 清掉所有 pending 标志
         fields.update(
             {
                 "是否进入复盘": True,

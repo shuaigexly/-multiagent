@@ -327,8 +327,30 @@ def _derive_retrospective_owner(task_fields: dict, route: str) -> str:
     return ""
 
 
+def _safe_int_field(value: object) -> int:
+    """v8.6.20-r6：审计 #6/#7 — int(...) 对富文本 list / 含单位的字符串会 ValueError，
+    把整条 cycle 拖死。统一一个兜底：list 拍平 + 提数字 + 失败返 0。"""
+    if isinstance(value, list):
+        value = "".join(seg.get("text", "") for seg in value if isinstance(seg, dict))
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return 0
+        try:
+            return int(float(s))
+        except (TypeError, ValueError):
+            import re as _re
+            m = _re.match(r"-?\d+", s)
+            return int(m.group(0)) if m else 0
+    return 0
+
+
 def _derive_review_sla_hours(task_fields: dict, route: str) -> int:
-    current = int(task_fields.get("复核SLA小时") or 0)
+    current = _safe_int_field(task_fields.get("复核SLA小时"))
     if current > 0:
         return current
     if route == "补数复核":
@@ -569,7 +591,7 @@ async def _resolve_template_defaults(
         "review_owner_open_id": str(selected.get("默认复核负责人OpenID") or "").strip(),
         "retrospective_owner": str(selected.get("默认复盘负责人") or "").strip(),
         "retrospective_owner_open_id": str(selected.get("默认复盘负责人OpenID") or "").strip(),
-        "review_sla_hours": int(selected.get("默认复核SLA小时") or 0),
+        "review_sla_hours": _safe_int_field(selected.get("默认复核SLA小时")),
     }
 
 
@@ -1468,11 +1490,16 @@ async def _create_followup_tasks(
                 filter_expr=f"CurrentValue.[任务标题]={safe_title}",
                 max_records=20,
             )
+            # v8.6.20-r6：审计 #13 — 状态 SingleSelect 在某些 search_records 路径
+            # 会返回 dict/list，直接 in 比对会漏掉，导致 dedupe 失效。先拍平再比。
+            def _row_status(row: dict) -> str:
+                raw = (row.get("fields") or {}).get("状态")
+                if isinstance(raw, dict):
+                    raw = raw.get("text") or raw.get("name") or ""
+                return _flatten_text_value(raw) if not isinstance(raw, str) else raw
+
             duplicate_row = next(
-                (
-                    row for row in existing_rows
-                    if (row.get("fields") or {}).get("状态") in {Status.PENDING, Status.ANALYZING}
-                ),
+                (row for row in existing_rows if _row_status(row) in {Status.PENDING, Status.ANALYZING}),
                 None,
             )
             if duplicate_row:

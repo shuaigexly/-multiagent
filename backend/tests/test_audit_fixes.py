@@ -619,6 +619,124 @@ async def test_workflow_confirm_retrospective_archives_main_and_archive_record(m
 
 
 @pytest.mark.asyncio
+async def test_workflow_confirm_approve_without_execution_clears_pending_report(monkeypatch):
+    """v8.6.20-r6 审计 #8：approve 不论是否 promote 都要清「待发送汇报」，
+    否则 cockpit 「📣 待发送汇报」视图永远卡着已拍板的任务。"""
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_update(_a, _t, _r, fields, optional_keys=None):
+        captured["fields"] = fields
+        captured["optional_keys"] = optional_keys or []
+
+    async def fake_get(_a, _t, _r):
+        return {"fields": {
+            "任务标题": "纯拍板（无执行项）",
+            "工作流路由": "等待拍板",
+            "待拍板确认": True,
+            "待发送汇报": True,
+            "拍板负责人": "CEO",
+            "汇报对象": "CEO",
+            # 没有「待创建执行任务」也没有「工作流执行包」
+        }}
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get)
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log"}})
+
+    req = workflow.ConfirmRequest(app_token="app", table_id="tbl", record_id="rec_1", action="approve", actor="CEO")
+    await workflow.workflow_confirm(req)
+
+    assert captured["fields"]["待发送汇报"] is False
+    assert "待发送汇报" in captured["optional_keys"]
+    # 不该 promote 到执行（没执行项）
+    assert "归档状态" not in captured["fields"] or captured["fields"].get("归档状态") != "待执行"
+    assert captured["fields"].get("待执行确认") is not True
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_execute_advances_archive_state(monkeypatch):
+    """v8.6.20-r6 审计 #4：execute → 归档状态='待复盘'。"""
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {}
+    async def fake_update(_a, _t, _r, fields, optional_keys=None):
+        captured["fields"] = fields
+        captured["optional_keys"] = optional_keys or []
+    async def fake_get(_a, _t, _r):
+        return {"fields": {
+            "任务标题": "执行任务",
+            "工作流路由": "直接执行",
+            "待执行确认": True,
+            "归档状态": "待执行",
+        }}
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get)
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log"}})
+
+    await workflow.workflow_confirm(workflow.ConfirmRequest(
+        app_token="app", table_id="tbl", record_id="rec_1", action="execute", actor="ops",
+    ))
+    assert captured["fields"]["归档状态"] == "待复盘"
+    assert "归档状态" in captured["optional_keys"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_has_execution_items_uses_canonical_flag(monkeypatch):
+    """v8.6.20-r6 审计 #5/#9：优先读「待创建执行任务」布尔，文本仅 fallback。"""
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api.workflow import _workflow_has_execution_items
+
+    # 1. 布尔字段优先 — 文本里有头但 flag=False → False
+    assert _workflow_has_execution_items({
+        "待创建执行任务": False,
+        "工作流执行包": "执行项：\n- foo",
+    }) is False
+
+    # 2. flag=True → True（即使文本无)
+    assert _workflow_has_execution_items({"待创建执行任务": True}) is True
+
+    # 3. 老 base 没 flag 字段，文本有头 + 至少一项 bullet → True
+    assert _workflow_has_execution_items({
+        "工作流执行包": "路由：等待拍板\n执行项：\n- 通知销售",
+    }) is True
+
+    # 4. 老 base，文本只有头无 bullet → False（防 #5 文本头残留误触发）
+    assert _workflow_has_execution_items({
+        "工作流执行包": "执行项：\n（无）",
+    }) is False
+
+    # 5. 字符串布尔
+    assert _workflow_has_execution_items({"待创建执行任务": "true"}) is True
+    assert _workflow_has_execution_items({"待创建执行任务": "1"}) is True
+    assert _workflow_has_execution_items({"待创建执行任务": ""}) is False
+
+
+@pytest.mark.asyncio
 async def test_workflow_confirm_rejects_mismatched_action(monkeypatch):
     sse_pkg = ModuleType("sse_starlette")
     sse_mod = ModuleType("sse_starlette.sse")
