@@ -420,6 +420,15 @@ async def test_workflow_confirm_rejects_mismatched_action(monkeypatch):
     update_mock.assert_not_awaited()
 
 
+def test_apply_native_request_accepts_advperm_surface():
+    from app.api.workflow import ApplyNativeRequest
+
+    req = ApplyNativeRequest(surfaces=["advperm", "dashboard"], force=True)
+
+    assert req.surfaces == ["advperm", "dashboard"]
+    assert req.force is True
+
+
 @pytest.mark.asyncio
 async def test_delete_task_rejects_running_task_before_hard_delete():
     from fastapi import HTTPException

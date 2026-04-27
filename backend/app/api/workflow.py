@@ -135,7 +135,7 @@ class ApplyNativeRequest(BaseModel):
     @field_validator("surfaces")
     @classmethod
     def check_surfaces(cls, values: list[str]) -> list[str]:
-        valid = {"form", "automation", "workflow", "dashboard", "role"}
+        valid = {"advperm", "form", "automation", "workflow", "dashboard", "role"}
         invalid = [value for value in values if value not in valid]
         if invalid:
             raise ValueError(f"surfaces 只能包含: {sorted(valid)}")
@@ -333,7 +333,7 @@ async def workflow_native_manifest():
 
 @router.post("/native-manifest/apply", dependencies=[Depends(require_api_key)])
 async def workflow_apply_native_manifest(req: ApplyNativeRequest):
-    """执行飞书原生安装包，把 workflow/dashboard/role 等对象落到云侧。"""
+    """执行飞书原生安装包，把 advperm/form/workflow/dashboard/role 等对象落到云侧。"""
     app_token = str(_state.get("app_token") or "").strip()
     table_ids = _state.get("table_ids") or {}
     base_meta = _state.get("base_meta") or {}

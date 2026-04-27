@@ -99,7 +99,7 @@ export async function setupWorkflow(
 }
 
 export async function applyNativeManifest(
-  options?: { surfaces?: Array<'form' | 'automation' | 'workflow' | 'dashboard' | 'role'>; force?: boolean },
+  options?: { surfaces?: Array<'advperm' | 'form' | 'automation' | 'workflow' | 'dashboard' | 'role'>; force?: boolean },
 ): Promise<{
   report: Array<Record<string, unknown>>;
   native_assets: WorkflowSetup['native_assets'];

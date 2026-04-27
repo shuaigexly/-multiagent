@@ -184,8 +184,9 @@ const TASK_SOURCE_OPTIONS = ['手工创建', '表单提交', '跟进任务', '�
 const BUSINESS_OWNER_OPTIONS = ['综合经营', '增长', '产品', '内容', '运营', '财务'] as const;
 const AUDIENCE_LEVEL_OPTIONS = ['负责人', '部门管理层', 'CEO / CXO'] as const;
 const STATUS_ORDER = ['待分析', '分析中', '已完成', '已归档'] as const;
-type NativeSurface = 'form' | 'automation' | 'workflow' | 'dashboard' | 'role';
+type NativeSurface = 'advperm' | 'form' | 'automation' | 'workflow' | 'dashboard' | 'role';
 const NATIVE_SURFACE_OPTIONS: Array<{ key: NativeSurface; label: string; note: string }> = [
+  { key: 'advperm', label: '高级权限', note: '角色与记录规则前置' },
   { key: 'form', label: '表单', note: '任务收集入口' },
   { key: 'automation', label: '自动化', note: '条件触发与提醒' },
   { key: 'workflow', label: '工作流', note: '责任流转与动作沉淀' },
@@ -419,7 +420,7 @@ export default function BitableWorkflow() {
   const [setupMode, setSetupMode] = useState<(typeof SETUP_MODE_OPTIONS)[number]>('seed_demo');
   const [setupBaseType, setSetupBaseType] = useState<(typeof BASE_TYPE_OPTIONS)[number]>('validation');
   const [setupApplyNative, setSetupApplyNative] = useState(true);
-  const [nativeApplySurfaces, setNativeApplySurfaces] = useState<NativeSurface[]>(['form', 'automation', 'workflow', 'dashboard', 'role']);
+  const [nativeApplySurfaces, setNativeApplySurfaces] = useState<NativeSurface[]>(['advperm', 'form', 'automation', 'workflow', 'dashboard', 'role']);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [reportRecords, setReportRecords] = useState<TaskRecord[]>([]);
   const [evidenceRecords, setEvidenceRecords] = useState<TaskRecord[]>([]);
