@@ -169,18 +169,21 @@ def _safe_int(value: object) -> int:
 def _confirm_action_allowed(action: str, task_fields: dict[str, object]) -> tuple[bool, str]:
     route = str(task_fields.get("工作流路由") or "").strip() or "未设置"
     pending_approval = _boolish(task_fields.get("待拍板确认"))
+    approved = _boolish(task_fields.get("是否已拍板"))
     pending_execution = _boolish(task_fields.get("待执行确认"))
     pending_retro = _boolish(task_fields.get("待复盘确认"))
     executed = _boolish(task_fields.get("是否已执行落地"))
+    in_retro = _boolish(task_fields.get("是否进入复盘"))
+    archived = str(task_fields.get("状态") or "").strip() == Status.ARCHIVED or str(task_fields.get("归档状态") or "").strip() == "已归档"
 
     if action == "approve":
-        allowed = pending_approval or route == "等待拍板"
+        allowed = pending_approval or (route == "等待拍板" and not approved)
         expected = "等待拍板"
     elif action == "execute":
-        allowed = pending_execution or route == "直接执行"
+        allowed = pending_execution or (route == "直接执行" and not executed)
         expected = "直接执行"
     else:
-        allowed = pending_retro or executed
+        allowed = pending_retro or (executed and not in_retro and not archived)
         expected = "待复盘确认"
     if allowed:
         return True, ""

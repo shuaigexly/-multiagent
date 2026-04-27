@@ -934,6 +934,129 @@ async def test_workflow_confirm_rejects_mismatched_action(monkeypatch):
     update_mock.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_workflow_confirm_rejects_duplicate_approve_after_already_confirmed(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from fastapi import HTTPException
+    from app.api import workflow
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "等待拍板",
+                "待拍板确认": False,
+                "是否已拍板": True,
+            }
+        }
+
+    update_mock = AsyncMock()
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", update_mock)
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_approved",
+        action="approve",
+        actor="CEO",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await workflow.workflow_confirm(req)
+
+    assert exc_info.value.status_code == 409
+    assert "等待拍板" in exc_info.value.detail
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_rejects_duplicate_execute_after_already_executed(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from fastapi import HTTPException
+    from app.api import workflow
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "直接执行",
+                "待执行确认": False,
+                "是否已执行落地": True,
+            }
+        }
+
+    update_mock = AsyncMock()
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", update_mock)
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_executed",
+        action="execute",
+        actor="执行人",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await workflow.workflow_confirm(req)
+
+    assert exc_info.value.status_code == 409
+    assert "直接执行" in exc_info.value.detail
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_rejects_duplicate_retrospective_after_archived(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from fastapi import HTTPException
+    from app.api import workflow
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "经营复盘任务",
+                "工作流路由": "直接执行",
+                "待复盘确认": False,
+                "是否已执行落地": True,
+                "是否进入复盘": True,
+                "状态": "已归档",
+                "归档状态": "已归档",
+            }
+        }
+
+    update_mock = AsyncMock()
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", update_mock)
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_archived",
+        action="retrospective",
+        actor="复盘负责人",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await workflow.workflow_confirm(req)
+
+    assert exc_info.value.status_code == 409
+    assert "待复盘确认" in exc_info.value.detail
+    update_mock.assert_not_awaited()
+
+
 def test_apply_native_request_accepts_advperm_surface():
     from app.api.workflow import ApplyNativeRequest
 
