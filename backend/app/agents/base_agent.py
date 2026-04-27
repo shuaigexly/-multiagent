@@ -107,6 +107,8 @@ class AgentResult(BaseModel):
     health_hint: str = ""           # "🟢"|"🟡"|"🔴"|"⚪" 或空
     confidence_hint: int = 0        # 1-5，0 表示 LLM 未提供
     structured_actions: list[dict] = Field(default_factory=list)  # [{summary, priority, owner, due, success_metric}]
+    structured_evidence: list[dict] = Field(default_factory=list)  # [{claim, source_type, evidence, confidence, usage, cite}]
+    decision_items: list[dict] = Field(default_factory=list)  # [{summary, type, owner, due, reason}]
 
 
 class BaseAgent(ABC):
@@ -503,10 +505,32 @@ class BaseAgent(ABC):
             '      "due": "本周",\n'
             '      "success_metric": "用户激活率提升 5%"\n'
             "    }\n"
+            "  ],\n"
+            '  "evidence": [\n'
+            "    {\n"
+            '      "claim": "30日留存率是当前最关键瓶颈",\n'
+            '      "source_type": "real_data",\n'
+            '      "evidence": "30日留存率 21%，低于目标 35%",\n'
+            '      "confidence": "high",\n'
+            '      "usage": "risk",\n'
+            '      "cite": "数据源: 用户留存看板"\n'
+            "    }\n"
+            "  ],\n"
+            '  "decisions": [\n'
+            "    {\n"
+            '      "summary": "是否批准留存专项资源投入",\n'
+            '      "type": "ceo_decision",\n'
+            '      "owner": "CEO",\n'
+            '      "due": "本周",\n'
+            '      "reason": "留存问题已同时影响增长与财务健康"\n'
+            "    }\n"
             "  ]\n"
             "}\n"
             "```\n"
-            "硬性要求：health 必填；actions 至少 3 条；不要写 [任务1] 这类占位符。\n"
+            "硬性要求：health 必填；actions 至少 3 条；evidence 至少 3 条；"
+            "source_type 只能是 real_data / benchmark / upstream / judgment；"
+            "usage 只能是 insight / opportunity / risk / decision；"
+            "decisions 若无则返回空数组；不要写 [任务1] 这类占位符。\n"
         )
         full_system = SAFETY_PREFIX + self.SYSTEM_PROMPT + evolved_block + METADATA_REQUIREMENT + TOOL_HINT
         if tools_available:
@@ -646,6 +670,8 @@ class BaseAgent(ABC):
         health_hint = ""
         confidence_hint = 0
         structured_actions: list[dict] = []
+        structured_evidence: list[dict] = []
+        decision_items: list[dict] = []
         meta_pattern = re.compile(r"```metadata\s*\n([\s\S]*?)\n```", re.MULTILINE)
         meta_match = meta_pattern.search(raw)
         if meta_match:
@@ -657,6 +683,18 @@ class BaseAgent(ABC):
                     actions_raw = meta.get("actions") or []
                     if isinstance(actions_raw, list):
                         structured_actions = [a for a in actions_raw if isinstance(a, dict) and a.get("summary")]
+                    evidence_raw = meta.get("evidence") or []
+                    if isinstance(evidence_raw, list):
+                        structured_evidence = [
+                            a for a in evidence_raw
+                            if isinstance(a, dict) and a.get("claim") and a.get("evidence")
+                        ]
+                    decisions_raw = meta.get("decisions") or []
+                    if isinstance(decisions_raw, list):
+                        decision_items = [
+                            a for a in decisions_raw
+                            if isinstance(a, dict) and a.get("summary")
+                        ]
                 raw = meta_pattern.sub("", raw).strip()
             except Exception as exc:
                 logger.warning("[%s] metadata parse failed: %s", self.agent_id, exc)
@@ -747,4 +785,6 @@ class BaseAgent(ABC):
             health_hint=health_hint,
             confidence_hint=confidence_hint,
             structured_actions=structured_actions,
+            structured_evidence=structured_evidence,
+            decision_items=decision_items,
         )

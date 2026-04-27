@@ -8,6 +8,14 @@ export interface WorkflowSetup {
     output: string;
     report: string;
     performance: string;
+    datasource?: string;
+    evidence?: string;
+    review?: string;
+    action?: string;
+    review_history?: string;
+    archive?: string;
+    automation_log?: string;
+    template?: string;
   };
 }
 
@@ -19,6 +27,11 @@ export interface WorkflowStatus {
 export interface TaskRecord {
   record_id: string;
   fields: Record<string, unknown>;
+}
+
+export interface RecordListResponse<T = TaskRecord> {
+  count: number;
+  records: T[];
 }
 
 export async function setupWorkflow(name = '内容运营虚拟组织'): Promise<WorkflowSetup> {
@@ -54,6 +67,19 @@ export async function seedTask(
   title: string,
   dimension = '综合分析',
   background = '',
+  metadata?: {
+    target_audience?: string;
+    output_purpose?: string;
+    success_criteria?: string;
+    constraints?: string;
+    business_stage?: string;
+    referenced_dataset?: string;
+    template_name?: string;
+    report_audience?: string;
+    execution_owner?: string;
+    review_owner?: string;
+    review_sla_hours?: number;
+  },
 ): Promise<{ record_id: string }> {
   const resp = await api.post('/api/v1/workflow/seed', {
     app_token,
@@ -61,6 +87,7 @@ export async function seedTask(
     title,
     dimension,
     background,
+    ...(metadata ?? {}),
   });
   return resp.data;
 }
@@ -69,7 +96,7 @@ export async function listRecords(
   app_token: string,
   table_id: string,
   status?: string,
-): Promise<{ count: number; records: TaskRecord[] }> {
+): Promise<RecordListResponse> {
   const resp = await api.get('/api/v1/workflow/records', {
     params: { app_token, table_id, ...(status ? { status } : {}) },
   });

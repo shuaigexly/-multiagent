@@ -138,6 +138,11 @@ class CEOAssistantAgent(BaseAgent):
 ]
 ```
 （1=健康，0=需关注/有风险，基于分析判断填入实际值）
+
+输出末尾的 ```metadata``` 中：
+- `evidence` 至少写 3 条，优先沉淀进入最终决策的核心证据
+- `decisions` 必须尽量分类写清：`ceo_decision` / `delegated` / `need_data` / `execute_now`
+- `actions` 与 `decisions` 不要重复堆砌；`actions` 是执行清单，`decisions` 是决策与补数分流
 """
 
     def _parse_output(self, raw: str):

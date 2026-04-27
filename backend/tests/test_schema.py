@@ -1,12 +1,18 @@
 """测试多维表格结构定义（schema.py）"""
 import pytest
 from app.bitable_workflow.schema import (
+    ACTION_FIELDS,
+    AUTOMATION_LOG_FIELDS,
+    DELIVERY_ARCHIVE_FIELDS,
+    REVIEW_HISTORY_FIELDS,
+    TEMPLATE_CENTER_FIELDS,
     TEXT_FIELD_TYPE,
     NUMBER_FIELD_TYPE,
     SINGLE_SELECT_FIELD_TYPE,
     LINKED_RECORD_FIELD_TYPE,
     TASK_FIELDS,
     PERFORMANCE_FIELDS,
+    EVIDENCE_FIELDS,
     agent_output_fields,
     report_fields,
     Status,
@@ -74,6 +80,19 @@ class TestFieldCompleteness:
         assert "状态" in names
         assert "分析维度" in names
         assert "创建时间" in names
+        assert "最新评审动作" in names
+        assert "汇报就绪度" in names
+        assert "证据条数" in names
+        assert "硬证据数" in names
+        assert "待验证证据数" in names
+        assert "工作流路由" in names
+        assert "套用模板" in names
+        assert "待发送汇报" in names
+        assert "建议复核时间" in names
+        assert "汇报版本号" in names
+        assert "归档状态" in names
+        assert "执行负责人" in names
+        assert "复核负责人" in names
 
     def test_agent_output_required_columns(self):
         fields = agent_output_fields("tbl_x")
@@ -82,12 +101,64 @@ class TestFieldCompleteness:
         assert "岗位角色" in names
         assert "分析摘要" in names
 
+    def test_evidence_required_columns(self):
+        names = {f["field_name"] for f in EVIDENCE_FIELDS}
+        assert "证据标题" in names
+        assert "证据等级" in names
+        assert "证据置信度" in names
+
+    def test_action_required_columns(self):
+        names = {f["field_name"] for f in ACTION_FIELDS}
+        assert "动作标题" in names
+        assert "任务标题" in names
+        assert "动作类型" in names
+        assert "动作状态" in names
+        assert "工作流路由" in names
+        assert "动作内容" in names
+        assert "执行结果" in names
+        assert "关联记录ID" in names
+
+    def test_automation_log_required_columns(self):
+        names = {f["field_name"] for f in AUTOMATION_LOG_FIELDS}
+        assert "日志标题" in names
+        assert "任务标题" in names
+        assert "节点名称" in names
+        assert "执行状态" in names
+        assert "日志摘要" in names
+
+    def test_review_history_required_columns(self):
+        names = {f["field_name"] for f in REVIEW_HISTORY_FIELDS}
+        assert "复核标题" in names
+        assert "任务标题" in names
+        assert "复核轮次" in names
+        assert "推荐动作" in names
+        assert "新旧结论差异" in names
+
+    def test_delivery_archive_required_columns(self):
+        names = {f["field_name"] for f in DELIVERY_ARCHIVE_FIELDS}
+        assert "归档标题" in names
+        assert "任务标题" in names
+        assert "汇报版本号" in names
+        assert "归档状态" in names
+        assert "最新评审动作" in names
+        assert "一句话结论" in names
+
+    def test_template_center_required_columns(self):
+        names = {f["field_name"] for f in TEMPLATE_CENTER_FIELDS}
+        assert "模板名称" in names
+        assert "适用工作流路由" in names
+        assert "汇报模板" in names
+        assert "执行模板" in names
+        assert "启用" in names
+
     def test_report_required_columns(self):
         fields = report_fields("tbl_x")
         names = {f["field_name"] for f in fields}
         assert "报告标题" in names  # v8.6.1: 主字段，文本逻辑关联
+        assert "一句话结论" in names
         assert "核心结论" in names
         assert "CEO决策事项" in names
+        assert "高管一页纸" in names
 
 
 class TestStatusMachine:

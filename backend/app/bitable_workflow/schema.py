@@ -29,6 +29,13 @@ TABLE_AGENT_OUTPUT = "岗位分析"
 TABLE_REPORT = "综合报告"
 TABLE_PERFORMANCE = "数字员工效能"
 TABLE_DATASOURCE = "📚 数据源库"  # v8.6.16 — 独立数据源表（B 方案）
+TABLE_EVIDENCE = "证据链"
+TABLE_REVIEW = "产出评审"
+TABLE_ACTION = "交付动作"
+TABLE_REVIEW_HISTORY = "复核历史"
+TABLE_DELIVERY_ARCHIVE = "交付结果归档"
+TABLE_AUTOMATION_LOG = "自动化日志"
+TABLE_TEMPLATE_CENTER = "模板配置中心"
 
 
 class Status:
@@ -64,6 +71,58 @@ PRIORITY_OPTIONS = [
     {"name": "P1 高", "color": 2},     # 橙
     {"name": "P2 中", "color": 3},     # 黄
     {"name": "P3 低", "color": 0},     # 灰
+]
+
+OUTPUT_PURPOSE_OPTIONS = [
+    {"name": "经营诊断", "color": 6},
+    {"name": "管理决策", "color": 1},
+    {"name": "执行跟进", "color": 4},
+    {"name": "汇报展示", "color": 5},
+    {"name": "补数核验", "color": 3},
+]
+
+BUSINESS_STAGE_OPTIONS = [
+    {"name": "0-1探索", "color": 7},
+    {"name": "增长爬坡", "color": 4},
+    {"name": "稳定运营", "color": 6},
+    {"name": "下滑修复", "color": 1},
+]
+
+REVIEW_RECOMMEND_OPTIONS = [
+    {"name": "直接采用", "color": 4},
+    {"name": "补数后复核", "color": 3},
+    {"name": "建议重跑", "color": 1},
+]
+
+WORKFLOW_ROUTE_OPTIONS = [
+    {"name": "直接汇报", "color": 4},
+    {"name": "等待拍板", "color": 1},
+    {"name": "直接执行", "color": 6},
+    {"name": "补数复核", "color": 3},
+    {"name": "重新分析", "color": 2},
+]
+
+ACTION_TYPE_OPTIONS = [
+    {"name": "发送汇报", "color": 5},
+    {"name": "创建执行任务", "color": 4},
+    {"name": "创建复核任务", "color": 3},
+    {"name": "自动跟进任务", "color": 6},
+    {"name": "工作流记录", "color": 0},
+]
+
+ACTION_STATUS_OPTIONS = [
+    {"name": "待执行", "color": 3},
+    {"name": "已完成", "color": 4},
+    {"name": "已跳过", "color": 0},
+    {"name": "执行失败", "color": 1},
+]
+
+ARCHIVE_STATUS_OPTIONS = [
+    {"name": "待汇报", "color": 5},
+    {"name": "待拍板", "color": 1},
+    {"name": "待执行", "color": 6},
+    {"name": "待复核", "color": 3},
+    {"name": "已归档", "color": 0},
 ]
 
 
@@ -143,6 +202,23 @@ TASK_FIELDS = [
         "property": {"formatter": "0%", "min": 0, "max": 1, "range_customize": True},
     },
     {"field_name": "背景说明", "type": TEXT_FIELD_TYPE},
+    {"field_name": "目标对象", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "输出目的",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": OUTPUT_PURPOSE_OPTIONS,
+    },
+    {"field_name": "套用模板", "type": TEXT_FIELD_TYPE},
+    {"field_name": "成功标准", "type": TEXT_FIELD_TYPE},
+    {"field_name": "约束条件", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "业务阶段",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": BUSINESS_STAGE_OPTIONS,
+    },
+    {"field_name": "引用数据集", "type": TEXT_FIELD_TYPE},
     {"field_name": "依赖任务编号", "type": TEXT_FIELD_TYPE},  # 逗号分隔任务编号，如 "1,3"；只有这些任务全部已完成才会启动本任务
     {"field_name": "数据源", "type": TEXT_FIELD_TYPE},  # 用户粘贴 CSV / markdown / 纯文本作为分析输入
     {
@@ -150,6 +226,116 @@ TASK_FIELDS = [
         "type": ATTACHMENT_FIELD_TYPE,
         "ui_type": "Attachment",
     },  # 仪表盘截图/手写白板/图表照 — vision LLM 转文字注入分析
+    {
+        "field_name": "最新评审动作",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": REVIEW_RECOMMEND_OPTIONS,
+    },
+    {"field_name": "最新评审摘要", "type": TEXT_FIELD_TYPE},
+    {"field_name": "最新管理摘要", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "汇报就绪度",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Rating",
+        "property": {"formatter": "0", "min": 0, "max": 5, "rating": {"symbol": "star"}},
+    },
+    {
+        "field_name": "证据条数",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {
+        "field_name": "高置信证据数",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {
+        "field_name": "硬证据数",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {
+        "field_name": "待验证证据数",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {
+        "field_name": "进入CEO汇总证据数",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {
+        "field_name": "决策事项数",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {
+        "field_name": "需补数条数",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {
+        "field_name": "工作流路由",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": WORKFLOW_ROUTE_OPTIONS,
+    },
+    {"field_name": "工作流消息包", "type": TEXT_FIELD_TYPE},
+    {"field_name": "工作流执行包", "type": TEXT_FIELD_TYPE},
+    {"field_name": "待发送汇报", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {"field_name": "待创建执行任务", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {"field_name": "待安排复核", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {
+        "field_name": "建议复核时间",
+        "type": DATE_FIELD_TYPE,
+        "ui_type": "DateTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
+    },
+    {"field_name": "汇报对象", "type": TEXT_FIELD_TYPE},
+    {"field_name": "执行负责人", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "执行截止时间",
+        "type": DATE_FIELD_TYPE,
+        "ui_type": "DateTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
+    },
+    {"field_name": "复核负责人", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "复核SLA小时",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {"field_name": "汇报版本号", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "归档状态",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": ARCHIVE_STATUS_OPTIONS,
+    },
+    {"field_name": "是否已拍板", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {"field_name": "拍板人", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "拍板时间",
+        "type": DATE_FIELD_TYPE,
+        "ui_type": "DateTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
+    },
+    {"field_name": "是否已执行落地", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {
+        "field_name": "执行完成时间",
+        "type": DATE_FIELD_TYPE,
+        "ui_type": "DateTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
+    },
     {
         "field_name": "创建时间",
         "type": CREATED_TIME_FIELD_TYPE,
@@ -240,6 +426,7 @@ def agent_output_fields(task_table_id: str) -> list[dict]:
             "ui_type": "Number",
             "property": {"formatter": "0"},
         },
+        {"field_name": "证据摘要", "type": TEXT_FIELD_TYPE},
         {
             "field_name": "生成时间",
             "type": CREATED_TIME_FIELD_TYPE,
@@ -263,11 +450,15 @@ def report_fields(task_table_id: str) -> list[dict]:
             "ui_type": "SingleSelect",
             "options": HEALTH_OPTIONS,
         },
+        {"field_name": "一句话结论", "type": TEXT_FIELD_TYPE},
         {"field_name": "核心结论", "type": TEXT_FIELD_TYPE},
         {"field_name": "重要机会", "type": TEXT_FIELD_TYPE},
         {"field_name": "重要风险", "type": TEXT_FIELD_TYPE},
         {"field_name": "CEO决策事项", "type": TEXT_FIELD_TYPE},
         {"field_name": "管理摘要", "type": TEXT_FIELD_TYPE},
+        {"field_name": "首要动作", "type": TEXT_FIELD_TYPE},
+        {"field_name": "汇报风险", "type": TEXT_FIELD_TYPE},
+        {"field_name": "高管一页纸", "type": TEXT_FIELD_TYPE},
         {
             "field_name": "参与岗位数",
             "type": NUMBER_FIELD_TYPE,
@@ -280,6 +471,16 @@ def report_fields(task_table_id: str) -> list[dict]:
             "ui_type": "Rating",
             "property": {"formatter": "0", "min": 0, "max": 5, "rating": {"symbol": "fire"}},
         },
+        {"field_name": "必须拍板事项", "type": TEXT_FIELD_TYPE},
+        {"field_name": "可授权事项", "type": TEXT_FIELD_TYPE},
+        {"field_name": "需补数事项", "type": TEXT_FIELD_TYPE},
+        {"field_name": "立即执行事项", "type": TEXT_FIELD_TYPE},
+        {
+            "field_name": "证据充分度",
+            "type": NUMBER_FIELD_TYPE,
+            "ui_type": "Rating",
+            "property": {"formatter": "0", "min": 0, "max": 5, "rating": {"symbol": "star"}},
+        },
         {
             "field_name": "生成时间",
             "type": CREATED_TIME_FIELD_TYPE,
@@ -287,6 +488,303 @@ def report_fields(task_table_id: str) -> list[dict]:
             "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
         },
     ]
+
+
+EVIDENCE_TYPE_OPTIONS = [
+    {"name": "real_data", "color": 4},
+    {"name": "benchmark", "color": 6},
+    {"name": "upstream", "color": 5},
+    {"name": "judgment", "color": 0},
+]
+
+EVIDENCE_USAGE_OPTIONS = [
+    {"name": "insight", "color": 6},
+    {"name": "opportunity", "color": 4},
+    {"name": "risk", "color": 1},
+    {"name": "decision", "color": 7},
+]
+
+EVIDENCE_CONFIDENCE_OPTIONS = [
+    {"name": "high", "color": 4},
+    {"name": "medium", "color": 3},
+    {"name": "low", "color": 1},
+]
+
+EVIDENCE_GRADE_OPTIONS = [
+    {"name": "硬证据", "color": 4},
+    {"name": "推断", "color": 6},
+    {"name": "待验证", "color": 3},
+]
+
+EVIDENCE_FIELDS = [
+    {"field_name": "证据标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "任务标题", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "岗位角色",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": AGENT_ROLE_OPTIONS,
+    },
+    {"field_name": "结论摘要", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "证据类型",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": EVIDENCE_TYPE_OPTIONS,
+    },
+    {
+        "field_name": "证据用途",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": EVIDENCE_USAGE_OPTIONS,
+    },
+    {"field_name": "证据内容", "type": TEXT_FIELD_TYPE},
+    {"field_name": "引用来源", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "证据置信度",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": EVIDENCE_CONFIDENCE_OPTIONS,
+    },
+    {
+        "field_name": "证据等级",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": EVIDENCE_GRADE_OPTIONS,
+    },
+    {"field_name": "进入CEO汇总", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {
+        "field_name": "生成时间",
+        "type": CREATED_TIME_FIELD_TYPE,
+        "ui_type": "CreatedTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
+    },
+]
+
+
+REVIEW_FIELDS = [
+    {"field_name": "任务标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "评审结论", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "推荐动作",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": REVIEW_RECOMMEND_OPTIONS,
+    },
+    {
+        "field_name": "真实性",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Rating",
+        "property": {"formatter": "0", "min": 0, "max": 5, "rating": {"symbol": "star"}},
+    },
+    {
+        "field_name": "决策性",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Rating",
+        "property": {"formatter": "0", "min": 0, "max": 5, "rating": {"symbol": "star"}},
+    },
+    {
+        "field_name": "可执行性",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Rating",
+        "property": {"formatter": "0", "min": 0, "max": 5, "rating": {"symbol": "star"}},
+    },
+    {
+        "field_name": "闭环准备度",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Rating",
+        "property": {"formatter": "0", "min": 0, "max": 5, "rating": {"symbol": "star"}},
+    },
+    {"field_name": "需补数事项", "type": TEXT_FIELD_TYPE},
+    {"field_name": "评审摘要", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "生成时间",
+        "type": CREATED_TIME_FIELD_TYPE,
+        "ui_type": "CreatedTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
+    },
+]
+
+
+ACTION_FIELDS = [
+    {"field_name": "动作标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "任务标题", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "动作类型",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": ACTION_TYPE_OPTIONS,
+    },
+    {
+        "field_name": "动作状态",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": ACTION_STATUS_OPTIONS,
+    },
+    {
+        "field_name": "工作流路由",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": WORKFLOW_ROUTE_OPTIONS,
+    },
+    {"field_name": "动作内容", "type": TEXT_FIELD_TYPE},
+    {"field_name": "执行结果", "type": TEXT_FIELD_TYPE},
+    {"field_name": "关联记录ID", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "生成时间",
+        "type": CREATED_TIME_FIELD_TYPE,
+        "ui_type": "CreatedTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
+    },
+]
+
+
+REVIEW_HISTORY_FIELDS = [
+    {"field_name": "复核标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "任务标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "任务编号", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "复核轮次",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {
+        "field_name": "推荐动作",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": REVIEW_RECOMMEND_OPTIONS,
+    },
+    {
+        "field_name": "工作流路由",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": WORKFLOW_ROUTE_OPTIONS,
+    },
+    {"field_name": "触发原因", "type": TEXT_FIELD_TYPE},
+    {"field_name": "复核结论", "type": TEXT_FIELD_TYPE},
+    {"field_name": "前次评审动作", "type": TEXT_FIELD_TYPE},
+    {"field_name": "新旧结论差异", "type": TEXT_FIELD_TYPE},
+    {"field_name": "需补数事项", "type": TEXT_FIELD_TYPE},
+    {"field_name": "关联记录ID", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "生成时间",
+        "type": CREATED_TIME_FIELD_TYPE,
+        "ui_type": "CreatedTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
+    },
+]
+
+
+DELIVERY_ARCHIVE_FIELDS = [
+    {"field_name": "归档标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "任务标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "任务编号", "type": TEXT_FIELD_TYPE},
+    {"field_name": "汇报版本号", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "工作流路由",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": WORKFLOW_ROUTE_OPTIONS,
+    },
+    {
+        "field_name": "归档状态",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": ARCHIVE_STATUS_OPTIONS,
+    },
+    {
+        "field_name": "最新评审动作",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": REVIEW_RECOMMEND_OPTIONS,
+    },
+    {"field_name": "一句话结论", "type": TEXT_FIELD_TYPE},
+    {"field_name": "管理摘要", "type": TEXT_FIELD_TYPE},
+    {"field_name": "首要动作", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "汇报就绪度",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Rating",
+        "property": {"formatter": "0", "min": 0, "max": 5, "rating": {"symbol": "star"}},
+    },
+    {"field_name": "工作流消息包", "type": TEXT_FIELD_TYPE},
+    {"field_name": "汇报对象", "type": TEXT_FIELD_TYPE},
+    {"field_name": "执行负责人", "type": TEXT_FIELD_TYPE},
+    {"field_name": "复核负责人", "type": TEXT_FIELD_TYPE},
+    {"field_name": "关联记录ID", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "生成时间",
+        "type": CREATED_TIME_FIELD_TYPE,
+        "ui_type": "CreatedTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
+    },
+]
+
+
+AUTOMATION_LOG_FIELDS = [
+    {"field_name": "日志标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "任务标题", "type": TEXT_FIELD_TYPE},
+    {"field_name": "节点名称", "type": TEXT_FIELD_TYPE},
+    {"field_name": "触发来源", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "执行状态",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": ACTION_STATUS_OPTIONS,
+    },
+    {
+        "field_name": "工作流路由",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": WORKFLOW_ROUTE_OPTIONS,
+    },
+    {"field_name": "日志摘要", "type": TEXT_FIELD_TYPE},
+    {"field_name": "详细结果", "type": TEXT_FIELD_TYPE},
+    {"field_name": "关联记录ID", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "生成时间",
+        "type": CREATED_TIME_FIELD_TYPE,
+        "ui_type": "CreatedTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
+    },
+]
+
+
+TEMPLATE_CENTER_FIELDS = [
+    {"field_name": "模板名称", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "适用工作流路由",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": WORKFLOW_ROUTE_OPTIONS,
+    },
+    {
+        "field_name": "适用输出目的",
+        "type": SINGLE_SELECT_FIELD_TYPE,
+        "ui_type": "SingleSelect",
+        "options": OUTPUT_PURPOSE_OPTIONS,
+    },
+    {"field_name": "汇报模板", "type": TEXT_FIELD_TYPE},
+    {"field_name": "执行模板", "type": TEXT_FIELD_TYPE},
+    {"field_name": "默认汇报对象", "type": TEXT_FIELD_TYPE},
+    {"field_name": "默认执行负责人", "type": TEXT_FIELD_TYPE},
+    {"field_name": "默认复核负责人", "type": TEXT_FIELD_TYPE},
+    {
+        "field_name": "默认复核SLA小时",
+        "type": NUMBER_FIELD_TYPE,
+        "ui_type": "Number",
+        "property": {"formatter": "0"},
+    },
+    {"field_name": "模板说明", "type": TEXT_FIELD_TYPE},
+    {"field_name": "启用", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {
+        "field_name": "生成时间",
+        "type": CREATED_TIME_FIELD_TYPE,
+        "ui_type": "CreatedTime",
+        "property": {"date_formatter": "yyyy-MM-dd HH:mm"},
+    },
+]
 
 
 DATASOURCE_TYPE_OPTIONS = [
@@ -311,6 +809,9 @@ DATASOURCE_FIELDS = [
         "options": DATASOURCE_TYPE_OPTIONS,
     },
     {"field_name": "字段说明", "type": TEXT_FIELD_TYPE},  # 数据列定义说明
+    {"field_name": "数据来源", "type": TEXT_FIELD_TYPE},
+    {"field_name": "可信等级", "type": TEXT_FIELD_TYPE},
+    {"field_name": "适用任务类型", "type": TEXT_FIELD_TYPE},
     {"field_name": "原始 CSV", "type": TEXT_FIELD_TYPE},  # 纯 CSV，给 agent 解析
     {"field_name": "渲染表格", "type": TEXT_FIELD_TYPE},  # markdown table，飞书 UI 友好渲染
     {
@@ -320,6 +821,7 @@ DATASOURCE_FIELDS = [
         "property": {"formatter": "0"},
     },
     {"field_name": "原始数据文件", "type": ATTACHMENT_FIELD_TYPE, "ui_type": "Attachment"},
+    {"field_name": "最近校验说明", "type": TEXT_FIELD_TYPE},
     {
         "field_name": "创建时间",
         "type": CREATED_TIME_FIELD_TYPE,

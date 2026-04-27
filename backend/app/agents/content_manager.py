@@ -130,6 +130,11 @@ class ContentManagerAgent(BaseAgent):
 ]
 ```
 （用实际分析场景数字替换示例值）
+
+输出末尾的 ```metadata``` 中：
+- `evidence` 至少写 3 条，说明内容盘点结论来自哪些资产、基准或判断
+- 若需要补齐内容库存/表现数据，请在 `decisions` 中写 `type="need_data"`
+- 可直接排期执行的任务请写 `type="execute_now"` 或 `type="delegated"`
 """
 
 

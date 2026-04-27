@@ -140,6 +140,11 @@ class ProductManagerAgent(BaseAgent):
 ]
 ```
 （用实际RICE分数替换示例值）
+
+输出末尾的 ```metadata``` 中：
+- `evidence` 至少写 3 条，标清用户问题、数据迹象、行业基准或上游引用
+- 若需要 CEO 决策资源投入/路线取舍，请在 `decisions` 中写 `type="ceo_decision"`
+- 若需要补用户研究或埋点数据，请在 `decisions` 中写 `type="need_data"`
 """
 
 

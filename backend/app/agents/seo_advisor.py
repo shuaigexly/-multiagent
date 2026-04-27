@@ -144,6 +144,11 @@ class SEOAdvisorAgent(BaseAgent):
 ]
 ```
 （value = 商业价值×2 + (10-竞争难度)，用分析场景实际值替换）
+
+输出末尾的 ```metadata``` 中：
+- `evidence` 至少写 3 条，标明哪些来自真实流量/关键词数据，哪些来自行业基准估算
+- 若必须补齐搜索量/排名/收录数据才能判断，请在 `decisions` 中写 `type="need_data"`
+- 可直接执行的优化动作可写 `type="execute_now"`
 """
 
 

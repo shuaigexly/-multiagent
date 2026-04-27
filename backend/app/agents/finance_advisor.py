@@ -137,6 +137,11 @@ class FinanceAdvisorAgent(BaseAgent):
 ]
 ```
 （用分析场景中实际使用的数字替换示例值）
+
+输出末尾的 ```metadata``` 中：
+- `evidence` 至少写 3 条，优先标清真实数据、财务估算、行业基准的边界
+- 若存在需老板批准预算/融资/降本动作，请在 `decisions` 中写 `type="ceo_decision"`
+- 若结论依赖补充财务口径，请在 `decisions` 中写 `type="need_data"`
 """
 
 

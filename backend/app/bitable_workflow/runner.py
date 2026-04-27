@@ -1,7 +1,7 @@
 """
 工作流运行器（七岗多智能体版）
 
-setup_workflow()     — 在飞书创建多维表格 App + 四张业务表，并写入初始分析任务
+setup_workflow()     — 在飞书创建多维表格 App + 多张业务表，并写入初始分析任务
 run_workflow_loop()  — 持续运行调度循环，定期触发七岗 DAG 分析流水线
 stop_workflow()      — 停止循环
 """
@@ -26,10 +26,10 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     """
     一键初始化：
     1. 创建飞书多维表格 App
-    2. 建四张表：分析任务 / 岗位分析 / 综合报告 / 数字员工效能
+    2. 建多张表：分析任务 / 岗位分析 / 综合报告 / 数字员工效能 / 数据源库 / 证据链 / 产出评审 / 交付动作 / 复核历史 / 交付结果归档 / 自动化日志 / 模板配置中心
     3. 写入 4 条初始分析任务（覆盖内容战略、数据复盘、增长优化、产品规划四个维度）
 
-    返回 {"app_token", "url", "table_ids": {"task", "output", "report", "performance"}}
+    返回 {"app_token", "url", "table_ids": {...}}
     """
     result = await create_bitable(name)
     app_token = result["app_token"]
@@ -47,10 +47,30 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
         performance_tid = await create_table(app_token, schema.TABLE_PERFORMANCE, schema.PERFORMANCE_FIELDS)
         # v8.6.16 — 第 5 张表「📚 数据源库」：每行一个数据集，分析任务通过名称引用
         datasource_tid = await create_table(app_token, schema.TABLE_DATASOURCE, schema.DATASOURCE_FIELDS)
+        evidence_tid = await create_table(app_token, schema.TABLE_EVIDENCE, schema.EVIDENCE_FIELDS)
+        review_tid = await create_table(app_token, schema.TABLE_REVIEW, schema.REVIEW_FIELDS)
+        action_tid = await create_table(app_token, schema.TABLE_ACTION, schema.ACTION_FIELDS)
+        review_history_tid = await create_table(app_token, schema.TABLE_REVIEW_HISTORY, schema.REVIEW_HISTORY_FIELDS)
+        archive_tid = await create_table(app_token, schema.TABLE_DELIVERY_ARCHIVE, schema.DELIVERY_ARCHIVE_FIELDS)
+        automation_log_tid = await create_table(app_token, schema.TABLE_AUTOMATION_LOG, schema.AUTOMATION_LOG_FIELDS)
+        template_tid = await create_table(app_token, schema.TABLE_TEMPLATE_CENTER, schema.TEMPLATE_CENTER_FIELDS)
 
         # 为每张表创建附加视图（看板/画册）以提升可视化效果
         # 每张表的第一个视图是默认网格视图（创建表时自动生成），这里追加额外视图
-        await _create_extra_views(app_token, task_tid, output_tid, report_tid, performance_tid)
+        await _create_extra_views(
+            app_token,
+            task_tid,
+            output_tid,
+            report_tid,
+            performance_tid,
+            evidence_tid,
+            review_tid,
+            action_tid,
+            review_history_tid,
+            archive_tid,
+            automation_log_tid,
+            template_tid,
+        )
 
         # v8.6.2 修复：飞书新建多维表格 App 时会自动创建一张「数据表」作为默认表，
         # 用户打开 base URL 默认进的就是这张空表 → 看到一片空白以为整个 Bitable 没数据。
@@ -58,7 +78,10 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
         # 看起来像一列空数据。统一在 setup 末尾把这些清理掉。
         await _cleanup_auto_created_artifacts(
             app_token,
-            keep_table_ids={task_tid, output_tid, report_tid, performance_tid, datasource_tid},
+            keep_table_ids={
+                task_tid, output_tid, report_tid, performance_tid, datasource_tid, evidence_tid, review_tid,
+                action_tid, review_history_tid, archive_tid, automation_log_tid, template_tid,
+            },
         )
     except Exception as setup_exc:
         logger.error("setup_workflow failed mid-way, rolling back base %s: %s", app_token, setup_exc)
@@ -73,7 +96,7 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
     # v8.6.18 — 数据写入也要补偿：如果 SEED/数据源写入中途挂了，DELETE 整个 base
     try:
         await _populate_base_records(
-            app_token, task_tid, datasource_tid,
+            app_token, task_tid, datasource_tid, template_tid,
         )
     except Exception as populate_exc:
         logger.error("populate base records failed, rolling back %s: %s", app_token, populate_exc)
@@ -90,11 +113,18 @@ async def setup_workflow(name: str = "内容运营虚拟组织") -> dict:
             "report": report_tid,
             "performance": performance_tid,
             "datasource": datasource_tid,
+            "evidence": evidence_tid,
+            "review": review_tid,
+            "action": action_tid,
+            "review_history": review_history_tid,
+            "archive": archive_tid,
+            "automation_log": automation_log_tid,
+            "template": template_tid,
         },
     }
 
 
-async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: str) -> None:
+async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: str, template_tid: str) -> None:
     """v8.6.18：把数据源表 + 引导 + SEED 任务写入抽出来，便于 setup_workflow 包补偿。"""
     from app.bitable_workflow.demo_data import DATASETS, csv_to_markdown
     for ds_name, ds_type, field_doc, csv_text in DATASETS:
@@ -105,9 +135,13 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
                 "数据集名称": ds_name,
                 "类型": ds_type,
                 "字段说明": field_doc,
+                "数据来源": "系统内置演示数据",
+                "可信等级": "medium",
+                "适用任务类型": "经营分析/增长优化/综合分析",
                 "原始 CSV": csv_text,
                 "渲染表格": csv_to_markdown(csv_text),
                 "数据行数": n_rows,
+                "最近校验说明": "初始化导入",
             },
         )
 
@@ -120,23 +154,31 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
             "任务标题": "📌 使用提示：看板/画册首次 UI 配置指引（请勿删）",
             "分析维度": "综合分析",
             "优先级": "P0 紧急",
+            "输出目的": "汇报展示",
             "状态": "已归档",
             "进度": 1.0,
             "背景说明": (
                 "📌 看板/画册视图的一次性 UI 配置（飞书 OpenAPI 限制，无法编程实现）：\n\n"
                 "【分析任务/📊 状态看板】点顶部「分组依据」→ 选「状态」字段\n"
+                "【分析任务/🧭 工作流路由】点顶部「分组依据」→ 选「工作流路由」字段\n"
                 "【分析任务/📇 任务画册】点顶部「封面字段」→ 选「任务图像」\n"
                 "【岗位分析/👥 岗位看板】点顶部「分组依据」→ 选「岗位角色」\n"
                 "【岗位分析/🩺 健康度画册】点顶部「封面字段」→ 选「图表」附件\n"
                 "【综合报告/🚦 健康度看板】点顶部「分组依据」→ 选「综合健康度」\n"
                 "【综合报告/📋 报告画册】点顶部「封面字段」→ 选「图表」附件（无则留空）\n"
                 "【数字员工效能/🏅 岗位看板】点顶部「分组依据」→ 选「岗位」\n\n"
+                "📌 推荐在多维表格里继续配置 3 条原生自动化：\n"
+                "1. 当「待发送汇报」= 是时，发送飞书群消息/邮件，正文使用「工作流消息包」\n"
+                "2. 当「待创建执行任务」= 是时，创建飞书任务，正文使用「工作流执行包」\n"
+                "3. 当「待安排复核」= 是时，在「建议复核时间」触发提醒或创建复核任务\n\n"
                 "⚠️ 飞书 OpenAPI v1 不公开 kanban.group_field / gallery.cover_field 接口"
                 "（飞书 SDK AppTableViewProperty 类型声明只有 filter_info/hidden_fields/"
                 "hierarchy_config，应用层 tenant_access_token 调 PATCH 这两个字段会被"
                 "静默丢弃，仅 user_access_token 走前端 OAuth 才能配）。"
                 "一次手动点选后飞书会持久化记忆，下次进来自动生效。"
             ),
+            "目标对象": "系统管理员",
+            "成功标准": "用户能看懂视图用途并完成首次 UI 配置",
         },
     )
 
@@ -157,6 +199,7 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
                 "任务标题": title,
                 "分析维度": dimension,
                 "优先级": "P1 高",
+                "输出目的": "经营诊断",
                 "状态": schema.Status.PENDING,
                 "进度": 0,
                 "背景说明": background,
@@ -165,6 +208,120 @@ async def _populate_base_records(app_token: str, task_tid: str, datasource_tid: 
                 "综合评分": schema.priority_score("P1 高"),
             },
             optional_keys=["综合评分"],
+        )
+
+    template_seed_rows = [
+        {
+            "模板名称": "直接汇报默认模板",
+            "适用工作流路由": "直接汇报",
+            "适用输出目的": "汇报展示",
+            "汇报模板": (
+                "任务：{task_title}\n"
+                "对象：{audience}\n"
+                "结论：{one_liner}\n"
+                "摘要：{management_summary}\n"
+                "风险：{risk}\n"
+                "建议执行：{execute_items}"
+            ),
+            "执行模板": "路由：{route}\n当前以汇报为主，无额外执行任务。",
+            "默认汇报对象": "CEO",
+            "模板说明": "适用于直接汇报场景的简版管理摘要模板",
+            "启用": True,
+        },
+        {
+            "模板名称": "等待拍板默认模板",
+            "适用工作流路由": "等待拍板",
+            "适用输出目的": "管理决策",
+            "汇报模板": (
+                "任务：{task_title}\n"
+                "对象：{audience}\n"
+                "需拍板事项：{decision_items}\n"
+                "摘要：{management_summary}\n"
+                "风险：{risk}"
+            ),
+            "执行模板": "请围绕以下拍板项准备：\n{decision_items}",
+            "默认汇报对象": "CEO/管理层",
+            "模板说明": "适用于等待拍板场景",
+            "启用": True,
+        },
+        {
+            "模板名称": "直接执行默认模板",
+            "适用工作流路由": "直接执行",
+            "适用输出目的": "执行跟进",
+            "汇报模板": (
+                "任务：{task_title}\n"
+                "执行负责人：{execution_owner}\n"
+                "结论：{one_liner}\n"
+                "建议执行：{execute_items}"
+            ),
+            "执行模板": (
+                "任务：{task_title}\n"
+                "路由：{route}\n"
+                "执行负责人：{execution_owner}\n"
+                "执行项：{execute_items}\n"
+                "管理摘要：{management_summary}"
+            ),
+            "默认执行负责人": "待指派",
+            "模板说明": "适用于直接执行场景",
+            "启用": True,
+        },
+        {
+            "模板名称": "补数复核默认模板",
+            "适用工作流路由": "补数复核",
+            "适用输出目的": "补数核验",
+            "汇报模板": (
+                "任务：{task_title}\n"
+                "当前结论：{one_liner}\n"
+                "需补数事项：{need_data_items}\n"
+                "复核负责人：{review_owner}"
+            ),
+            "执行模板": (
+                "任务：{task_title}\n"
+                "复核负责人：{review_owner}\n"
+                "需补数事项：{need_data_items}\n"
+                "评审动作：{review_action}"
+            ),
+            "默认复核负责人": "待指派",
+            "默认复核SLA小时": 24,
+            "模板说明": "适用于补数复核场景",
+            "启用": True,
+        },
+        {
+            "模板名称": "重新分析默认模板",
+            "适用工作流路由": "重新分析",
+            "适用输出目的": "管理决策",
+            "汇报模板": (
+                "任务：{task_title}\n"
+                "当前结论不稳定，建议重新分析。\n"
+                "原因：{review_action}\n"
+                "风险：{risk}"
+            ),
+            "执行模板": (
+                "任务：{task_title}\n"
+                "重新分析负责人：{review_owner}\n"
+                "需补数事项：{need_data_items}"
+            ),
+            "默认复核负责人": "待指派",
+            "默认复核SLA小时": 4,
+            "模板说明": "适用于建议重跑场景",
+            "启用": True,
+        },
+    ]
+    for row in template_seed_rows:
+        await bitable_ops.create_record_optional_fields(
+            app_token,
+            template_tid,
+            row,
+            optional_keys=[
+                "适用工作流路由",
+                "适用输出目的",
+                "执行模板",
+                "默认汇报对象",
+                "默认执行负责人",
+                "默认复核负责人",
+                "默认复核SLA小时",
+                "模板说明",
+            ],
         )
 
 
@@ -283,6 +440,13 @@ async def _create_extra_views(
     output_tid: str,
     report_tid: str,
     performance_tid: str,
+    evidence_tid: str,
+    review_tid: str,
+    action_tid: str,
+    review_history_tid: str,
+    archive_tid: str,
+    automation_log_tid: str,
+    template_tid: str,
 ) -> None:
     """为四张业务表创建看板/画册/过滤视图，提升多维表格视觉可读性。
 
@@ -307,6 +471,13 @@ async def _create_extra_views(
         (task_tid, "🕐 待分析", "grid", "状态", "待分析"),
         (task_tid, "⚙️ 分析中", "grid", "状态", "分析中"),
         (task_tid, "✅ 已完成", "grid", "状态", "已完成"),
+        (task_tid, "🟢 可直接汇报", "grid", "最新评审动作", "直接采用"),
+        (task_tid, "🟡 待补数复核", "grid", "最新评审动作", "补数后复核"),
+        (task_tid, "🔁 建议重跑", "grid", "最新评审动作", "建议重跑"),
+        (task_tid, "📣 待发送汇报", "grid", "待发送汇报", "True"),
+        (task_tid, "🧾 待创建执行任务", "grid", "待创建执行任务", "True"),
+        (task_tid, "🗓 待安排复核", "grid", "待安排复核", "True"),
+        (task_tid, "🧭 工作流路由", "kanban", None, None),
         (task_tid, "🔥 P0 紧急", "grid", "优先级", "P0 紧急"),
         (task_tid, "📌 P1 高优", "grid", "优先级", "P1 高"),
         (task_tid, "📊 状态看板", "kanban", None, None),  # UI 选「状态」做分组
@@ -326,6 +497,42 @@ async def _create_extra_views(
         # 效能表 — 视觉视图
         (performance_tid, "🏅 岗位看板", "kanban", None, None),  # UI 选「岗位」做分组
         (performance_tid, "🏆 效能画册", "gallery", None, None),
+        # 证据链 — 重点看风险/机会与证据类型
+        (evidence_tid, "🧱 硬证据", "grid", "证据等级", "硬证据"),
+        (evidence_tid, "🟡 待验证", "grid", "证据等级", "待验证"),
+        (evidence_tid, "⚠️ 风险证据", "grid", "证据用途", "risk"),
+        (evidence_tid, "🚀 机会证据", "grid", "证据用途", "opportunity"),
+        (evidence_tid, "🧾 证据类型看板", "kanban", None, None),
+        # 产出评审 — 重点看推荐动作
+        (review_tid, "✅ 直接采用", "grid", "推荐动作", "直接采用"),
+        (review_tid, "🟡 补数后复核", "grid", "推荐动作", "补数后复核"),
+        (review_tid, "🔁 建议重跑", "grid", "推荐动作", "建议重跑"),
+        (review_tid, "🧪 评审看板", "kanban", None, None),
+        # 交付动作
+        (action_tid, "📣 汇报动作", "grid", "动作类型", "发送汇报"),
+        (action_tid, "✅ 已完成动作", "grid", "动作状态", "已完成"),
+        (action_tid, "❌ 失败动作", "grid", "动作状态", "执行失败"),
+        (action_tid, "🧭 动作路由", "kanban", None, None),
+        # 复核历史
+        (review_history_tid, "🟡 补数复核历史", "grid", "推荐动作", "补数后复核"),
+        (review_history_tid, "🔁 重跑历史", "grid", "推荐动作", "建议重跑"),
+        (review_history_tid, "✅ 直接采用历史", "grid", "推荐动作", "直接采用"),
+        (review_history_tid, "🧪 复核轮次看板", "kanban", None, None),
+        # 交付归档
+        (archive_tid, "📬 待汇报归档", "grid", "归档状态", "待汇报"),
+        (archive_tid, "🧾 待执行归档", "grid", "归档状态", "待执行"),
+        (archive_tid, "🗓 待复核归档", "grid", "归档状态", "待复核"),
+        (archive_tid, "⏳ 待拍板归档", "grid", "归档状态", "待拍板"),
+        (archive_tid, "📦 归档看板", "kanban", None, None),
+        # 自动化日志
+        (automation_log_tid, "✅ 成功日志", "grid", "执行状态", "已完成"),
+        (automation_log_tid, "❌ 失败日志", "grid", "执行状态", "执行失败"),
+        (automation_log_tid, "⏭ 跳过日志", "grid", "执行状态", "已跳过"),
+        (automation_log_tid, "🪵 节点日志看板", "kanban", None, None),
+        # 模板配置中心
+        (template_tid, "🧩 汇报模板", "grid", "适用工作流路由", "直接汇报"),
+        (template_tid, "⚙️ 执行模板", "grid", "适用工作流路由", "直接执行"),
+        (template_tid, "🗂 模板看板", "kanban", None, None),
         # v8.6.19 — 甘特视图（用户首次打开 UI 选「创建时间→完成日期」做时间轴）
         (task_tid, "📅 任务甘特", "gantt", None, None),
         # v8.6.19 — 表单视图（创建后调 _share_form_view 拿 shared_url）

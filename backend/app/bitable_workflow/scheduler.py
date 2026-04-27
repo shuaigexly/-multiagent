@@ -24,8 +24,11 @@ from app.bitable_workflow.workflow_agents import (
     collect_prior_task_output_ids,
     run_task_pipeline,
     update_performance,
+    write_evidence_records,
     write_agent_outputs,
     write_ceo_report,
+    write_review_record,
+    _derive_evidence_grade,
 )
 from app.agents.base_agent import AgentResult
 from app.core.observability import clear_task_context, set_task_context
@@ -239,6 +242,439 @@ def _is_stale_analyzing(fields: dict) -> bool:
     return datetime.now(timezone.utc) - updated_at > timedelta(minutes=_RECOVER_STALE_MINUTES)
 
 
+def _section_excerpt_by_keywords(result: AgentResult, keywords: tuple[str, ...], limit: int = 600) -> str:
+    for section in result.sections or []:
+        title = getattr(section, "title", "") or ""
+        if any(keyword in title for keyword in keywords):
+            content = getattr(section, "content", "") or ""
+            if content.strip():
+                return truncate_with_marker(content.strip(), limit, "\n...[已截断]")
+    return ""
+
+
+def _count_bullets(value: object) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    return len([line for line in text.splitlines() if line.strip().lstrip("-•*").strip()])
+
+
+def _extract_task_number(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        raw = value.get("value")
+        if isinstance(raw, list) and raw:
+            first = raw[0]
+            return (first.get("text") if isinstance(first, dict) else str(first)) or ""
+    if isinstance(value, (int, float)):
+        return str(int(value))
+    return ""
+
+
+def _derive_archive_status(route: str) -> str:
+    if route == "等待拍板":
+        return "待拍板"
+    if route == "直接执行":
+        return "待执行"
+    if route in {"补数复核", "重新分析"}:
+        return "待复核"
+    return "待汇报"
+
+
+def _derive_execution_owner(task_fields: dict, route: str) -> str:
+    existing = str(task_fields.get("执行负责人") or "").strip()
+    if existing:
+        return existing
+    if route == "直接执行":
+        return "待指派"
+    return ""
+
+
+def _derive_review_owner(task_fields: dict, route: str) -> str:
+    existing = str(task_fields.get("复核负责人") or "").strip()
+    if existing:
+        return existing
+    if route in {"补数复核", "重新分析"}:
+        return "待指派"
+    return ""
+
+
+def _derive_review_sla_hours(task_fields: dict, route: str) -> int:
+    current = int(task_fields.get("复核SLA小时") or 0)
+    if current > 0:
+        return current
+    if route == "补数复核":
+        return 24
+    if route == "重新分析":
+        return 4
+    return 0
+
+
+def _render_template_text(template: str, context: dict[str, str]) -> str:
+    rendered = str(template or "")
+    for key, value in context.items():
+        rendered = rendered.replace(f"{{{key}}}", str(value or ""))
+    return rendered
+
+
+async def _resolve_template_defaults(
+    app_token: str,
+    template_tid: str | None,
+    purpose: str = "",
+    template_name: str = "",
+) -> dict[str, object]:
+    if not template_tid:
+        return {}
+    try:
+        templates = await bitable_ops.list_records(app_token, template_tid, max_records=200)
+    except Exception as exc:
+        logger.warning("template defaults lookup failed app=%s: %s", app_token, exc)
+        return {}
+
+    normalized_name = template_name.strip()
+    normalized_purpose = purpose.strip()
+    exact_match: dict | None = None
+    purpose_match: dict | None = None
+    fallback_match: dict | None = None
+    for row in templates:
+        fields = row.get("fields") or {}
+        if not bool(fields.get("启用")):
+            continue
+        row_name = str(fields.get("模板名称") or "").strip()
+        row_purpose = str(fields.get("适用输出目的") or "").strip()
+        if normalized_name and row_name == normalized_name:
+            exact_match = fields
+            break
+        if normalized_purpose and row_purpose == normalized_purpose and purpose_match is None:
+            purpose_match = fields
+        if not row_purpose and fallback_match is None:
+            fallback_match = fields
+    selected = exact_match or purpose_match or fallback_match
+    if not selected:
+        return {}
+    return {
+        "template_name": str(selected.get("模板名称") or "").strip(),
+        "report_audience": str(selected.get("默认汇报对象") or "").strip(),
+        "execution_owner": str(selected.get("默认执行负责人") or "").strip(),
+        "review_owner": str(selected.get("默认复核负责人") or "").strip(),
+        "review_sla_hours": int(selected.get("默认复核SLA小时") or 0),
+    }
+
+
+def _template_context(
+    task_title: str,
+    task_fields: dict,
+    route: str,
+    review_fields: dict | None,
+    ceo_result: AgentResult,
+    decision_buckets: dict[str, list[str]],
+) -> dict[str, str]:
+    one_liner = _section_excerpt_by_keywords(ceo_result, ("核心结论", "管理摘要", "一段话"), 180)
+    management_summary = _section_excerpt_by_keywords(ceo_result, ("管理摘要", "核心结论", "一段话"), 600)
+    risk = _section_excerpt_by_keywords(ceo_result, ("重要风险",), 260)
+    audience = str(task_fields.get("汇报对象") or task_fields.get("目标对象") or "").strip()
+    execution_owner = _derive_execution_owner(task_fields, route)
+    review_owner = _derive_review_owner(task_fields, route)
+    return {
+        "task_title": task_title,
+        "route": route,
+        "review_action": str((review_fields or {}).get("推荐动作") or "").strip(),
+        "one_liner": one_liner,
+        "management_summary": management_summary,
+        "risk": risk,
+        "audience": audience or "未指定",
+        "execution_owner": execution_owner or "未指定",
+        "review_owner": review_owner or "未指定",
+        "execute_items": "；".join(decision_buckets["execute_now"][:3] or decision_buckets["delegated"][:3]) or "无",
+        "decision_items": "；".join(decision_buckets["ceo_decision"][:3]) or "无",
+        "need_data_items": "；".join(decision_buckets["need_data"][:3]) or "无",
+    }
+
+
+def _derive_workflow_route(
+    review_fields: dict | None,
+    ceo_result: AgentResult,
+) -> tuple[str, dict[str, list[str]]]:
+    decision_buckets = {
+        "ceo_decision": [],
+        "delegated": [],
+        "need_data": [],
+        "execute_now": [],
+    }
+    for item in ceo_result.decision_items:
+        summary = str(item.get("summary") or "").strip()
+        item_type = str(item.get("type") or "").strip().lower()
+        if summary and item_type in decision_buckets:
+            decision_buckets[item_type].append(summary)
+
+    recommend = str((review_fields or {}).get("推荐动作") or "").strip()
+    if recommend == "补数后复核":
+        return "补数复核", decision_buckets
+    if recommend == "建议重跑":
+        return "重新分析", decision_buckets
+    if decision_buckets["ceo_decision"]:
+        return "等待拍板", decision_buckets
+    if decision_buckets["execute_now"] or decision_buckets["delegated"]:
+        return "直接执行", decision_buckets
+    return "直接汇报", decision_buckets
+
+
+def _build_workflow_payload(
+    task_title: str,
+    task_fields: dict | None,
+    review_fields: dict | None,
+    ceo_result: AgentResult,
+) -> dict:
+    route, decision_buckets = _derive_workflow_route(review_fields, ceo_result)
+    task_fields = task_fields or {}
+    summary = _section_excerpt_by_keywords(ceo_result, ("管理摘要", "核心结论", "一段话"), 300)
+    risk = _section_excerpt_by_keywords(ceo_result, ("重要风险",), 220)
+    top_execute = decision_buckets["execute_now"][:2] or decision_buckets["delegated"][:2]
+    top_decision = decision_buckets["ceo_decision"][:2]
+    top_need_data = decision_buckets["need_data"][:2]
+    recommend = str((review_fields or {}).get("推荐动作") or "").strip()
+
+    message_lines = [
+        f"任务：{task_title}",
+        f"工作流路由：{route}",
+        f"评审动作：{recommend or '未生成'}",
+        f"管理摘要：{summary or '待补充'}",
+    ]
+    if top_decision:
+        message_lines.append("需拍板：" + "；".join(top_decision))
+    if top_execute:
+        message_lines.append("建议执行：" + "；".join(top_execute))
+    if top_need_data:
+        message_lines.append("需补数：" + "；".join(top_need_data))
+    if risk:
+        message_lines.append(f"汇报风险：{risk}")
+
+    execution_lines = [f"路由：{route}"]
+    if top_decision:
+        execution_lines.append("拍板项：\n" + "\n".join(f"- {item}" for item in top_decision))
+    if top_execute:
+        execution_lines.append("执行项：\n" + "\n".join(f"- {item}" for item in top_execute))
+    if top_need_data:
+        execution_lines.append("补数项：\n" + "\n".join(f"- {item}" for item in top_need_data))
+
+    review_at_ms: int | None = None
+    now = datetime.now(tz=timezone.utc)
+    if route == "补数复核":
+        review_at_ms = int((now + timedelta(hours=24)).timestamp() * 1000)
+    elif route == "重新分析":
+        review_at_ms = int((now + timedelta(hours=4)).timestamp() * 1000)
+    execution_due_at_ms: int | None = None
+    if route == "直接执行":
+        execution_due_at_ms = int((now + timedelta(hours=72)).timestamp() * 1000)
+
+    return {
+        "工作流路由": route,
+        "工作流消息包": truncate_with_marker("\n".join(message_lines), 1800, "\n...[已截断]"),
+        "工作流执行包": truncate_with_marker("\n\n".join(execution_lines), 1800, "\n...[已截断]"),
+        "待发送汇报": route in {"直接汇报", "等待拍板"},
+        "待创建执行任务": bool(top_execute),
+        "待安排复核": route in {"补数复核", "重新分析"},
+        "建议复核时间": review_at_ms,
+        "汇报对象": str(task_fields.get("汇报对象") or task_fields.get("目标对象") or "").strip(),
+        "执行负责人": _derive_execution_owner(task_fields, route),
+        "执行截止时间": execution_due_at_ms or task_fields.get("执行截止时间"),
+        "复核负责人": _derive_review_owner(task_fields, route),
+        "复核SLA小时": _derive_review_sla_hours(task_fields, route),
+    }
+
+
+async def _apply_template_config(
+    app_token: str,
+    template_tid: str | None,
+    task_title: str,
+    task_fields: dict,
+    review_fields: dict | None,
+    ceo_result: AgentResult,
+    payload: dict,
+) -> dict:
+    if not template_tid:
+        return payload
+    try:
+        templates = await bitable_ops.list_records(app_token, template_tid, max_records=200)
+    except Exception as exc:
+        logger.warning("template center lookup failed task=%s: %s", task_title, exc)
+        return payload
+    route = str(payload.get("工作流路由") or "").strip()
+    purpose = str(task_fields.get("输出目的") or "").strip()
+    selected_template_name = str(task_fields.get("套用模板") or "").strip()
+    exact_match: dict | None = None
+    matched: dict | None = None
+    fallback: dict | None = None
+    for row in templates:
+        fields = row.get("fields") or {}
+        if not bool(fields.get("启用")):
+            continue
+        template_name = str(fields.get("模板名称") or "").strip()
+        if selected_template_name and template_name == selected_template_name:
+            exact_match = fields
+            break
+    if exact_match is not None:
+        selected = exact_match
+    else:
+        for row in templates:
+            fields = row.get("fields") or {}
+            if not bool(fields.get("启用")):
+                continue
+            template_route = str(fields.get("适用工作流路由") or "").strip()
+            template_purpose = str(fields.get("适用输出目的") or "").strip()
+            if template_route != route:
+                continue
+            if template_purpose and template_purpose == purpose:
+                matched = fields
+                break
+            if not template_purpose and fallback is None:
+                fallback = fields
+        selected = matched or fallback
+    if not selected:
+        return payload
+    merged = dict(payload)
+    merged["套用模板"] = str(selected.get("模板名称") or selected_template_name or "").strip()
+    if not str(merged.get("汇报对象") or "").strip():
+        merged["汇报对象"] = str(selected.get("默认汇报对象") or "").strip()
+    if not str(merged.get("执行负责人") or "").strip():
+        merged["执行负责人"] = str(selected.get("默认执行负责人") or "").strip()
+    if not str(merged.get("复核负责人") or "").strip():
+        merged["复核负责人"] = str(selected.get("默认复核负责人") or "").strip()
+    if int(merged.get("复核SLA小时") or 0) <= 0:
+        merged["复核SLA小时"] = int(selected.get("默认复核SLA小时") or 0)
+    route_buckets = _derive_workflow_route(review_fields, ceo_result)[1]
+    template_task_fields = dict(task_fields)
+    template_task_fields.update(
+        {
+            "汇报对象": merged.get("汇报对象") or task_fields.get("汇报对象"),
+            "执行负责人": merged.get("执行负责人") or task_fields.get("执行负责人"),
+            "复核负责人": merged.get("复核负责人") or task_fields.get("复核负责人"),
+            "复核SLA小时": merged.get("复核SLA小时") or task_fields.get("复核SLA小时"),
+        }
+    )
+    context = _template_context(task_title, template_task_fields, route, review_fields, ceo_result, route_buckets)
+    report_template = str(selected.get("汇报模板") or "").strip()
+    execute_template = str(selected.get("执行模板") or "").strip()
+    if report_template:
+        merged["工作流消息包"] = truncate_with_marker(_render_template_text(report_template, context), 1800, "\n...[已截断]")
+    if execute_template:
+        merged["工作流执行包"] = truncate_with_marker(_render_template_text(execute_template, context), 1800, "\n...[已截断]")
+    return merged
+
+
+def _build_task_delivery_snapshot(
+    task_title: str,
+    task_fields: dict | None,
+    all_results: list[AgentResult],
+    ceo_result: AgentResult,
+    review_fields: dict | None,
+    evidence_written: int,
+) -> dict:
+    all_with_ceo = all_results + [ceo_result]
+    evidence_items = [
+        item
+        for result in all_with_ceo
+        for item in (result.structured_evidence or [])
+    ]
+    high_confidence = sum(
+        1
+        for item in evidence_items
+        if str(item.get("confidence") or "").strip().lower() == "high"
+    )
+    hard_evidence = sum(1 for item in evidence_items if _derive_evidence_grade(item) == "硬证据")
+    pending_verify = sum(1 for item in evidence_items if _derive_evidence_grade(item) == "待验证")
+    ceo_linked = sum(
+        1
+        for item in evidence_items
+        if str(item.get("usage") or "").strip().lower() in {"opportunity", "risk", "decision"}
+    )
+    decision_count = len([item for item in ceo_result.decision_items if str(item.get("summary") or "").strip()])
+    review_summary = ""
+    review_action = ""
+    readiness = 0
+    need_data_count = 0
+    if review_fields:
+        review_summary = str(review_fields.get("评审摘要") or review_fields.get("评审结论") or "").strip()
+        review_action = str(review_fields.get("推荐动作") or "").strip()
+        readiness_values = [
+            int(review_fields.get("真实性") or 0),
+            int(review_fields.get("决策性") or 0),
+            int(review_fields.get("可执行性") or 0),
+            int(review_fields.get("闭环准备度") or 0),
+        ]
+        readiness = round(sum(readiness_values) / len(readiness_values)) if all(readiness_values) else 0
+        need_data_count = _count_bullets(review_fields.get("需补数事项"))
+
+    management_summary = (
+        _section_excerpt_by_keywords(ceo_result, ("管理摘要", "一段话"), 800)
+        or _section_excerpt_by_keywords(ceo_result, ("核心结论",), 800)
+        or truncate_with_marker(ceo_result.raw_output or "", 800, "\n...[已截断]")
+    )
+    workflow_payload = _build_workflow_payload(task_title, task_fields, review_fields, ceo_result)
+
+    return {
+        "最新评审动作": review_action,
+        "最新评审摘要": truncate_with_marker(review_summary, 1500, "\n...[已截断]"),
+        "最新管理摘要": truncate_with_marker(management_summary, 1500, "\n...[已截断]"),
+        "汇报就绪度": readiness,
+        "证据条数": evidence_written or len(evidence_items),
+        "高置信证据数": high_confidence,
+        "硬证据数": hard_evidence,
+        "待验证证据数": pending_verify,
+        "进入CEO汇总证据数": ceo_linked,
+        "决策事项数": decision_count,
+        "需补数条数": need_data_count,
+        **workflow_payload,
+    }
+
+
+async def _hydrate_task_dataset_reference(
+    app_token: str,
+    datasource_tid: str | None,
+    fields: dict,
+) -> dict:
+    """若任务未直接提供「数据源」但填写了「引用数据集」，从数据源库回填原始 CSV。
+
+    保持兼容：查不到时仅保留原字段，不抛异常。
+    """
+    if not datasource_tid:
+        return fields
+    if (fields.get("数据源") or "").strip():
+        return fields
+    dataset_name = str(fields.get("引用数据集") or "").strip()
+    if not dataset_name:
+        return fields
+    try:
+        filter_expr = f"CurrentValue.[数据集名称]={bitable_ops.quote_filter_value(dataset_name)}"
+        rows = await bitable_ops.list_records(app_token, datasource_tid, filter_expr=filter_expr, max_records=1)
+        if not rows:
+            logger.info("Referenced dataset not found: %s", dataset_name)
+            return fields
+        ds_fields = rows[0].get("fields") or {}
+        raw_csv = str(ds_fields.get("原始 CSV") or "").strip()
+        field_doc = str(ds_fields.get("字段说明") or "").strip()
+        source = str(ds_fields.get("数据来源") or "").strip()
+        trust = str(ds_fields.get("可信等级") or "").strip()
+        rendered = raw_csv
+        if field_doc:
+            rendered = f"字段说明：{field_doc}\n\n{rendered}"
+        if source or trust:
+            rendered = (
+                f"数据资产：{dataset_name}\n"
+                f"来源：{source or '未标注'}\n"
+                f"可信等级：{trust or '未标注'}\n\n"
+                f"{rendered}"
+            )
+        merged = dict(fields)
+        if rendered:
+            merged["数据源"] = rendered
+        return merged
+    except Exception as exc:
+        logger.warning("hydrate dataset reference failed dataset=%s: %s", dataset_name, exc)
+        return fields
+
+
 async def _claim_pending_record(
     app_token: str,
     task_tid: str,
@@ -301,12 +737,223 @@ def _ceo_section_first_paragraph(ceo_result: AgentResult, keyword: str) -> str:
     return ""
 
 
+async def _write_action_record(
+    app_token: str,
+    action_tid: str | None,
+    task_title: str,
+    action_type: str,
+    action_status: str,
+    route: str = "",
+    content: str = "",
+    result_text: str = "",
+    record_id: str = "",
+) -> None:
+    if not action_tid:
+        return
+    fields = {
+        "动作标题": f"{task_title} · {action_type}",
+        "任务标题": task_title,
+        "动作类型": action_type,
+        "动作状态": action_status,
+        "工作流路由": route,
+        "动作内容": truncate_with_marker(content, 1800, "\n...[已截断]"),
+        "执行结果": truncate_with_marker(result_text, 1800, "\n...[已截断]"),
+        "关联记录ID": record_id,
+    }
+    try:
+        await bitable_ops.create_record_optional_fields(
+            app_token,
+            action_tid,
+            fields,
+            optional_keys=["工作流路由", "执行结果", "关联记录ID"],
+        )
+    except Exception as exc:
+        logger.warning("write action record failed task=%s type=%s: %s", task_title, action_type, exc)
+
+
+async def _write_automation_log(
+    app_token: str,
+    automation_log_tid: str | None,
+    task_title: str,
+    node_name: str,
+    status: str,
+    route: str = "",
+    trigger: str = "",
+    summary: str = "",
+    detail: str = "",
+    record_id: str = "",
+) -> None:
+    if not automation_log_tid:
+        return
+    fields = {
+        "日志标题": f"{task_title} · {node_name}",
+        "任务标题": task_title,
+        "节点名称": node_name,
+        "触发来源": trigger,
+        "执行状态": status,
+        "工作流路由": route,
+        "日志摘要": truncate_with_marker(summary, 1800, "\n...[已截断]"),
+        "详细结果": truncate_with_marker(detail, 1800, "\n...[已截断]"),
+        "关联记录ID": record_id,
+    }
+    try:
+        await bitable_ops.create_record_optional_fields(
+            app_token,
+            automation_log_tid,
+            fields,
+            optional_keys=["工作流路由", "触发来源", "详细结果", "关联记录ID"],
+        )
+    except Exception as exc:
+        logger.warning("write automation log failed task=%s node=%s: %s", task_title, node_name, exc)
+
+
+async def _write_review_history_record(
+    app_token: str,
+    review_history_tid: str | None,
+    task_title: str,
+    task_number: str,
+    review_fields: dict | None,
+    route: str = "",
+    record_id: str = "",
+) -> dict | None:
+    if not review_history_tid or not review_fields:
+        return None
+    try:
+        safe_title = bitable_ops.quote_filter_value(task_title)
+        existing_rows = await bitable_ops.list_records(
+            app_token,
+            review_history_tid,
+            filter_expr=f"CurrentValue.[任务标题]={safe_title}",
+            max_records=100,
+        )
+    except Exception as exc:
+        logger.warning("review history lookup failed task=%s: %s", task_title, exc)
+        existing_rows = []
+    round_no = len(existing_rows) + 1
+    prev_action = ""
+    if existing_rows:
+        latest = max(existing_rows, key=lambda row: str((row.get("fields") or {}).get("生成时间") or ""))
+        prev_action = str((latest.get("fields") or {}).get("推荐动作") or "").strip()
+    current_action = str(review_fields.get("推荐动作") or "").strip()
+    if prev_action and prev_action != current_action:
+        diff_summary = f"前次推荐动作：{prev_action}；本次推荐动作：{current_action}"
+    elif prev_action:
+        diff_summary = f"与前次一致：{current_action}"
+    else:
+        diff_summary = "首轮评审，无前次复核结果"
+    fields = {
+        "复核标题": f"{task_title} · 第{round_no}轮复核",
+        "任务标题": task_title,
+        "任务编号": task_number,
+        "复核轮次": float(round_no),
+        "推荐动作": current_action,
+        "工作流路由": route,
+        "触发原因": str(review_fields.get("评审摘要") or review_fields.get("评审结论") or "").strip(),
+        "复核结论": str(review_fields.get("评审结论") or "").strip(),
+        "前次评审动作": prev_action,
+        "新旧结论差异": diff_summary,
+        "需补数事项": str(review_fields.get("需补数事项") or "").strip(),
+        "关联记录ID": record_id,
+    }
+    new_record_id = await bitable_ops.create_record_optional_fields(
+        app_token,
+        review_history_tid,
+        fields,
+        optional_keys=["任务编号", "工作流路由", "前次评审动作", "需补数事项", "关联记录ID"],
+    )
+    return {"record_id": new_record_id, "round": round_no, "fields": fields}
+
+
+async def _write_delivery_archive_record(
+    app_token: str,
+    archive_tid: str | None,
+    task_title: str,
+    task_number: str,
+    task_fields: dict,
+    delivery_snapshot: dict,
+    ceo_result: AgentResult,
+    route: str,
+    record_id: str = "",
+) -> dict | None:
+    if not archive_tid:
+        return None
+    try:
+        safe_title = bitable_ops.quote_filter_value(task_title)
+        existing_rows = await bitable_ops.list_records(
+            app_token,
+            archive_tid,
+            filter_expr=f"CurrentValue.[任务标题]={safe_title}",
+            max_records=100,
+        )
+    except Exception as exc:
+        logger.warning("delivery archive lookup failed task=%s: %s", task_title, exc)
+        existing_rows = []
+    version_no = len(existing_rows) + 1
+    version = f"v{version_no}"
+    archive_status = _derive_archive_status(route)
+    fields = {
+        "归档标题": f"{task_title} · {version}",
+        "任务标题": task_title,
+        "任务编号": task_number,
+        "汇报版本号": version,
+        "工作流路由": route,
+        "归档状态": archive_status,
+        "最新评审动作": str(delivery_snapshot.get("最新评审动作") or "").strip(),
+        "一句话结论": truncate_with_marker(
+            _section_excerpt_by_keywords(ceo_result, ("核心结论", "管理摘要", "一段话"), 240)
+            or str(delivery_snapshot.get("最新管理摘要") or ""),
+            500,
+            "\n...[已截断]",
+        ),
+        "管理摘要": truncate_with_marker(str(delivery_snapshot.get("最新管理摘要") or ""), 1500, "\n...[已截断]"),
+        "首要动作": truncate_with_marker(
+            _section_excerpt_by_keywords(ceo_result, ("首要动作",), 240)
+            or (ceo_result.action_items[0] if ceo_result.action_items else ""),
+            500,
+            "\n...[已截断]",
+        ),
+        "汇报就绪度": float(delivery_snapshot.get("汇报就绪度") or 0),
+        "工作流消息包": truncate_with_marker(str(delivery_snapshot.get("工作流消息包") or ""), 1500, "\n...[已截断]"),
+        "汇报对象": str(task_fields.get("汇报对象") or task_fields.get("目标对象") or "").strip(),
+        "执行负责人": str(task_fields.get("执行负责人") or "").strip(),
+        "复核负责人": str(task_fields.get("复核负责人") or "").strip(),
+        "关联记录ID": record_id,
+    }
+    archive_record_id = await bitable_ops.create_record_optional_fields(
+        app_token,
+        archive_tid,
+        fields,
+        optional_keys=[
+            "任务编号",
+            "汇报版本号",
+            "工作流路由",
+            "归档状态",
+            "最新评审动作",
+            "一句话结论",
+            "首要动作",
+            "汇报对象",
+            "执行负责人",
+            "复核负责人",
+            "关联记录ID",
+        ],
+    )
+    return {
+        "record_id": archive_record_id,
+        "version": version,
+        "archive_status": archive_status,
+        "fields": fields,
+    }
+
+
 async def _send_completion_message(
     app_token: str,
     task_tid: str,
     rid: str,
     task_title: str,
     ceo_result: AgentResult,
+    action_tid: str | None = None,
+    automation_log_tid: str | None = None,
+    route: str = "",
 ) -> None:
     """v8.6.19：任务完成后发飞书富文本卡片，含跳转按钮 + 健康度颜色 + 机会/风险字段。
 
@@ -333,10 +980,77 @@ async def _send_completion_message(
             action_url=url,
             fields=fields,
         )
+        await _write_action_record(
+            app_token,
+            action_tid,
+            task_title,
+            "发送汇报",
+            "已完成",
+            route=route,
+            content=summary,
+            result_text=f"已发送飞书卡片消息，跳转 {url}",
+            record_id=rid,
+        )
+        await _write_automation_log(
+            app_token,
+            automation_log_tid,
+            task_title,
+            "飞书消息通知",
+            "已完成",
+            route=route,
+            trigger="任务完成",
+            summary="已发送飞书卡片消息",
+            detail=url,
+            record_id=rid,
+        )
         logger.info("Feishu card sent for task [%s] url=%s", task_title, url)
     except ValueError:
+        await _write_action_record(
+            app_token,
+            action_tid,
+            task_title,
+            "发送汇报",
+            "已跳过",
+            route=route,
+            content="未配置飞书群 ID，跳过消息发送",
+            record_id=rid,
+        )
+        await _write_automation_log(
+            app_token,
+            automation_log_tid,
+            task_title,
+            "飞书消息通知",
+            "已跳过",
+            route=route,
+            trigger="任务完成",
+            summary="未配置飞书群 ID，跳过发送",
+            record_id=rid,
+        )
         logger.debug("feishu_chat_id not configured, skipping notification for task [%s]", task_title)
     except Exception as exc:
+        await _write_action_record(
+            app_token,
+            action_tid,
+            task_title,
+            "发送汇报",
+            "执行失败",
+            route=route,
+            content="飞书卡片消息发送失败",
+            result_text=str(exc),
+            record_id=rid,
+        )
+        await _write_automation_log(
+            app_token,
+            automation_log_tid,
+            task_title,
+            "飞书消息通知",
+            "执行失败",
+            route=route,
+            trigger="任务完成",
+            summary="飞书卡片消息发送失败",
+            detail=str(exc),
+            record_id=rid,
+        )
         logger.warning("Feishu notification failed for task [%s]: %s", task_title, exc)
 
 
@@ -345,7 +1059,11 @@ async def _create_followup_tasks(
     task_tid: str,
     task_title: str,
     ceo_result: AgentResult,
+    template_tid: str | None = None,
     parent_task_number: str | None = None,
+    action_tid: str | None = None,
+    automation_log_tid: str | None = None,
+    route: str = "",
 ) -> None:
     """将 CEO 助理行动项转化为新的「待分析」任务，实现业务闭环（再流转）。
 
@@ -358,46 +1076,150 @@ async def _create_followup_tasks(
     if task_title.startswith("[跟进]"):
         return
 
-    # v8.6.4 修复：CEO 助理把"管理摘要"文本以 "[摘要] ..." 形式插入 action_items[0]
-    # （便于飞书消息推送）。如果直接拿来当跟进任务标题，会得到 "[跟进] [摘要] 当前公司面临..."
-    # 这种语义混乱的二级任务 — 用户在表里看到一堆"[跟进] [摘要]"开头的废任务。
-    # 这里显式过滤掉 [摘要] 前缀的元素。
-    action_items = [
-        item.strip() for item in (ceo_result.action_items or [])
-        if item.strip() and not item.strip().startswith("[摘要]")
-    ][:3]
-    if not action_items:
+    def _classify_followup(summary: str, explicit_type: str = "") -> str:
+        t = (explicit_type or "").strip().lower()
+        if t in {"need_data", "ceo_decision", "execute_now", "delegated"}:
+            return t
+        s = summary.lower()
+        if any(key in s for key in ["补数", "补齐", "核验", "确认数据", "拉取数据", "验证口径"]):
+            return "need_data"
+        if any(key in s for key in ["拍板", "审批", "预算", "定价", "资源投入", "是否批准"]):
+            return "ceo_decision"
+        if any(key in s for key in ["本周启动", "立即执行", "发布", "上线", "通知", "推进"]):
+            return "execute_now"
+        return "delegated"
+
+    followups: list[tuple[str, str]] = []
+    if ceo_result.decision_items:
+        for item in ceo_result.decision_items:
+            summary = str(item.get("summary") or "").strip()
+            if not summary:
+                continue
+            followups.append((summary, _classify_followup(summary, str(item.get("type") or ""))))
+    else:
+        # v8.6.4 修复：CEO 助理把"管理摘要"文本以 "[摘要] ..." 形式插入 action_items[0]
+        # （便于飞书消息推送）。如果直接拿来当跟进任务标题，会得到 "[跟进] [摘要] 当前公司面临..."
+        # 这种语义混乱的二级任务 — 用户在表里看到一堆"[跟进] [摘要]"开头的废任务。
+        # 这里显式过滤掉 [摘要] 前缀的元素。
+        for item in ceo_result.action_items or []:
+            summary = item.strip()
+            if not summary or summary.startswith("[摘要]"):
+                continue
+            followups.append((summary, _classify_followup(summary)))
+
+    followups = followups[:3]
+    if not followups:
         logger.debug("No action items for follow-up from task [%s]", task_title)
         return
+
+    execution_items = [summary for summary, kind in followups if kind in {"execute_now", "delegated"}]
+    analysis_items = [
+        (summary, kind) for summary, kind in followups
+        if kind in {"need_data", "ceo_decision", "delegated"}
+    ]
 
     # 1. 写入飞书任务 API（待办事项），便于在飞书客户端直接追踪
     try:
         from app.feishu.task import batch_create_tasks
-        await batch_create_tasks(action_items)
-        logger.info("Created %d Feishu tasks for [%s]", len(action_items), task_title)
+        if execution_items:
+            await batch_create_tasks(execution_items)
+            await _write_action_record(
+                app_token,
+                action_tid,
+                task_title,
+                "创建执行任务",
+                "已完成",
+                route=route,
+                content="\n".join(f"- {item}" for item in execution_items),
+                result_text=f"已创建 {len(execution_items)} 条飞书任务",
+            )
+            await _write_automation_log(
+                app_token,
+                automation_log_tid,
+                task_title,
+                "执行任务创建",
+                "已完成",
+                route=route,
+                trigger="工作流执行包",
+                summary=f"已创建 {len(execution_items)} 条飞书任务",
+                detail="\n".join(execution_items),
+            )
+            logger.info("Created %d Feishu tasks for [%s]", len(execution_items), task_title)
     except Exception as exc:
+        await _write_action_record(
+            app_token,
+            action_tid,
+            task_title,
+            "创建执行任务",
+            "执行失败",
+            route=route,
+            content="\n".join(f"- {item}" for item in execution_items),
+            result_text=str(exc),
+        )
+        await _write_automation_log(
+            app_token,
+            automation_log_tid,
+            task_title,
+            "执行任务创建",
+            "执行失败",
+            route=route,
+            trigger="工作流执行包",
+            summary="创建飞书任务失败",
+            detail=str(exc),
+        )
         logger.warning("Feishu task API failed for [%s]: %s", task_title, exc)
 
-    # 2. 在「分析任务」表中生成后续待分析记录（再流转闭环）
+    # 2. 在「分析任务」表中只为需要继续分析/补数/决策的事项生成后续记录
     from app.bitable_workflow import schema as _schema
-    for item in action_items:
+    for item, kind in analysis_items:
+        purpose = "补数核验" if kind == "need_data" else "管理决策"
         record_fields: dict = {
             "任务标题": f"[跟进] {truncate_with_marker(item, 50, '...[截断]')}",
             "分析维度": "综合分析",
             "优先级": "P2 中",
+            "输出目的": purpose,
             "状态": Status.PENDING,
             "进度": 0,
-            "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成",
+            "背景说明": f"由任务「{task_title}」的CEO助理决策建议自动生成（类型：{kind}）",
             # v8.6.20：跟进任务也填综合评分（由 priority_score 算出）
             "综合评分": _schema.priority_score("P2 中"),
         }
+        template_defaults = await _resolve_template_defaults(
+            app_token,
+            template_tid,
+            purpose=purpose,
+        )
+        if template_defaults.get("template_name"):
+            record_fields["套用模板"] = str(template_defaults["template_name"])
+        if template_defaults.get("report_audience"):
+            record_fields["汇报对象"] = str(template_defaults["report_audience"])
+        if template_defaults.get("execution_owner"):
+            record_fields["执行负责人"] = str(template_defaults["execution_owner"])
+        if template_defaults.get("review_owner"):
+            record_fields["复核负责人"] = str(template_defaults["review_owner"])
+        if int(template_defaults.get("review_sla_hours") or 0) > 0:
+            record_fields["复核SLA小时"] = int(template_defaults["review_sla_hours"])
         # v8.6.7：跟进任务自动指向原任务，构建依赖图
         if parent_task_number:
             record_fields["依赖任务编号"] = str(parent_task_number)
         try:
             # v8.6.20：综合评分老 base 没有 → optional fallback
-            await bitable_ops.create_record_optional_fields(
-                app_token, task_tid, record_fields, optional_keys=["综合评分"],
+            new_record_id = await bitable_ops.create_record_optional_fields(
+                app_token,
+                task_tid,
+                record_fields,
+                optional_keys=["综合评分", "套用模板", "汇报对象", "执行负责人", "复核负责人", "复核SLA小时"],
+            )
+            await _write_action_record(
+                app_token,
+                action_tid,
+                task_title,
+                "自动跟进任务",
+                "已完成",
+                route=route,
+                content=item,
+                result_text=f"已创建后续分析任务：{record_fields['任务标题']}",
+                record_id=new_record_id,
             )
             logger.info(
                 "Follow-up task created from [%s]: %s",
@@ -405,7 +1227,171 @@ async def _create_followup_tasks(
                 truncate_with_marker(item, 50, "...[截断]"),
             )
         except Exception as exc:
+            await _write_action_record(
+                app_token,
+                action_tid,
+                task_title,
+                "自动跟进任务",
+                "执行失败",
+                route=route,
+                content=item,
+                result_text=str(exc),
+            )
             logger.warning("Failed to create follow-up task from [%s]: %s", task_title, exc)
+
+
+async def _create_review_recheck_task(
+    app_token: str,
+    task_tid: str,
+    task_title: str,
+    review_fields: dict | None,
+    template_tid: str | None = None,
+    parent_task_number: str | None = None,
+    action_tid: str | None = None,
+    automation_log_tid: str | None = None,
+    route: str = "",
+) -> None:
+    """当 reviewer 判定需要补数/重跑时，生成单条复核任务。"""
+    if not review_fields:
+        return
+    recommend = str(review_fields.get("推荐动作") or "").strip()
+    if recommend not in {"补数后复核", "建议重跑"}:
+        return
+    need_data = str(review_fields.get("需补数事项") or "").strip()
+    summary = (
+        f"根据自动评审结果对任务《{task_title}》进行"
+        + ("补数复核" if recommend == "补数后复核" else "重新分析")
+    )
+    recheck_title = f"[复核] {truncate_with_marker(task_title, 40, '...[截断]')}"
+    try:
+        safe_title = bitable_ops.quote_filter_value(recheck_title)
+        existing_rows = await bitable_ops.list_records(
+            app_token,
+            task_tid,
+            filter_expr=f"CurrentValue.[任务标题]={safe_title}",
+            max_records=20,
+        )
+        for row in existing_rows:
+            fields = row.get("fields") or {}
+            if fields.get("状态") in {Status.PENDING, Status.ANALYZING}:
+                logger.info(
+                    "Skip duplicate review recheck task for [%s], existing record=%s status=%s",
+                    task_title,
+                    row.get("record_id"),
+                    fields.get("状态"),
+                )
+                await _write_action_record(
+                    app_token,
+                    action_tid,
+                    task_title,
+                    "创建复核任务",
+                    "已跳过",
+                    route=route,
+                    content=f"已存在未关闭复核任务：{recheck_title}",
+                    record_id=row.get("record_id") or "",
+                )
+                await _write_automation_log(
+                    app_token,
+                    automation_log_tid,
+                    task_title,
+                    "复核任务创建",
+                    "已跳过",
+                    route=route,
+                    trigger="评审推荐动作",
+                    summary=f"已存在未关闭复核任务：{recheck_title}",
+                    record_id=row.get("record_id") or "",
+                )
+                return
+    except Exception as exc:
+        logger.warning("Review recheck dedupe lookup failed for [%s]: %s", task_title, exc)
+    background = truncate_with_marker(
+        summary + (f"\n\n重点补充：\n{need_data}" if need_data else ""),
+        1800,
+        "\n...[已截断]",
+    )
+    from app.bitable_workflow import schema as _schema
+    fields = {
+        "任务标题": recheck_title,
+        "分析维度": "综合分析",
+        "优先级": "P1 高" if recommend == "补数后复核" else "P0 紧急",
+        "输出目的": "补数核验" if recommend == "补数后复核" else "管理决策",
+        "状态": Status.PENDING,
+        "进度": 0,
+        "背景说明": background,
+        "成功标准": "补齐关键缺失证据并给出可直接采用的结论",
+        "综合评分": _schema.priority_score("P1 高" if recommend == "补数后复核" else "P0 紧急"),
+    }
+    template_defaults = await _resolve_template_defaults(
+        app_token,
+        template_tid,
+        purpose=str(fields.get("输出目的") or ""),
+    )
+    if template_defaults.get("template_name"):
+        fields["套用模板"] = str(template_defaults["template_name"])
+    if template_defaults.get("report_audience"):
+        fields["汇报对象"] = str(template_defaults["report_audience"])
+    if template_defaults.get("execution_owner"):
+        fields["执行负责人"] = str(template_defaults["execution_owner"])
+    if template_defaults.get("review_owner"):
+        fields["复核负责人"] = str(template_defaults["review_owner"])
+    if int(template_defaults.get("review_sla_hours") or 0) > 0:
+        fields["复核SLA小时"] = int(template_defaults["review_sla_hours"])
+    if parent_task_number:
+        fields["依赖任务编号"] = str(parent_task_number)
+    try:
+        new_record_id = await bitable_ops.create_record_optional_fields(
+            app_token,
+            task_tid,
+            fields,
+            optional_keys=["输出目的", "成功标准", "综合评分", "套用模板", "汇报对象", "执行负责人", "复核负责人", "复核SLA小时"],
+        )
+        await _write_action_record(
+            app_token,
+            action_tid,
+            task_title,
+            "创建复核任务",
+            "已完成",
+            route=route,
+            content=background,
+            result_text=f"已创建复核任务：{fields['任务标题']}",
+            record_id=new_record_id,
+        )
+        await _write_automation_log(
+            app_token,
+            automation_log_tid,
+            task_title,
+            "复核任务创建",
+            "已完成",
+            route=route,
+            trigger="评审推荐动作",
+            summary=f"已创建复核任务：{fields['任务标题']}",
+            detail=background,
+            record_id=new_record_id,
+        )
+        logger.info("Review recheck task created for [%s] recommend=%s", task_title, recommend)
+    except Exception as exc:
+        await _write_action_record(
+            app_token,
+            action_tid,
+            task_title,
+            "创建复核任务",
+            "执行失败",
+            route=route,
+            content=background,
+            result_text=str(exc),
+        )
+        await _write_automation_log(
+            app_token,
+            automation_log_tid,
+            task_title,
+            "复核任务创建",
+            "执行失败",
+            route=route,
+            trigger="评审推荐动作",
+            summary="创建复核任务失败",
+            detail=str(exc),
+        )
+        logger.warning("Failed to create review recheck task for [%s]: %s", task_title, exc)
 
 
 async def run_one_cycle(app_token: str, table_ids: dict) -> int:
@@ -473,6 +1459,14 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
     output_tid = table_ids.get("output")
     report_tid = table_ids["report"]
     performance_tid = table_ids.get("performance")
+    datasource_tid = table_ids.get("datasource")
+    evidence_tid = table_ids.get("evidence")
+    review_tid = table_ids.get("review")
+    action_tid = table_ids.get("action")
+    review_history_tid = table_ids.get("review_history")
+    archive_tid = table_ids.get("archive")
+    automation_log_tid = table_ids.get("automation_log")
+    template_tid = table_ids.get("template")
     processed = 0
 
     # Phase 0: 恢复 ANALYZING 悬挂记录（上次崩溃遗留）
@@ -631,6 +1625,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                 continue
             # 用 claim 回读到的完整 fields 替换 search 拿到的字段子集
             fields = claimed_record.get("fields") or fields
+            fields = await _hydrate_task_dataset_reference(app_token, datasource_tid, fields)
 
             await bitable_ops.update_record(
                 app_token, task_tid, rid,
@@ -677,6 +1672,14 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                 if output_written != len(all_results):
                     raise RuntimeError(f"岗位分析写入不完整: {output_written}/{len(all_results)}")
 
+            evidence_written = 0
+            if evidence_tid:
+                evidence_written = await write_evidence_records(
+                    app_token, evidence_tid, task_title, all_results + [ceo_result]
+                )
+                if evidence_written <= 0:
+                    logger.warning("No evidence rows were written for task=%s", task_title)
+
             # 写入 CEO 综合报告（含关联字段；核心交付物，失败直接抛出）
             await write_ceo_report(
                 app_token,
@@ -688,9 +1691,79 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             )
 
             # 更新员工效能（含 CEO 助理本身）
+            review_payload: dict | None = None
             if performance_tid:
                 await update_performance(
                     app_token, performance_tid, all_results + [ceo_result]
+                )
+            if review_tid:
+                review_payload = await write_review_record(
+                    app_token, review_tid, task_title, all_results, ceo_result,
+                )
+
+            delivery_snapshot = _build_task_delivery_snapshot(
+                task_title,
+                fields,
+                all_results,
+                ceo_result,
+                (review_payload or {}).get("fields"),
+                evidence_written,
+            )
+            delivery_snapshot = await _apply_template_config(
+                app_token,
+                template_tid,
+                task_title,
+                fields,
+                (review_payload or {}).get("fields"),
+                ceo_result,
+                delivery_snapshot,
+            )
+            workflow_route = str(delivery_snapshot.get("工作流路由") or "").strip()
+
+            task_number = _extract_task_number(fields.get("任务编号"))
+            review_history_payload = await _write_review_history_record(
+                app_token,
+                review_history_tid,
+                task_title,
+                task_number,
+                (review_payload or {}).get("fields"),
+                route=workflow_route,
+                record_id=rid,
+            )
+            if review_history_payload:
+                await _write_automation_log(
+                    app_token,
+                    automation_log_tid,
+                    task_title,
+                    "复核历史沉淀",
+                    "已完成",
+                    route=workflow_route,
+                    trigger="评审结果",
+                    summary=f"已写入第 {review_history_payload['round']} 轮复核历史",
+                    record_id=review_history_payload["record_id"],
+                )
+            archive_payload = await _write_delivery_archive_record(
+                app_token,
+                archive_tid,
+                task_title,
+                task_number,
+                fields,
+                delivery_snapshot,
+                ceo_result,
+                workflow_route,
+                record_id=rid,
+            )
+            if archive_payload:
+                await _write_automation_log(
+                    app_token,
+                    automation_log_tid,
+                    task_title,
+                    "交付归档沉淀",
+                    "已完成",
+                    route=workflow_route,
+                    trigger="任务完成",
+                    summary=f"已写入交付归档版本 {archive_payload['version']}",
+                    record_id=archive_payload["record_id"],
                 )
 
             try:
@@ -717,11 +1790,68 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     "进度": 1.0,
                     "完成时间": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "完成日期": int(datetime.now(tz=timezone.utc).timestamp() * 1000),
+                    "汇报版本号": (archive_payload or {}).get("version") or "v1",
+                    "归档状态": (archive_payload or {}).get("archive_status") or _derive_archive_status(workflow_route),
+                    **delivery_snapshot,
                 },
-                optional_keys=["完成日期"],
+                optional_keys=[
+                    "完成日期",
+                    "最新评审动作",
+                    "最新评审摘要",
+                    "最新管理摘要",
+                    "汇报就绪度",
+                    "证据条数",
+                    "高置信证据数",
+                    "硬证据数",
+                    "待验证证据数",
+                    "进入CEO汇总证据数",
+                    "决策事项数",
+                    "需补数条数",
+                    "工作流路由",
+                    "套用模板",
+                    "工作流消息包",
+                    "工作流执行包",
+                    "待发送汇报",
+                    "待创建执行任务",
+                    "待安排复核",
+                    "建议复核时间",
+                    "汇报对象",
+                    "执行负责人",
+                    "执行截止时间",
+                    "复核负责人",
+                    "复核SLA小时",
+                    "汇报版本号",
+                    "归档状态",
+                ],
             )
             processed += 1
             logger.info("Task [%s] completed by 7-agent pipeline", task_title)
+
+            await _write_action_record(
+                app_token,
+                action_tid,
+                task_title,
+                "工作流记录",
+                "已完成",
+                route=workflow_route,
+                content=truncate_with_marker(
+                    "\n".join(
+                        [
+                            f"工作流路由：{workflow_route or '未生成'}",
+                            f"证据条数：{delivery_snapshot.get('证据条数') or 0}",
+                            f"高置信证据数：{delivery_snapshot.get('高置信证据数') or 0}",
+                            f"硬证据数：{delivery_snapshot.get('硬证据数') or 0}",
+                            f"待验证证据数：{delivery_snapshot.get('待验证证据数') or 0}",
+                            f"决策事项数：{delivery_snapshot.get('决策事项数') or 0}",
+                            f"需补数条数：{delivery_snapshot.get('需补数条数') or 0}",
+                        ]
+                    ),
+                    1800,
+                    "\n...[已截断]",
+                ),
+                result_text=delivery_snapshot.get("工作流消息包") or "",
+                record_id=rid,
+            )
 
             # 任务成功完成 → 清除 Redis 缓存 + 广播 SSE task.done
             try:
@@ -735,23 +1865,37 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             )
 
             # 飞书消息通知（v8.6.19 升级：含跳转 url + 健康度颜色 + 机会/风险字段）
-            await _send_completion_message(app_token, task_tid, rid, task_title, ceo_result)
+            await _send_completion_message(
+                app_token,
+                task_tid,
+                rid,
+                task_title,
+                ceo_result,
+                action_tid=action_tid,
+                automation_log_tid=automation_log_tid,
+                route=workflow_route,
+            )
 
             # 反馈再流转：CEO 行动项 → 新的待分析任务（自动 set 依赖任务编号 = 原任务编号）
-            parent_num_raw = fields.get("任务编号")
-            parent_num: str | None = None
-            if isinstance(parent_num_raw, str):
-                parent_num = parent_num_raw
-            elif isinstance(parent_num_raw, dict):
-                v = parent_num_raw.get("value")
-                if isinstance(v, list) and v:
-                    first = v[0]
-                    parent_num = (first.get("text") if isinstance(first, dict) else str(first)) or None
-            elif isinstance(parent_num_raw, (int, float)):
-                parent_num = str(int(parent_num_raw))
+            parent_num = task_number or None
             await _create_followup_tasks(
                 app_token, task_tid, task_title, ceo_result,
+                template_tid=template_tid,
                 parent_task_number=parent_num,
+                action_tid=action_tid,
+                automation_log_tid=automation_log_tid,
+                route=workflow_route,
+            )
+            await _create_review_recheck_task(
+                app_token,
+                task_tid,
+                task_title,
+                (review_payload or {}).get("fields"),
+                template_tid=template_tid,
+                parent_task_number=parent_num,
+                action_tid=action_tid,
+                automation_log_tid=automation_log_tid,
+                route=workflow_route,
             )
 
         except Exception as exc:

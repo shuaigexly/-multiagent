@@ -165,7 +165,143 @@ def _build_task_description(fields: dict) -> str:
     desc = f"任务：{title}\n分析维度：{dimension}"
     if background:
         desc += f"\n背景说明：{background}"
+    target = (fields.get("目标对象") or "").strip()
+    if target:
+        desc += f"\n目标对象：{target}"
+    purpose = (fields.get("输出目的") or "").strip()
+    if purpose:
+        desc += f"\n输出目的：{purpose}"
+    success = (fields.get("成功标准") or "").strip()
+    if success:
+        desc += f"\n成功标准：{success}"
+    constraints = (fields.get("约束条件") or "").strip()
+    if constraints:
+        desc += f"\n约束条件：{constraints}"
+    stage = (fields.get("业务阶段") or "").strip()
+    if stage:
+        desc += f"\n业务阶段：{stage}"
+    dataset = (fields.get("引用数据集") or "").strip()
+    if dataset:
+        desc += f"\n引用数据集：{dataset}"
     return desc
+
+
+def _normalize_source_type(value: str) -> str:
+    s = (value or "").strip().lower()
+    return s if s in {"real_data", "benchmark", "upstream", "judgment"} else "judgment"
+
+
+def _normalize_usage(value: str) -> str:
+    s = (value or "").strip().lower()
+    return s if s in {"insight", "opportunity", "risk", "decision"} else "insight"
+
+
+def _normalize_confidence_text(value: str) -> str:
+    s = (value or "").strip().lower()
+    if s in {"high", "medium", "low"}:
+        return s
+    return "medium"
+
+
+def _derive_evidence_grade(item: dict) -> str:
+    source_type = _normalize_source_type(str(item.get("source_type", "")))
+    confidence = _normalize_confidence_text(str(item.get("confidence", "")))
+    cite = str(item.get("cite", "") or "").strip()
+    if source_type == "real_data" and confidence in {"high", "medium"}:
+        return "硬证据"
+    if source_type in {"benchmark", "upstream"} and confidence == "high" and cite:
+        return "硬证据"
+    if confidence == "low":
+        return "待验证"
+    if source_type == "judgment" and not cite:
+        return "待验证"
+    return "推断"
+
+
+def _first_nonempty_paragraph(text: str, limit: int = 220) -> str:
+    if not text:
+        return ""
+    for chunk in text.split("\n\n"):
+        line = chunk.strip()
+        if line:
+            return truncate_with_marker(line, limit, "...")
+    return truncate_with_marker(text.strip(), limit, "...")
+
+
+def _build_exec_brief(ceo_result: AgentResult, decision_buckets: dict[str, list[str]]) -> dict[str, str]:
+    one_liner = (
+        _first_nonempty_paragraph(_section_excerpt(ceo_result, "核心结论"), 160)
+        or _first_nonempty_paragraph(_section_excerpt(ceo_result, "管理摘要"), 160)
+        or truncate_with_marker(ceo_result.raw_output or "", 160, "...")
+    )
+    management_summary = (
+        _section_excerpt(ceo_result, "管理摘要")
+        or _section_excerpt(ceo_result, "一段话")
+        or _section_excerpt(ceo_result, "核心结论")
+    )
+    top_action = (
+        decision_buckets["execute_now"][:1]
+        or decision_buckets["ceo_decision"][:1]
+        or decision_buckets["delegated"][:1]
+    )
+    report_risk = (
+        _first_nonempty_paragraph(_section_excerpt(ceo_result, "重要风险"), 220)
+        or _first_nonempty_paragraph(_section_excerpt(ceo_result, "需补数"), 220)
+    )
+    needs = decision_buckets["need_data"][:2]
+    brief = (
+        f"一句话结论：{one_liner or '待补充'}\n\n"
+        f"管理摘要：{truncate_with_marker(management_summary or '待补充', 500, '...[截断]')}\n\n"
+        f"首要动作：{top_action[0] if top_action else '待补充'}\n\n"
+        f"汇报风险：{report_risk or '当前无明确汇报阻塞'}\n\n"
+        f"需补数：{'; '.join(needs) if needs else '无'}"
+    )
+    return {
+        "one_liner": one_liner,
+        "top_action": top_action[0] if top_action else "",
+        "report_risk": report_risk,
+        "brief": truncate_with_marker(brief, 1800, "\n...[已截断]"),
+    }
+
+
+def _evidence_summary(result: AgentResult, limit: int = 3) -> str:
+    evidence = result.structured_evidence[:limit]
+    if evidence:
+        lines = []
+        for item in evidence:
+            claim = truncate_with_marker(item.get("claim", ""), 80, "...[截断]")
+            source_type = _normalize_source_type(str(item.get("source_type", "")))
+            lines.append(f"- [{source_type}] {claim}")
+        return "\n".join(lines)
+    if result.sections:
+        section = result.sections[0]
+        return f"- [judgment] {truncate_with_marker(section.title + '：' + section.content, 180, '...[截断]')}"
+    return ""
+
+
+def _derive_decision_buckets(ceo_result: AgentResult) -> dict[str, list[str]]:
+    buckets = {
+        "ceo_decision": [],
+        "delegated": [],
+        "need_data": [],
+        "execute_now": [],
+    }
+    for item in ceo_result.decision_items:
+        summary = str(item.get("summary") or "").strip()
+        if not summary:
+            continue
+        kind = str(item.get("type") or "").strip().lower()
+        if kind not in buckets:
+            kind = "delegated"
+        buckets[kind].append(summary)
+    return buckets
+
+
+def _section_excerpt(result: AgentResult, keyword: str, fallback: str = "") -> str:
+    for section in result.sections:
+        if keyword in section.title:
+            return truncate_with_marker(section.content or "", 1000, "\n...[已截断]")
+    return fallback
 
 
 def _error_result(agent_id: str, agent_name: str, exc: Exception) -> AgentResult:
@@ -715,6 +851,7 @@ async def write_agent_outputs(
             # v8.6.20：健康度数值由 health_score() 算（替代飞书公式不生效）
             "健康度数值": _schema.health_score(health_label),
             "分析摘要": summary,
+            "证据摘要": truncate_with_marker(_evidence_summary(result), 1000, "\n...[已截断]"),
             "行动项": truncate_with_marker(action_text, 2000, "\n...[已截断]"),
             "行动项数": len(result.action_items),
             "置信度": _estimate_confidence(result),
@@ -732,7 +869,7 @@ async def write_agent_outputs(
             # v8.6.20：「健康度数值」是新加 Number 字段，老 base 没有 → optional fallback
             await bitable_ops.create_record_optional_fields(
                 app_token, output_table_id, fields,
-                optional_keys=["健康度数值"],
+                optional_keys=["健康度数值", "证据摘要"],
             )
             written += 1
         except Exception as exc:
@@ -754,25 +891,265 @@ async def write_ceo_report(
     CEO 报告是核心交付物；写入失败直接抛出，由调用方决定是否失败整条任务。
     生成时间字段为 CreatedTime 类型，由飞书自动填充。
     """
-    def _find_section(keyword: str) -> str:
-        for s in ceo_result.sections:
-            if keyword in s.title:
-                return truncate_with_marker(s.content or "", 1000, "\n...[已截断]")
-        return ""
-
+    decision_buckets = _derive_decision_buckets(ceo_result)
+    evidence_count = len(ceo_result.structured_evidence)
+    exec_brief = _build_exec_brief(ceo_result, decision_buckets)
     record_fields: dict = {
         "报告标题": task_title,
         "综合健康度": _extract_health(ceo_result),
-        "核心结论": _find_section("核心结论"),
-        "重要机会": _find_section("重要机会"),
-        "重要风险": _find_section("重要风险"),
-        "CEO决策事项": _find_section("CEO 需决策") or _find_section("决策"),
-        "管理摘要": _find_section("管理摘要") or _find_section("一段话"),
+        "一句话结论": exec_brief["one_liner"],
+        "核心结论": _section_excerpt(ceo_result, "核心结论"),
+        "重要机会": _section_excerpt(ceo_result, "重要机会"),
+        "重要风险": _section_excerpt(ceo_result, "重要风险"),
+        "CEO决策事项": _section_excerpt(ceo_result, "CEO 需拍板") or _section_excerpt(ceo_result, "决策"),
+        "管理摘要": _section_excerpt(ceo_result, "管理摘要") or _section_excerpt(ceo_result, "一段话"),
+        "首要动作": exec_brief["top_action"],
+        "汇报风险": exec_brief["report_risk"],
+        "高管一页纸": exec_brief["brief"],
         "参与岗位数": float(participant_count),
         "决策紧急度": _estimate_urgency(ceo_result),
+        "必须拍板事项": truncate_with_marker("\n".join(f"- {x}" for x in decision_buckets["ceo_decision"]), 1500, "\n...[已截断]"),
+        "可授权事项": truncate_with_marker("\n".join(f"- {x}" for x in decision_buckets["delegated"]), 1500, "\n...[已截断]"),
+        "需补数事项": truncate_with_marker("\n".join(f"- {x}" for x in decision_buckets["need_data"]), 1500, "\n...[已截断]"),
+        "立即执行事项": truncate_with_marker("\n".join(f"- {x}" for x in decision_buckets["execute_now"]), 1500, "\n...[已截断]"),
+        "证据充分度": min(5, max(1, evidence_count or 1)),
     }
     # v8.6.1 同上：飞书所有 records 写接口都不支持 LinkedRecord，从源头不写关联字段
-    return await bitable_ops.create_record(app_token, report_table_id, record_fields)
+    return await bitable_ops.create_record_optional_fields(
+        app_token,
+        report_table_id,
+        record_fields,
+        optional_keys=[
+            "一句话结论",
+            "首要动作",
+            "汇报风险",
+            "高管一页纸",
+            "必须拍板事项",
+            "可授权事项",
+            "需补数事项",
+            "立即执行事项",
+            "证据充分度",
+        ],
+    )
+
+
+async def write_evidence_records(
+    app_token: str,
+    evidence_table_id: str,
+    task_title: str,
+    results: list[AgentResult],
+) -> int:
+    """将各岗结构化证据写入「证据链」表。
+
+    优先使用 metadata.evidence；若缺失，则回退为首段分析的 judgement 摘要，避免整张表为空。
+    """
+    written = 0
+    for result in results:
+        evidence_items = result.structured_evidence or [{
+            "claim": result.sections[0].title if result.sections else f"{result.agent_name} 分析结论",
+            "source_type": "judgment",
+            "evidence": result.sections[0].content if result.sections else truncate_with_marker(result.raw_output, 300),
+            "confidence": "medium",
+            "usage": "insight",
+            "cite": "岗位分析正文",
+        }]
+        role_label = _normalize_singleselect(
+            _role_with_emoji(result.agent_name), _AGENT_ROLE_LABELS_ALLOWED, _role_with_emoji(result.agent_name),
+        )
+        for idx, item in enumerate(evidence_items[:8], 1):
+            source_type = _normalize_source_type(str(item.get("source_type", "")))
+            usage = _normalize_usage(str(item.get("usage", "")))
+            confidence = _normalize_confidence_text(str(item.get("confidence", "")))
+            fields = {
+                "证据标题": f"{task_title} · {result.agent_name} · 证据{idx}",
+                "任务标题": task_title,
+                "岗位角色": role_label,
+                "结论摘要": truncate_with_marker(str(item.get("claim", "")), 500, "...[截断]"),
+                "证据类型": source_type,
+                "证据用途": usage,
+                "证据内容": truncate_with_marker(str(item.get("evidence", "")), 2000, "\n...[已截断]"),
+                "引用来源": truncate_with_marker(str(item.get("cite", "")), 500, "...[截断]"),
+                "证据置信度": confidence,
+                "证据等级": _derive_evidence_grade({
+                    "source_type": source_type,
+                    "usage": usage,
+                    "confidence": confidence,
+                    "cite": item.get("cite", ""),
+                }),
+                "进入CEO汇总": usage in {"opportunity", "risk", "decision"},
+            }
+            try:
+                await bitable_ops.create_record_optional_fields(
+                    app_token,
+                    evidence_table_id,
+                    fields,
+                    optional_keys=["证据等级"],
+                )
+                written += 1
+            except Exception as exc:
+                logger.warning("Evidence write failed for %s #%s: %s", result.agent_id, idx, exc)
+    return written
+
+
+def build_auto_review(
+    task_title: str,
+    all_results: list[AgentResult],
+    ceo_result: AgentResult,
+) -> dict:
+    total_evidence = sum(len(r.structured_evidence or []) for r in all_results + [ceo_result])
+    hard_evidence_count = sum(
+        1
+        for r in all_results + [ceo_result]
+        for item in (r.structured_evidence or [])
+        if _derive_evidence_grade(item) == "硬证据"
+    )
+    pending_verify_count = sum(
+        1
+        for r in all_results + [ceo_result]
+        for item in (r.structured_evidence or [])
+        if _derive_evidence_grade(item) == "待验证"
+    )
+    real_data_count = sum(
+        1
+        for r in all_results + [ceo_result]
+        for item in (r.structured_evidence or [])
+        if _normalize_source_type(str(item.get("source_type", ""))) == "real_data"
+    )
+    truth_score = min(5, max(1, hard_evidence_count + (1 if real_data_count else 0) or (2 if total_evidence else 1)))
+    if pending_verify_count >= max(2, hard_evidence_count + 1):
+        truth_score = max(1, truth_score - 1)
+    decision_count = len([x for x in ceo_result.decision_items if str(x.get("type") or "").strip()])
+    decision_score = min(5, max(1, decision_count or (2 if ceo_result.sections else 1)))
+    exec_score = min(5, max(1, len(ceo_result.structured_actions) or len(ceo_result.action_items) or 1))
+    closure_score = min(5, max(1, len([x for x in ceo_result.decision_items if str(x.get("type") or "") in {"need_data", "execute_now", "delegated", "ceo_decision"}]) or 1))
+    need_data = [
+        str(x.get("summary") or "").strip()
+        for x in ceo_result.decision_items
+        if str(x.get("type") or "").strip() == "need_data" and str(x.get("summary") or "").strip()
+    ]
+    avg_score = (truth_score + decision_score + exec_score + closure_score) / 4
+    if avg_score >= 4.0:
+        recommend = "直接采用"
+    elif need_data:
+        recommend = "补数后复核"
+    else:
+        recommend = "建议重跑"
+    review_summary = (
+        f"任务《{task_title}》自动评审：真实性={truth_score}/5，决策性={decision_score}/5，"
+        f"可执行性={exec_score}/5，闭环准备度={closure_score}/5。"
+    )
+    return {
+        "任务标题": task_title,
+        "评审结论": review_summary,
+        "推荐动作": recommend,
+        "真实性": truth_score,
+        "决策性": decision_score,
+        "可执行性": exec_score,
+        "闭环准备度": closure_score,
+        "需补数事项": truncate_with_marker("\n".join(f"- {x}" for x in need_data), 1500, "\n...[已截断]"),
+        "评审摘要": truncate_with_marker(
+            review_summary + (f" 需补数 {len(need_data)} 项。" if need_data else " 当前可直接进入执行/再流转。"),
+            1500,
+            "\n...[已截断]",
+        ),
+    }
+
+
+async def build_review_payload(
+    task_title: str,
+    all_results: list[AgentResult],
+    ceo_result: AgentResult,
+) -> dict:
+    """优先使用 LLM reviewer 评审，失败时回退启发式评分。"""
+    fallback = build_auto_review(task_title, all_results, ceo_result)
+    try:
+        from app.core.llm_client import call_llm
+
+        agent_summaries = []
+        for result in all_results + [ceo_result]:
+            section_head = ""
+            if result.sections:
+                section_head = truncate_with_marker(result.sections[0].content or "", 400, "\n...[已截断]")
+            evidence_head = "; ".join(
+                truncate_with_marker(str(item.get("claim") or ""), 80, "...[截断]")
+                for item in (result.structured_evidence or [])[:3]
+            )
+            agent_summaries.append(
+                f"## {result.agent_name}\n"
+                f"首段摘要：{section_head}\n"
+                f"行动项数：{len(result.action_items)}\n"
+                f"证据数：{len(result.structured_evidence)}\n"
+                f"证据示例：{evidence_head}\n"
+            )
+        reviewer_prompt = (
+            f"你是飞书经营分析工作流的严格评审官。请评估任务《{task_title}》的整套产出质量。\n\n"
+            "请按以下四个维度打分（1-5）：真实性、决策性、可执行性、闭环准备度。\n"
+            "同时给出推荐动作，只能是：直接采用 / 补数后复核 / 建议重跑。\n"
+            "若需要补数，明确列出 1-3 条补数事项。\n\n"
+            "以下是岗位输出摘要：\n"
+            + "\n".join(agent_summaries)
+            + "\n请只输出严格 JSON：\n"
+            "{\n"
+            '  "recommend": "直接采用|补数后复核|建议重跑",\n'
+            '  "truth": 1,\n'
+            '  "decision": 1,\n'
+            '  "execution": 1,\n'
+            '  "closure": 1,\n'
+            '  "summary": "100字以内评审摘要",\n'
+            '  "needs": ["补数项1", "补数项2"]\n'
+            "}\n"
+        )
+        raw = await call_llm(
+            system_prompt="你是严格的经营分析结果评审官，只返回 JSON。",
+            user_prompt=reviewer_prompt,
+            temperature=0,
+            max_tokens=500,
+            tier="fast",
+        )
+        match = re.search(r"```(?:json)?\s*(.*?)```", raw, flags=re.DOTALL | re.IGNORECASE)
+        if match:
+            raw = match.group(1).strip()
+        parsed = _json.loads(raw)
+        recommend = str(parsed.get("recommend") or "").strip()
+        if recommend not in {"直接采用", "补数后复核", "建议重跑"}:
+            recommend = fallback["推荐动作"]
+        needs_raw = parsed.get("needs") or []
+        needs = [str(x).strip() for x in needs_raw if str(x).strip()][:3] if isinstance(needs_raw, list) else []
+        return {
+            "任务标题": task_title,
+            "评审结论": truncate_with_marker(str(parsed.get("summary") or fallback["评审结论"]), 300, "...[截断]"),
+            "推荐动作": recommend,
+            "真实性": min(5, max(1, int(parsed.get("truth", fallback["真实性"]) or fallback["真实性"]))),
+            "决策性": min(5, max(1, int(parsed.get("decision", fallback["决策性"]) or fallback["决策性"]))),
+            "可执行性": min(5, max(1, int(parsed.get("execution", fallback["可执行性"]) or fallback["可执行性"]))),
+            "闭环准备度": min(5, max(1, int(parsed.get("closure", fallback["闭环准备度"]) or fallback["闭环准备度"]))),
+            "需补数事项": truncate_with_marker("\n".join(f"- {x}" for x in needs), 1500, "\n...[已截断]"),
+            "评审摘要": truncate_with_marker(
+                str(parsed.get("summary") or fallback["评审摘要"]),
+                1500,
+                "\n...[已截断]",
+            ),
+        }
+    except Exception as exc:
+        logger.warning("LLM reviewer fallback to heuristic for task=%s: %s", task_title, exc)
+        return fallback
+
+
+async def write_review_record(
+    app_token: str,
+    review_table_id: str,
+    task_title: str,
+    all_results: list[AgentResult],
+    ceo_result: AgentResult,
+) -> dict:
+    fields = await build_review_payload(task_title, all_results, ceo_result)
+    record_id = await bitable_ops.create_record_optional_fields(
+        app_token,
+        review_table_id,
+        fields,
+        optional_keys=["需补数事项"],
+    )
+    return {"record_id": record_id, "fields": fields}
 
 
 async def update_performance(

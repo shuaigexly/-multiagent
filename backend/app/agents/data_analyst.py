@@ -118,6 +118,10 @@ class DataAnalystAgent(BaseAgent):
 ]
 ```
 （用分析场景中实际使用的数字替换上面的示例值；若无法量化某指标则删除该条目）
+
+输出末尾的 ```metadata``` 中：
+- `evidence` 至少写 3 条，优先沉淀真实数据或行业基准，不要空泛判断
+- `decisions` 若需要补充数据验证，请写 `type="need_data"`；若有可立即执行事项，可写 `type="execute_now"`
 """
 
 

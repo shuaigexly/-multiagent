@@ -174,11 +174,12 @@ async def test_workflow_seed_does_not_write_auto_created_time(monkeypatch):
 
     captured = {}
 
-    async def fake_create_record(_app_token, _table_id, fields):
+    async def fake_create_record(_app_token, _table_id, fields, optional_keys=None):
         captured.update(fields)
         return "rec_1"
 
-    monkeypatch.setattr(workflow.bitable_ops, "create_record", fake_create_record)
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", fake_create_record)
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", AsyncMock(return_value=[]))
     monkeypatch.setattr(workflow, "record_audit", AsyncMock())
 
     req = workflow.SeedRequest(app_token="app", table_id="tbl", title="task")
@@ -187,6 +188,124 @@ async def test_workflow_seed_does_not_write_auto_created_time(monkeypatch):
 
     assert result == {"record_id": "rec_1"}
     assert len(captured) == 4
+
+
+@pytest.mark.asyncio
+async def test_workflow_seed_applies_template_defaults_and_tracks_template(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_create_record(_app_token, _table_id, fields, optional_keys=None):
+        captured.update(fields)
+        return "rec_template"
+
+    workflow._state.clear()
+    workflow._state.update({"app_token": "app", "table_ids": {"template": "tbl_template"}})
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", fake_create_record)
+    monkeypatch.setattr(
+        workflow.bitable_ops,
+        "list_records",
+        AsyncMock(
+            return_value=[
+                {
+                    "record_id": "rec_tpl_1",
+                    "fields": {
+                        "启用": True,
+                        "模板名称": "经营汇报模板",
+                        "适用输出目的": "汇报展示",
+                        "默认汇报对象": "CEO",
+                        "默认执行负责人": "增长负责人",
+                        "默认复核负责人": "数据负责人",
+                        "默认复核SLA小时": 24,
+                    },
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+
+    req = workflow.SeedRequest(
+        app_token="app",
+        table_id="tbl",
+        title="task",
+        output_purpose="汇报展示",
+    )
+
+    result = await workflow.workflow_seed(req)
+
+    assert result == {"record_id": "rec_template"}
+    assert captured["套用模板"] == "经营汇报模板"
+    assert captured["汇报对象"] == "CEO"
+    assert captured["执行负责人"] == "增长负责人"
+    assert captured["复核负责人"] == "数据负责人"
+    assert captured["复核SLA小时"] == 24
+
+
+@pytest.mark.asyncio
+async def test_workflow_seed_explicit_fields_override_template_defaults(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_create_record(_app_token, _table_id, fields, optional_keys=None):
+        captured.update(fields)
+        return "rec_template_override"
+
+    workflow._state.clear()
+    workflow._state.update({"app_token": "app", "table_ids": {"template": "tbl_template"}})
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", fake_create_record)
+    monkeypatch.setattr(
+        workflow.bitable_ops,
+        "list_records",
+        AsyncMock(
+            return_value=[
+                {
+                    "record_id": "rec_tpl_1",
+                    "fields": {
+                        "启用": True,
+                        "模板名称": "执行跟进模板",
+                        "适用输出目的": "执行跟进",
+                        "默认汇报对象": "经营会",
+                        "默认执行负责人": "默认执行人",
+                        "默认复核负责人": "默认复核人",
+                        "默认复核SLA小时": 48,
+                    },
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+
+    req = workflow.SeedRequest(
+        app_token="app",
+        table_id="tbl",
+        title="task",
+        output_purpose="执行跟进",
+        report_audience="项目周会",
+        execution_owner="区域运营负责人",
+        review_owner="数据 PM",
+        review_sla_hours=6,
+    )
+
+    result = await workflow.workflow_seed(req)
+
+    assert result == {"record_id": "rec_template_override"}
+    assert captured["套用模板"] == "执行跟进模板"
+    assert captured["汇报对象"] == "项目周会"
+    assert captured["执行负责人"] == "区域运营负责人"
+    assert captured["复核负责人"] == "数据 PM"
+    assert captured["复核SLA小时"] == 6
 
 
 @pytest.mark.asyncio

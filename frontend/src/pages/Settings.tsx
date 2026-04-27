@@ -68,7 +68,7 @@ export default function Settings() {
     if (oauthResult === 'success') {
       setTaskAuthorized(true);
     }
-  }, []);
+  }, [searchParams]);
 
   const saveLLM = async () => {
     setSaving('llm'); setError(null); setLlmTest(null);

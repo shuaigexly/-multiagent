@@ -102,6 +102,16 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 
 本模块实现「七岗 AI 数字员工」通过飞书多维表格协同工作，覆盖竞赛要求的全部四个核心能力模块。
 
+官方文档对齐与原生交付改造说明：
+
+- [docs/FEISHU_BITABLE_OFFICIAL_ALIGNMENT.md](docs/FEISHU_BITABLE_OFFICIAL_ALIGNMENT.md)
+- [docs/FEISHU_BITABLE_NATIVE_PLAYBOOK.md](docs/FEISHU_BITABLE_NATIVE_PLAYBOOK.md)
+- [docs/FEISHU_BITABLE_CAPABILITY_BACKLOG.md](docs/FEISHU_BITABLE_CAPABILITY_BACKLOG.md)
+- [docs/FEISHU_BITABLE_MASTER_PLAN.md](docs/FEISHU_BITABLE_MASTER_PLAN.md)
+- [docs/FEISHU_BITABLE_DELIVERY_SYSTEM_BLUEPRINT.md](docs/FEISHU_BITABLE_DELIVERY_SYSTEM_BLUEPRINT.md)
+- [docs/FEISHU_BITABLE_AUTOMATION_WORKFLOW_LIBRARY.md](docs/FEISHU_BITABLE_AUTOMATION_WORKFLOW_LIBRARY.md)
+- [docs/FEISHU_BITABLE_VALIDATION_BOUNDARY.md](docs/FEISHU_BITABLE_VALIDATION_BOUNDARY.md)
+
 ### 完整业务链路（数据产生 → 再流转闭环）
 
 ```
@@ -139,14 +149,22 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
                           已完成
 ```
 
-### 四张多维表格
+### 十二张多维表格
 
 | 表格 | 用途 | 关联方式 |
 |------|------|----------|
-| **分析任务** | 主表，驱动状态机 | 无（主表） |
+| **分析任务** | 主表，驱动状态机与原生自动化字段 | 无（主表） |
 | **岗位分析** | 每岗 Agent 的分析输出（6条/任务） | 用「任务标题」文本字段做逻辑关联（v8.6.1+） |
 | **综合报告** | CEO 助理综合决策报告 | 用「报告标题」文本字段做逻辑关联（v8.6.1+） |
 | **数字员工效能** | 各岗位处理任务数滚动统计 | 无 |
+| **📚 数据源库** | 数据集资产、字段说明、CSV 原文、可信等级 | 任务通过 `引用数据集` 名称引用 |
+| **证据链** | 结构化证据、证据等级、置信度、是否进入 CEO 汇总 | 用 `任务标题` 做逻辑关联 |
+| **产出评审** | 真实性 / 决策性 / 可执行性 / 闭环准备度评分与推荐动作 | 用 `任务标题` 做逻辑关联 |
+| **交付动作** | 汇报、执行、复核、自动跟进、工作流记录日志 | 用 `任务标题` 做逻辑关联 |
+| **复核历史** | 每轮复核结论、差异、需补数事项与再流转轨迹 | 用 `任务标题 / 任务编号` 做逻辑关联 |
+| **交付结果归档** | 汇报版本、归档状态、负责人快照、消息包沉淀 | 用 `任务标题 / 任务编号` 做逻辑关联 |
+| **自动化日志** | 节点级审计、执行结果、失败补救入口 | 用 `任务标题` 做逻辑关联 |
+| **模板配置中心** | 工作流消息包 / 执行包模板、默认负责人、复核 SLA | 由任务 `套用模板` 与 `输出目的` 驱动 |
 
 > v8.6.1 实测确认：飞书 Bitable 三个 records 写接口（POST/PUT/batch_create）**全部不接受 LinkedRecord 字段**（type=18）写入（错误码 1254067 LinkFieldConvFail，飞书平台硬限制）。
 > 改用主字段（任务标题 / 报告标题）做文本逻辑关联，配合视图 filter 切片实现跨表追溯。
@@ -168,13 +186,37 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/api/v1/workflow/setup` | 一键创建多维表格结构（4 张表 + 6 个附加视图）+ 4 条种子任务 |
+| `POST` | `/api/v1/workflow/setup` | 一键创建多维表格结构（8 张表 + 多个附加视图）+ 种子任务 |
 | `POST` | `/api/v1/workflow/start` | 启动后台调度循环 |
 | `POST` | `/api/v1/workflow/stop` | 停止调度循环（立即生效） |
 | `GET`  | `/api/v1/workflow/status` | 查看运行状态和表格信息 |
 | `POST` | `/api/v1/workflow/seed` | 向分析任务表写入一条新的待处理任务 |
 | `GET`  | `/api/v1/workflow/records` | 查询多维表格记录，支持 `?status=` 过滤 |
 | `GET`  | `/api/v1/workflow/stream/{record_id}` | **SSE 实时进度流**（task.started / wave.completed / task.done / task.error） |
+
+### 当前验收边界
+
+当前仓库已经实际跑过：
+
+1. 本地后端回归测试
+2. 模板中心相关调度测试
+3. 前端生产构建
+
+当前仓库没有实际跑过：
+
+1. 真实飞书多维表格创建
+2. 真实飞书记录写入
+3. 真实飞书自动化执行
+4. 真实飞书任务 / 消息 / 复核提醒动作
+
+因此当前正确口径是：
+
+- 已完成“代码链路连通验收”
+- 未完成“真实飞书权限下的端到端联调验收”
+
+详见：
+
+- [docs/FEISHU_BITABLE_VALIDATION_BOUNDARY.md](docs/FEISHU_BITABLE_VALIDATION_BOUNDARY.md)
 
 **典型使用流程：**
 
@@ -195,10 +237,20 @@ curl -X POST http://localhost:8000/api/v1/workflow/start \
     "analysis_every": 5
   }'
 
-# 3. 追加新任务
+# 3. 追加新任务（可显式指定模板，也可只填输出目的让后端自动匹配模板）
 curl -X POST http://localhost:8000/api/v1/workflow/seed \
   -H "Content-Type: application/json" \
-  -d '{"app_token": "xxx", "table_id": "tbl_A", "title": "大模型应用全景", "content_type": "行业洞察"}'
+  -d '{
+    "app_token": "xxx",
+    "table_id": "tbl_A",
+    "title": "2026Q2 增长下滑诊断与 CEO 决策建议",
+    "dimension": "综合分析",
+    "output_purpose": "管理决策",
+    "target_audience": "CEO",
+    "success_criteria": "输出两个可直接拍板的动作方案",
+    "referenced_dataset": "渠道投放周报",
+    "template_name": "等待拍板默认模板"
+  }'
 
 # 4. 手动触发分析
 curl -X POST http://localhost:8000/api/v1/workflow/analyze \
@@ -1200,7 +1252,7 @@ Explore agent 审计 v8.6.4→v8.6.16 发现 base_picker / user_token_view_setup
 **七岗多智能体工作流**
 
 - 将 bitable_workflow 重构为七岗 DAG 流水线（Wave1 五并行 → Wave2 财务顾问 → Wave3 CEO 助理）
-- 四张多维表格：分析任务 / 岗位分析 / 综合报告 / 数字员工效能
+- 已演进为多表交付闭环：分析任务 / 岗位分析 / 综合报告 / 数字员工效能，并在后续版本扩展出数据源库 / 证据链 / 产出评审 / 交付动作
 - 崩溃恢复：Phase 0 每轮重置遗留 ANALYZING 记录
 - 完成度校验：岗位分析写入不完整时整条任务回滚重试
 

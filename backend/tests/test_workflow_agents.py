@@ -7,6 +7,7 @@ from app.agents.base_agent import AgentResult, ResultSection
 from app.bitable_workflow.workflow_agents import (
     _is_failed_result,
     _build_task_description,
+    _derive_evidence_grade,
     _format_sections,
     _estimate_urgency,
 )
@@ -239,3 +240,49 @@ class TestWriteCeoReport:
         assert "短视频赛道" in fields["重要机会"]
         assert "竞争对手" in fields["重要风险"]
         assert fields["参与岗位数"] == 7.0
+        assert fields["一句话结论"]
+        assert fields["高管一页纸"]
+
+
+class TestEvidenceGrading:
+    def test_real_data_high_is_hard_evidence(self):
+        assert _derive_evidence_grade({
+            "source_type": "real_data",
+            "confidence": "high",
+            "cite": "BI dashboard",
+        }) == "硬证据"
+
+    def test_judgment_without_cite_needs_validation(self):
+        assert _derive_evidence_grade({
+            "source_type": "judgment",
+            "confidence": "medium",
+            "cite": "",
+        }) == "待验证"
+
+    def test_upstream_high_with_cite_is_hard_evidence(self):
+        assert _derive_evidence_grade({
+            "source_type": "upstream",
+            "confidence": "high",
+            "cite": "上游岗位分析",
+        }) == "硬证据"
+
+
+class TestWriteEvidenceRecords:
+    @pytest.mark.asyncio
+    async def test_evidence_grade_written(self, ok_result):
+        ok_result.structured_evidence = [{
+            "claim": "自然流量回落",
+            "source_type": "real_data",
+            "evidence": "最近 4 周自然流量下降 12%",
+            "confidence": "high",
+            "usage": "risk",
+            "cite": "GA 周报",
+        }]
+        with patch("app.bitable_workflow.workflow_agents.bitable_ops.create_record_optional_fields", new=AsyncMock(return_value="rec_evidence")) as mock_create:
+            from app.bitable_workflow.workflow_agents import write_evidence_records
+            count = await write_evidence_records("app_token", "tbl_e", "任务", [ok_result])
+
+        assert count == 1
+        fields = mock_create.await_args.args[2]
+        assert fields["证据等级"] == "硬证据"
+        assert fields["进入CEO汇总"] is True

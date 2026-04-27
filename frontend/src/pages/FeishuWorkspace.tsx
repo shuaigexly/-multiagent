@@ -188,6 +188,7 @@ export default function FeishuWorkspace() {
     chatsLoading,
     driveLoaded,
     driveLoading,
+    feishuConfigured,
     tasksLoaded,
     tasksLoading,
   ]);

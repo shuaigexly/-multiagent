@@ -149,6 +149,11 @@ class OperationsManagerAgent(BaseAgent):
 ]
 ```
 （用实际统计数量替换示例值）
+
+输出末尾的 ```metadata``` 中：
+- `evidence` 至少写 3 条，标明运营瓶颈依据来自数据、任务、协同现状还是判断
+- 可直接推进的任务请在 `decisions` 中写 `type="execute_now"` 或 `type="delegated"`
+- 若缺少关键运营数据或 owner 信息，请在 `decisions` 中写 `type="need_data"`
 """
 
 

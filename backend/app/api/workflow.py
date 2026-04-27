@@ -53,6 +53,18 @@ class SeedRequest(BaseModel):
     title: str = Field(min_length=1)
     dimension: str = "综合分析"
     background: str = ""
+    target_audience: str = ""
+    output_purpose: str = ""
+    success_criteria: str = ""
+    constraints: str = ""
+    business_stage: str = ""
+    referenced_dataset: str = ""
+    report_audience: str = ""
+    execution_owner: str = ""
+    review_owner: str = ""
+    review_sla_hours: int = Field(default=0, ge=0)
+    template_name: str = ""
+    template: str = ""
 
     @field_validator("dimension")
     @classmethod
@@ -61,10 +73,80 @@ class SeedRequest(BaseModel):
             raise ValueError(f"dimension 必须是以下之一: {_VALID_DIMENSIONS}")
         return v
 
+    @model_validator(mode="after")
+    def normalize_template_name(self) -> "SeedRequest":
+        if self.template and not self.template_name:
+            self.template_name = self.template
+        return self
+
+
+def _boolish(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value > 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return False
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _resolve_seed_template_defaults(
+    app_token: str,
+    template_name: str,
+    output_purpose: str,
+) -> dict[str, object]:
+    state_app_token = str(_state.get("app_token") or "").strip()
+    template_tid = (_state.get("table_ids") or {}).get("template")
+    if not template_tid or (state_app_token and state_app_token != app_token):
+        return {}
+
+    try:
+        templates = await bitable_ops.list_records(app_token, template_tid, max_records=200)
+    except Exception as exc:
+        logger.warning("seed template lookup failed app=%s: %s", app_token, exc)
+        return {}
+
+    normalized_name = template_name.strip()
+    normalized_purpose = output_purpose.strip()
+    exact_match: dict | None = None
+    purpose_match: dict | None = None
+    fallback_match: dict | None = None
+    for row in templates:
+        fields = row.get("fields") or {}
+        if not _boolish(fields.get("启用")):
+            continue
+        row_name = str(fields.get("模板名称") or "").strip()
+        row_purpose = str(fields.get("适用输出目的") or "").strip()
+        if normalized_name and row_name == normalized_name:
+            exact_match = fields
+            break
+        if normalized_purpose and row_purpose == normalized_purpose and purpose_match is None:
+            purpose_match = fields
+        if not row_purpose and fallback_match is None:
+            fallback_match = fields
+
+    selected = exact_match or purpose_match or fallback_match
+    if not selected:
+        return {}
+    return {
+        "template_name": str(selected.get("模板名称") or "").strip(),
+        "report_audience": str(selected.get("默认汇报对象") or "").strip(),
+        "execution_owner": str(selected.get("默认执行负责人") or "").strip(),
+        "review_owner": str(selected.get("默认复核负责人") or "").strip(),
+        "review_sla_hours": _safe_int(selected.get("默认复核SLA小时")),
+    }
+
 
 @router.post("/setup", dependencies=[Depends(require_api_key)])
 async def workflow_setup(req: SetupRequest):
-    """创建飞书多维表格结构（四张表）并写入初始分析任务。"""
+    """创建飞书多维表格结构（任务/报告/证据/评审/动作等 8 张表）并写入初始分析任务。"""
     if runner.is_running():
         raise HTTPException(
             status_code=409,
@@ -118,15 +200,67 @@ async def workflow_status():
 @router.post("/seed", dependencies=[Depends(require_api_key)])
 async def workflow_seed(req: SeedRequest):
     """向分析任务表写入一条新的待处理任务。"""
-    record_id = await bitable_ops.create_record(
+    fields = {
+        "任务标题": req.title,
+        "分析维度": req.dimension,
+        "背景说明": req.background,
+        "状态": Status.PENDING,
+    }
+    if req.output_purpose:
+        fields["输出目的"] = req.output_purpose
+    if req.target_audience:
+        fields["目标对象"] = req.target_audience
+    if req.success_criteria:
+        fields["成功标准"] = req.success_criteria
+    if req.constraints:
+        fields["约束条件"] = req.constraints
+    if req.business_stage:
+        fields["业务阶段"] = req.business_stage
+    if req.referenced_dataset:
+        fields["引用数据集"] = req.referenced_dataset
+
+    template_defaults = await _resolve_seed_template_defaults(
+        req.app_token,
+        req.template_name,
+        req.output_purpose,
+    )
+    resolved_template_name = str(template_defaults.get("template_name") or req.template_name or "").strip()
+    if resolved_template_name:
+        fields["套用模板"] = resolved_template_name
+    if template_defaults.get("report_audience"):
+        fields["汇报对象"] = str(template_defaults["report_audience"])
+    if template_defaults.get("execution_owner"):
+        fields["执行负责人"] = str(template_defaults["execution_owner"])
+    if template_defaults.get("review_owner"):
+        fields["复核负责人"] = str(template_defaults["review_owner"])
+    if _safe_int(template_defaults.get("review_sla_hours")) > 0:
+        fields["复核SLA小时"] = _safe_int(template_defaults["review_sla_hours"])
+
+    if req.report_audience:
+        fields["汇报对象"] = req.report_audience
+    if req.execution_owner:
+        fields["执行负责人"] = req.execution_owner
+    if req.review_owner:
+        fields["复核负责人"] = req.review_owner
+    if req.review_sla_hours > 0:
+        fields["复核SLA小时"] = req.review_sla_hours
+    record_id = await bitable_ops.create_record_optional_fields(
         req.app_token,
         req.table_id,
-        {
-            "任务标题": req.title,
-            "分析维度": req.dimension,
-            "背景说明": req.background,
-            "状态": Status.PENDING,
-        },
+        fields,
+        optional_keys=[
+            "目标对象",
+            "输出目的",
+            "成功标准",
+            "约束条件",
+            "业务阶段",
+            "引用数据集",
+            "套用模板",
+            "汇报对象",
+            "执行负责人",
+            "复核负责人",
+            "复核SLA小时",
+        ],
     )
     await record_audit(
         "workflow.seed",
