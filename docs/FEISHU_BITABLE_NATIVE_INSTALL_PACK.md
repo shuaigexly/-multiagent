@@ -65,6 +65,8 @@
   - W3 执行分支工作流
 - `dashboard` pack 已经围绕管理汇报、证据评审、异常压盘组织 block 级蓝图
 - `role` pack 已经带上 `dashboard_rule_map`、`view_rule`、`edit/read` 差异
+- `form` pack 已经带上表单描述和题目 JSON，可直接继续创建问题
+- 多条自动化 / 工作流蓝图已经显式暴露 `receiver_binding_fields / owner_binding_fields`
 
 ### 2.3 `markdown`
 
@@ -123,8 +125,18 @@
 
 - 带 `dashboard_rule_map`
 - 带 `view_rule.visibility`
+- 带字段级 `field_rule`
+- 带记录级 `record_rule`
 - 区分高管 / 执行 / 复核三种工作面
 - 执行 / 复核工作面支持 `edit`
+
+成员绑定这层也前推了一步：
+
+- 主表新增 `汇报对象OpenID / 拍板负责人OpenID / 执行负责人OpenID / 复核负责人OpenID / 复盘负责人OpenID`
+- 模板中心新增对应 `默认...OpenID`
+- 自动化 / 工作流 blueprint 会显式声明自己依赖哪些绑定字段
+
+但当前仍然不会在没有真实租户映射的情况下直接调用飞书用户；这一步仍需要你后续填入真实 OpenID。
 
 仪表盘 scaffold 也从“一个统计卡”升级成了更像汇报页面的组合：
 

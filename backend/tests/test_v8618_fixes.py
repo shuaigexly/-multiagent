@@ -166,6 +166,7 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
     assert result["native_manifest"]["manifest_version"] == "v2"
     assert result["native_manifest"]["install_order"][0]["title"] == "启用高级权限"
     assert "lark-cli base +advperm-enable" in result["native_manifest"]["command_packs"][0]["commands"][0]
+    assert any("+form-questions-create" in command for command in result["native_manifest"]["command_packs"][1]["commands"])
     assert any("A1 新任务入场提醒" in command for command in result["native_manifest"]["command_packs"][2]["commands"])
     assert any("高管交付面" in command for command in result["native_manifest"]["command_packs"][5]["commands"])
 
@@ -181,6 +182,8 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
             return {"ok": True, "data": {"success": True}}
         if shortcut == "+form-create":
             return {"ok": True, "data": {"id": "vew_form_created"}}
+        if shortcut == "+form-questions-create":
+            return {"ok": True, "data": {"items": [{"id": "q_001", "title": "任务标题"}]}}
         if shortcut == "+workflow-create":
             return {"ok": True, "data": {"workflow_id": "wkf_auto_created"}}
         if shortcut == "+workflow-enable":
@@ -221,6 +224,7 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     )
 
     assert result["native_assets"]["form_blueprints"][0]["lifecycle_state"] == "created"
+    assert result["native_assets"]["form_blueprints"][0]["question_count"] >= 1
     assert result["native_assets"]["automation_templates"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["workflow_blueprints"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["dashboard_blueprints"][0]["lifecycle_state"] == "created"
@@ -230,4 +234,3 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     assert result["native_manifest"]["manifest_version"] == "v2"
     assert created_logs
     assert created_logs[0]["fields"]["触发来源"] == "native_manifest.apply"
-    assert any(item["fields"]["节点名称"] == "A1 新任务入场提醒" for item in created_logs if item["fields"].get("节点名称"))

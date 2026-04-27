@@ -1772,6 +1772,7 @@ export default function BitableWorkflow() {
                           <div className="mt-3 grid gap-2 text-sm text-slate-700">
                             {textValue(item.object_id) && <div>对象 ID：{textValue(item.object_id)}</div>}
                             {typeof item.block_count === 'number' && Number(item.block_count) > 0 && <div>创建图表块：{String(item.block_count)}</div>}
+                            {typeof item.question_count === 'number' && Number(item.question_count) > 0 && <div>创建题目：{String(item.question_count)}</div>}
                             {textValue(item.summary) && <div>业务意图：{textValue(item.summary)}</div>}
                             {textValue(item.reason) && <div>跳过原因：{textValue(item.reason)}</div>}
                             {textValue(item.error) && <div className="text-rose-700">错误：{textValue(item.error)}</div>}
@@ -1843,7 +1844,11 @@ export default function BitableWorkflow() {
                   </div>
                   <div className="mt-4 space-y-3 text-sm text-slate-700">
                     <div>入口表：`分析任务` → `📥 需求收集表`</div>
-                    <div>字段契约：任务标题 / 输出目的 / 优先级 / 引用数据集 / 任务图像</div>
+                    <div>题目数量：{String(numberValue(nativeFormBlueprints[0]?.question_count) || objectList(nativeFormBlueprints[0]?.questions).length || 0)} 题</div>
+                    <div>字段契约：{objectList(nativeFormBlueprints[0]?.questions).slice(0, 6).map((question) => textValue(question.title)).filter(Boolean).join(' / ') || '任务标题 / 输出目的 / 优先级 / 引用数据集 / 任务图像'}</div>
+                    {textValue(nativeFormBlueprints[0]?.description) && (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 text-slate-600">{textValue(nativeFormBlueprints[0]?.description)}</div>
+                    )}
                     {textValue(nativeFormBlueprints[0]?.shared_url) ? (
                       <a
                         href={textValue(nativeFormBlueprints[0]?.shared_url)}
@@ -1871,6 +1876,11 @@ export default function BitableWorkflow() {
                         <div className="mt-2 text-sm leading-6 text-slate-600">
                           {textValue(item.entry_condition) || textValue(item.route_field) || '等待配置'}
                         </div>
+                        {Array.isArray(item.receiver_binding_fields) && (item.receiver_binding_fields as unknown[]).length > 0 && (
+                          <div className="mt-2 text-xs leading-6 text-slate-500">
+                            成员绑定字段：{(item.receiver_binding_fields as unknown[]).map((value) => String(value || '')).filter(Boolean).join(' / ')}
+                          </div>
+                        )}
                       </div>
                     ))}
                     {nativeWorkflowBlueprints.length === 0 && <EmptyState text="当前没有可展示的原生工作流蓝图。" />}
@@ -1895,6 +1905,16 @@ export default function BitableWorkflow() {
                               ? (item[lane.valueKey] as unknown[]).slice(0, 3).map((value) => String(value || '')).filter(Boolean).join(' / ')
                               : textValue(item[lane.valueKey]) || '等待配置'}
                           </div>
+                          {Array.isArray(item.receiver_binding_fields) && (item.receiver_binding_fields as unknown[]).length > 0 && (
+                            <div className="mt-2 text-xs leading-6 text-slate-500">
+                              接收人绑定：{(item.receiver_binding_fields as unknown[]).map((value) => String(value || '')).filter(Boolean).join(' / ')}
+                            </div>
+                          )}
+                          {Array.isArray(item.owner_binding_fields) && (item.owner_binding_fields as unknown[]).length > 0 && (
+                            <div className="mt-1 text-xs leading-6 text-slate-500">
+                              负责人绑定：{(item.owner_binding_fields as unknown[]).map((value) => String(value || '')).filter(Boolean).join(' / ')}
+                            </div>
+                          )}
                         </div>
                       ))}
                       {lane.items.length === 0 && <EmptyState text={`当前没有可展示的${lane.title}。`} />}

@@ -16,6 +16,7 @@ from app.bitable_workflow.native_manifest import build_native_manifest
 from app.bitable_workflow.native_specs import (
     build_automation_specs,
     build_dashboard_specs,
+    build_form_spec,
     build_role_specs,
     build_workflow_specs,
 )
@@ -301,8 +302,11 @@ async def _populate_base_records(
             ),
             "执行模板": "路由：{route}\n当前以汇报为主，无额外执行任务。",
             "默认汇报对象": "CEO",
+            "默认汇报对象OpenID": "",
             "默认拍板负责人": "CEO",
+            "默认拍板负责人OpenID": "",
             "默认复盘负责人": "经营复盘负责人",
+            "默认复盘负责人OpenID": "",
             "模板说明": "适用于直接汇报场景的简版管理摘要模板",
             "启用": True,
         },
@@ -319,8 +323,11 @@ async def _populate_base_records(
             ),
             "执行模板": "请围绕以下拍板项准备：\n{decision_items}",
             "默认汇报对象": "CEO/管理层",
+            "默认汇报对象OpenID": "",
             "默认拍板负责人": "CEO/管理层",
+            "默认拍板负责人OpenID": "",
             "默认复盘负责人": "经营复盘负责人",
+            "默认复盘负责人OpenID": "",
             "模板说明": "适用于等待拍板场景",
             "启用": True,
         },
@@ -342,7 +349,9 @@ async def _populate_base_records(
                 "管理摘要：{management_summary}"
             ),
             "默认执行负责人": "待指派",
+            "默认执行负责人OpenID": "",
             "默认复盘负责人": "执行复盘负责人",
+            "默认复盘负责人OpenID": "",
             "模板说明": "适用于直接执行场景",
             "启用": True,
         },
@@ -363,7 +372,9 @@ async def _populate_base_records(
                 "评审动作：{review_action}"
             ),
             "默认复核负责人": "待指派",
+            "默认复核负责人OpenID": "",
             "默认复盘负责人": "数据复盘负责人",
+            "默认复盘负责人OpenID": "",
             "默认复核SLA小时": 24,
             "模板说明": "适用于补数复核场景",
             "启用": True,
@@ -384,7 +395,9 @@ async def _populate_base_records(
                 "需补数事项：{need_data_items}"
             ),
             "默认复核负责人": "待指派",
+            "默认复核负责人OpenID": "",
             "默认复盘负责人": "重跑复盘负责人",
+            "默认复盘负责人OpenID": "",
             "默认复核SLA小时": 4,
             "模板说明": "适用于建议重跑场景",
             "启用": True,
@@ -400,10 +413,15 @@ async def _populate_base_records(
                 "适用输出目的",
                 "执行模板",
                 "默认汇报对象",
+                "默认汇报对象OpenID",
                 "默认拍板负责人",
+                "默认拍板负责人OpenID",
                 "默认执行负责人",
+                "默认执行负责人OpenID",
                 "默认复核负责人",
+                "默认复核负责人OpenID",
                 "默认复盘负责人",
+                "默认复盘负责人OpenID",
                 "默认复核SLA小时",
                 "模板说明",
             ],
@@ -680,6 +698,7 @@ def _build_native_assets(
     workflow_specs = build_workflow_specs()
     dashboard_specs = build_dashboard_specs()
     role_specs = build_role_specs()
+    form_spec = build_form_spec()
     task_forms = view_assets.get("forms") or []
     intake_form = next((item for item in task_forms if item.get("view_name") == "📥 需求收集表"), None)
     form_blueprints = [
@@ -695,7 +714,10 @@ def _build_native_assets(
             "table_id": task_tid,
             "view_id": (intake_form or {}).get("view_id", ""),
             "shared_url": (intake_form or {}).get("shared_url", ""),
-            "entry_fields": ["任务标题", "背景说明", "输出目的", "优先级", "目标对象", "成功标准", "引用数据集", "任务图像"],
+            "entry_fields": [str(question["title"]) for question in form_spec["questions"]],
+            "question_count": len(form_spec["questions"]),
+            "questions": form_spec["questions"],
+            "description": form_spec["description"],
         }
     ]
     automation_templates = [
@@ -712,6 +734,9 @@ def _build_native_assets(
             "action": spec["action"],
             "primary_field": spec["primary_field"],
             "summary": spec["summary"],
+            "receiver_binding_fields": spec.get("receiver_binding_fields", []),
+            "owner_binding_fields": spec.get("owner_binding_fields", []),
+            "requires_member_binding": bool(spec.get("requires_member_binding")),
         }
         for spec in automation_specs
     ]
@@ -729,6 +754,8 @@ def _build_native_assets(
             "route_field": spec["route_field"],
             "actions": spec["actions"],
             "summary": spec["summary"],
+            "receiver_binding_fields": spec.get("receiver_binding_fields", []),
+            "requires_member_binding": bool(spec.get("requires_member_binding")),
         }
         for spec in workflow_specs
     ]

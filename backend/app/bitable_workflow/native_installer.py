@@ -12,6 +12,7 @@ from app.bitable_workflow.native_manifest import build_native_manifest
 from app.bitable_workflow.native_specs import (
     build_automation_specs,
     build_dashboard_specs,
+    build_form_spec,
     build_role_specs,
     build_workflow_specs,
 )
@@ -104,6 +105,7 @@ async def _apply_form(
     if not forms:
         return
     form = forms[0]
+    form_spec = build_form_spec()
     if not force and str(form.get("lifecycle_state") or "") == "created":
         report.append({"surface": "form", "name": str(form.get("name") or "任务收集表单"), "status": "skipped", "reason": "already_created"})
         return
@@ -115,15 +117,46 @@ async def _apply_form(
             "--table-id",
             table_ids["task"],
             "--name",
-            "任务收集表单",
+            str(form_spec["name"]),
+            "--description",
+            str(form_spec["description"]),
         )
         data = _resp_data(resp)
+        form_id = str(data.get("id") or "")
+        questions = list(form_spec.get("questions") or [])
+        created_question_count = 0
+        if form_id and questions:
+            for idx in range(0, len(questions), 10):
+                batch = questions[idx : idx + 10]
+                await cli_base(
+                    "+form-questions-create",
+                    "--base-token",
+                    app_token,
+                    "--table-id",
+                    table_ids["task"],
+                    "--form-id",
+                    form_id,
+                    "--questions",
+                    _json(batch),
+                )
+                created_question_count += len(batch)
         form["lifecycle_state"] = "created"
-        form["cloud_object_id"] = str(data.get("id") or "")
+        form["cloud_object_id"] = form_id
         form["applied_at"] = applied_at
-        form["next_step"] = "继续在飞书 UI 中配置题目、说明和共享范围"
+        form["question_count"] = created_question_count
+        form["questions"] = questions
+        form["description"] = str(form_spec["description"])
+        form["next_step"] = "继续在飞书 UI 中配置共享范围、提交成功页和后续跳转动作"
         form["blocking_reason"] = ""
-        report.append({"surface": "form", "name": str(form.get("name") or "任务收集表单"), "status": "created", "object_id": form["cloud_object_id"]})
+        report.append(
+            {
+                "surface": "form",
+                "name": str(form.get("name") or "任务收集表单"),
+                "status": "created",
+                "object_id": form["cloud_object_id"],
+                "question_count": created_question_count,
+            }
+        )
     except Exception as exc:
         form["lifecycle_state"] = _error_state(exc)
         form["blocking_reason"] = str(exc)

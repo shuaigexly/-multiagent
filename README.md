@@ -322,6 +322,7 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 
 `native_manifest` 当前已经升级到 `v2`，不再只是“空骨架”：
 
+- `form` pack 已带独立表单描述和题目 JSON，不再只有空表单名
 - `automation` pack 已拆成 5 条业务 scaffold
   - 新任务入场提醒
   - 分析完成自动汇报
@@ -333,7 +334,8 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
   - 拍板分支
   - 执行分支
 - `dashboard` pack 已带管理汇报、证据评审、异常压盘的 block 级蓝图
-- `role` pack 已带 `dashboard_rule_map`、`view_rule` 和高管 / 执行 / 复核三类工作面配置
+- `role` pack 已带 `dashboard_rule_map`、`view_rule`、字段级 `field_rule`、记录级 `record_rule`
+- 主表与模板中心新增了 `汇报对象OpenID / 拍板负责人OpenID / 执行负责人OpenID / 复核负责人OpenID / 复盘负责人OpenID` 占位字段
 
 当前口径明确区分：
 
@@ -366,7 +368,7 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 执行器会尝试：
 
 - 启用高级权限
-- 创建 / 补齐原生表单
+- 创建 / 补齐原生表单，并写入题目
 - 创建自动化 scaffold（带主表回写、交付动作 / 自动化日志沉淀）
 - 创建并启用 workflow scaffold（带责任角色和原生动作切换）
 - 创建 dashboard 和更完整的管理 / 证据 / 异常 block
@@ -375,6 +377,7 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 并把执行结果回写到 `native_assets` 的生命周期状态里。
 同时会把逐项执行结果写进 `自动化日志` 表，触发来源为 `native_manifest.apply`。
 前端会展示逐项 `native_apply_report`，包括对象 ID、block 数、业务意图、跳过原因和权限错误。
+对于需要真实成员接收的自动化 / 工作流，仓库现在会显式暴露 `receiver_binding_fields / owner_binding_fields`，但不会在没有真实租户映射的情况下擅自调用飞书用户。
 
 ### 注入真实数据源（让分析不再凭空估算）
 

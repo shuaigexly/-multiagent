@@ -8,6 +8,7 @@ from typing import Any
 from app.bitable_workflow.native_specs import (
     build_automation_specs,
     build_dashboard_specs,
+    build_form_spec,
     build_role_specs,
     build_workflow_specs,
 )
@@ -25,6 +26,7 @@ def build_native_manifest(
     workflow_specs = build_workflow_specs()
     dashboard_specs = build_dashboard_specs()
     role_specs = build_role_specs()
+    form_spec = build_form_spec()
     install_order = [
         {
             "step": 1,
@@ -83,13 +85,12 @@ def build_native_manifest(
             "label": "原生表单",
             "surface": "form",
             "status": "manual_finish_required",
-            "commands": [
-                f"lark-cli base +form-create --base-token {app_token} --table-id {table_ids['task']} --name '任务收集表单'",
-            ],
+            "commands": _form_commands(app_token, table_ids["task"], form_spec),
             "notes": [
-                "当前 setup 已创建表单视图；如需独立原生表单对象，可再执行此命令创建。",
-                "创建后可继续在飞书中补题目、说明和共享范围。",
+                "当前 setup 已创建表单视图；这里补的是独立表单对象与题目。",
+                "命令包已经带题目 JSON，只差真实 form_id 和共享动作。",
             ],
+            "json_body": form_spec,
         },
         {
             "key": "automation",
@@ -165,6 +166,14 @@ def _workflow_create_commands(app_token: str, specs: list[dict[str, Any]]) -> li
         commands.append(f"# {spec['name']}")
         commands.append(f"lark-cli base +workflow-create --base-token {app_token} --json {json.dumps(spec['body'], ensure_ascii=False)}")
     return commands
+
+
+def _form_commands(app_token: str, table_id: str, spec: dict[str, Any]) -> list[str]:
+    return [
+        f"lark-cli base +form-create --base-token {app_token} --table-id {table_id} --name '{spec['name']}' --description '{spec['description']}'",
+        "# 记录上一步返回的 <form_id>，再创建题目：",
+        f"lark-cli base +form-questions-create --base-token {app_token} --table-id {table_id} --form-id <form_id> --questions {json.dumps(spec['questions'], ensure_ascii=False)}",
+    ]
 
 
 def _dashboard_commands(app_token: str, specs: list[dict[str, Any]]) -> list[str]:

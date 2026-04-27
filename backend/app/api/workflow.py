@@ -86,10 +86,15 @@ class SeedRequest(BaseModel):
     business_stage: str = ""
     referenced_dataset: str = ""
     report_audience: str = ""
+    report_audience_open_id: str = ""
     approval_owner: str = ""
+    approval_owner_open_id: str = ""
     execution_owner: str = ""
+    execution_owner_open_id: str = ""
     review_owner: str = ""
+    review_owner_open_id: str = ""
     retrospective_owner: str = ""
+    retrospective_owner_open_id: str = ""
     review_sla_hours: int = Field(default=0, ge=0)
     template_name: str = ""
     template: str = ""
@@ -195,10 +200,15 @@ async def _resolve_seed_template_defaults(
     return {
         "template_name": str(selected.get("模板名称") or "").strip(),
         "report_audience": str(selected.get("默认汇报对象") or "").strip(),
+        "report_audience_open_id": str(selected.get("默认汇报对象OpenID") or "").strip(),
         "approval_owner": str(selected.get("默认拍板负责人") or "").strip(),
+        "approval_owner_open_id": str(selected.get("默认拍板负责人OpenID") or "").strip(),
         "execution_owner": str(selected.get("默认执行负责人") or "").strip(),
+        "execution_owner_open_id": str(selected.get("默认执行负责人OpenID") or "").strip(),
         "review_owner": str(selected.get("默认复核负责人") or "").strip(),
+        "review_owner_open_id": str(selected.get("默认复核负责人OpenID") or "").strip(),
         "retrospective_owner": str(selected.get("默认复盘负责人") or "").strip(),
+        "retrospective_owner_open_id": str(selected.get("默认复盘负责人OpenID") or "").strip(),
         "review_sla_hours": _safe_int(selected.get("默认复核SLA小时")),
     }
 
@@ -356,27 +366,47 @@ async def workflow_seed(req: SeedRequest):
         fields["套用模板"] = resolved_template_name
     if template_defaults.get("report_audience"):
         fields["汇报对象"] = str(template_defaults["report_audience"])
+    if template_defaults.get("report_audience_open_id"):
+        fields["汇报对象OpenID"] = str(template_defaults["report_audience_open_id"])
     if template_defaults.get("approval_owner"):
         fields["拍板负责人"] = str(template_defaults["approval_owner"])
+    if template_defaults.get("approval_owner_open_id"):
+        fields["拍板负责人OpenID"] = str(template_defaults["approval_owner_open_id"])
     if template_defaults.get("execution_owner"):
         fields["执行负责人"] = str(template_defaults["execution_owner"])
+    if template_defaults.get("execution_owner_open_id"):
+        fields["执行负责人OpenID"] = str(template_defaults["execution_owner_open_id"])
     if template_defaults.get("review_owner"):
         fields["复核负责人"] = str(template_defaults["review_owner"])
+    if template_defaults.get("review_owner_open_id"):
+        fields["复核负责人OpenID"] = str(template_defaults["review_owner_open_id"])
     if template_defaults.get("retrospective_owner"):
         fields["复盘负责人"] = str(template_defaults["retrospective_owner"])
+    if template_defaults.get("retrospective_owner_open_id"):
+        fields["复盘负责人OpenID"] = str(template_defaults["retrospective_owner_open_id"])
     if _safe_int(template_defaults.get("review_sla_hours")) > 0:
         fields["复核SLA小时"] = _safe_int(template_defaults["review_sla_hours"])
 
     if req.report_audience:
         fields["汇报对象"] = req.report_audience
+    if req.report_audience_open_id:
+        fields["汇报对象OpenID"] = req.report_audience_open_id
     if req.approval_owner:
         fields["拍板负责人"] = req.approval_owner
+    if req.approval_owner_open_id:
+        fields["拍板负责人OpenID"] = req.approval_owner_open_id
     if req.execution_owner:
         fields["执行负责人"] = req.execution_owner
+    if req.execution_owner_open_id:
+        fields["执行负责人OpenID"] = req.execution_owner_open_id
     if req.review_owner:
         fields["复核负责人"] = req.review_owner
+    if req.review_owner_open_id:
+        fields["复核负责人OpenID"] = req.review_owner_open_id
     if req.retrospective_owner:
         fields["复盘负责人"] = req.retrospective_owner
+    if req.retrospective_owner_open_id:
+        fields["复盘负责人OpenID"] = req.retrospective_owner_open_id
     if req.review_sla_hours > 0:
         fields["复核SLA小时"] = req.review_sla_hours
     record_id = await bitable_ops.create_record_optional_fields(
@@ -396,10 +426,15 @@ async def workflow_seed(req: SeedRequest):
             "引用数据集",
             "套用模板",
             "汇报对象",
+            "汇报对象OpenID",
             "拍板负责人",
+            "拍板负责人OpenID",
             "执行负责人",
+            "执行负责人OpenID",
             "复核负责人",
+            "复核负责人OpenID",
             "复盘负责人",
+            "复盘负责人OpenID",
             "复核SLA小时",
         ],
     )

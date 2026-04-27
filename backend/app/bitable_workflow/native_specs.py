@@ -1,9 +1,65 @@
-"""Shared Feishu-native scaffold specs for workflows, automations, dashboards, and roles."""
+"""Shared Feishu-native scaffold specs for forms, automations, workflows, dashboards, and roles."""
 
 from __future__ import annotations
 
 import time
 from typing import Any
+
+
+def build_form_spec() -> dict[str, Any]:
+    questions = [
+        {"type": "text", "title": "任务标题", "required": True, "description": "用于主表任务标题，建议用一句话准确描述问题。"},
+        {"type": "text", "title": "背景说明", "required": True, "description": "补充当前问题背景、上下文和已知限制。"},
+        {
+            "type": "select",
+            "title": "输出目的",
+            "required": True,
+            "multiple": False,
+            "options": [
+                {"name": "经营诊断", "hue": "Blue"},
+                {"name": "管理决策", "hue": "Red"},
+                {"name": "执行跟进", "hue": "Green"},
+                {"name": "汇报展示", "hue": "Blue"},
+                {"name": "补数核验", "hue": "Yellow"},
+            ],
+        },
+        {
+            "type": "select",
+            "title": "优先级",
+            "required": True,
+            "multiple": False,
+            "options": [
+                {"name": "P0 紧急", "hue": "Red"},
+                {"name": "P1 高", "hue": "Orange"},
+                {"name": "P2 中", "hue": "Yellow"},
+                {"name": "P3 低", "hue": "Gray"},
+            ],
+        },
+        {"type": "text", "title": "目标对象", "required": False, "description": "说明这份产出面向谁，例如 CEO / 管理层 / 业务负责人。"},
+        {
+            "type": "select",
+            "title": "汇报对象级别",
+            "required": False,
+            "multiple": False,
+            "options": [
+                {"name": "负责人", "hue": "Green"},
+                {"name": "部门管理层", "hue": "Blue"},
+                {"name": "CEO / CXO", "hue": "Red"},
+            ],
+        },
+        {"type": "text", "title": "成功标准", "required": False, "description": "定义什么样的结果算交付完成。"},
+        {"type": "text", "title": "引用数据集", "required": False, "description": "填数据集名称、表名或已有链接。"},
+        {"type": "attachment", "title": "任务图像", "required": False, "description": "可上传截图、图表、白板拍照等。"},
+    ]
+    return {
+        "name": "任务收集表单",
+        "description": "用于把业务问题直接投递到 `分析任务` 主表。提交后，系统会按输出目的、优先级和角色契约继续流转。",
+        "questions": questions,
+        "sections": [
+            {"title": "任务基础信息", "question_titles": ["任务标题", "背景说明", "输出目的", "优先级"]},
+            {"title": "交付上下文", "question_titles": ["目标对象", "汇报对象级别", "成功标准", "引用数据集", "任务图像"]},
+        ],
+    }
 
 
 def build_automation_specs() -> list[dict[str, Any]]:
@@ -16,6 +72,9 @@ def build_automation_specs() -> list[dict[str, Any]]:
             "action": "发送飞书消息 + 回写自动化状态 + 记录自动化日志",
             "primary_field": "任务来源",
             "native_goal": "把业务提交入口和原生任务接收闭环连接起来。",
+            "receiver_binding_fields": [],
+            "owner_binding_fields": ["拍板负责人OpenID", "执行负责人OpenID", "复核负责人OpenID", "复盘负责人OpenID"],
+            "requires_member_binding": False,
             "body": {
                 "client_token": _token("a1"),
                 "title": "A1 新任务入场提醒",
@@ -67,6 +126,9 @@ def build_automation_specs() -> list[dict[str, Any]]:
             "action": "回写汇报责任角色 + 发送管理提醒 + 创建汇报动作",
             "primary_field": "工作流消息包",
             "native_goal": "把分析完成到管理汇报这一段尽量原生化。",
+            "receiver_binding_fields": ["汇报对象OpenID"],
+            "owner_binding_fields": ["汇报对象OpenID", "拍板负责人OpenID"],
+            "requires_member_binding": True,
             "body": {
                 "client_token": _token("a2"),
                 "title": "A2 分析完成自动汇报",
@@ -118,6 +180,9 @@ def build_automation_specs() -> list[dict[str, Any]]:
             "action": "回写执行责任角色 + 创建执行动作 + 提醒执行负责人",
             "primary_field": "工作流执行包",
             "native_goal": "把多 Agent 产出进一步推进到执行任务层。",
+            "receiver_binding_fields": ["执行负责人OpenID"],
+            "owner_binding_fields": ["执行负责人OpenID"],
+            "requires_member_binding": True,
             "body": {
                 "client_token": _token("a3"),
                 "title": "A3 执行任务自动创建",
@@ -169,6 +234,9 @@ def build_automation_specs() -> list[dict[str, Any]]:
             "action": "回写复核责任角色 + 创建复核动作 + 提醒复核负责人",
             "primary_field": "建议复核时间",
             "native_goal": "让补数、复核、重跑都围绕多维表格原生时点驱动。",
+            "receiver_binding_fields": ["复核负责人OpenID"],
+            "owner_binding_fields": ["复核负责人OpenID"],
+            "requires_member_binding": True,
             "body": {
                 "client_token": _token("a4"),
                 "title": "A4 复核提醒",
@@ -220,6 +288,9 @@ def build_automation_specs() -> list[dict[str, Any]]:
             "action": "发送升级提醒 + 回写异常责任状态 + 记录异常日志",
             "primary_field": "异常类型",
             "native_goal": "把异常升级和人工接管固定在多维表格原生异常面。",
+            "receiver_binding_fields": ["拍板负责人OpenID", "执行负责人OpenID", "复核负责人OpenID", "复盘负责人OpenID"],
+            "owner_binding_fields": ["拍板负责人OpenID", "执行负责人OpenID", "复核负责人OpenID", "复盘负责人OpenID"],
+            "requires_member_binding": True,
             "body": {
                 "client_token": _token("a5"),
                 "title": "A5 异常升级提醒",
@@ -275,6 +346,8 @@ def build_workflow_specs() -> list[dict[str, Any]]:
             "route_field": "工作流路由",
             "actions": ["切换交付阶段", "广播交付提醒", "记录路由日志"],
             "native_goal": "让调度结果真正流向飞书原生交付面。",
+            "receiver_binding_fields": ["汇报对象OpenID", "拍板负责人OpenID", "执行负责人OpenID", "复核负责人OpenID"],
+            "requires_member_binding": True,
             "body": {
                 "client_token": _token("w1"),
                 "title": "W1 路由总分发工作流",
@@ -324,6 +397,8 @@ def build_workflow_specs() -> list[dict[str, Any]]:
             "route_field": "工作流路由",
             "actions": ["切换拍板责任面", "发送高管提醒", "写入拍板动作"],
             "native_goal": "把管理拍板从前端按钮推进到飞书原生工作面。",
+            "receiver_binding_fields": ["拍板负责人OpenID", "汇报对象OpenID"],
+            "requires_member_binding": True,
             "body": {
                 "client_token": _token("w2"),
                 "title": "W2 拍板分支工作流",
@@ -374,6 +449,8 @@ def build_workflow_specs() -> list[dict[str, Any]]:
             "route_field": "工作流路由",
             "actions": ["切换执行责任面", "写入执行动作", "延迟后再次提醒"],
             "native_goal": "让执行分支在飞书多维表格里形成可追踪的原生执行闭环。",
+            "receiver_binding_fields": ["执行负责人OpenID"],
+            "requires_member_binding": True,
             "body": {
                 "client_token": _token("w3"),
                 "title": "W3 执行分支工作流",
@@ -512,22 +589,7 @@ def build_role_specs() -> list[dict[str, Any]]:
             "permissions_focus": ["分析任务", "综合报告", "交付动作", "交付结果归档"],
             "dashboard_focus": ["管理汇报总览", "证据与评审看板", "交付异常看板"],
             "native_goal": "高管只看管理必需的信息和仪表盘，不暴露执行噪音。",
-            "config": {
-                "role_name": "高管交付面",
-                "role_type": "custom_role",
-                "base_rule_map": {"copy": False, "download": False},
-                "dashboard_rule_map": {
-                    "管理汇报总览": {"perm": "read_only"},
-                    "证据与评审看板": {"perm": "read_only"},
-                    "交付异常看板": {"perm": "read_only"},
-                },
-                "table_rule_map": {
-                    "分析任务": _read_only_table_rule(["🧭 工作流路由", "👔 拍板人任务", "⏳ 待拍板确认", "🟥 已异常任务"]),
-                    "综合报告": _read_only_table_rule(["🟢 健康报告", "🟡 关注报告", "🔴 预警报告", "🚦 健康度看板"]),
-                    "交付动作": _read_only_table_rule(["📣 汇报动作", "✅ 已完成动作", "❌ 失败动作"]),
-                    "交付结果归档": _read_only_table_rule(["📬 待汇报归档", "⏳ 待拍板归档", "📦 归档看板"]),
-                },
-            },
+            "config": _executive_role_config(),
         },
         {
             "name": "执行负责人工作面",
@@ -535,21 +597,7 @@ def build_role_specs() -> list[dict[str, Any]]:
             "permissions_focus": ["分析任务", "交付动作", "交付结果归档"],
             "dashboard_focus": ["管理汇报总览", "交付异常看板"],
             "native_goal": "执行人主要在执行动作、归档回写和异常修复上工作。",
-            "config": {
-                "role_name": "执行负责人工作面",
-                "role_type": "custom_role",
-                "base_rule_map": {"copy": False, "download": False},
-                "dashboard_rule_map": {
-                    "管理汇报总览": {"perm": "read_only"},
-                    "证据与评审看板": {"perm": "no_perm"},
-                    "交付异常看板": {"perm": "read_only"},
-                },
-                "table_rule_map": {
-                    "分析任务": _edit_table_rule(["⚙️ 执行人任务", "🚀 待执行落地", "🟥 已异常任务", "📅 任务甘特"]),
-                    "交付动作": _edit_table_rule(["📣 汇报动作", "✅ 已完成动作", "❌ 失败动作", "🧭 动作路由"]),
-                    "交付结果归档": _edit_table_rule(["🧾 待执行归档", "📦 归档看板"]),
-                },
-            },
+            "config": _execution_role_config(),
         },
         {
             "name": "复核负责人工作面",
@@ -557,22 +605,7 @@ def build_role_specs() -> list[dict[str, Any]]:
             "permissions_focus": ["分析任务", "证据链", "产出评审", "复核历史"],
             "dashboard_focus": ["证据与评审看板", "交付异常看板"],
             "native_goal": "复核人围绕证据、评审和复核历史工作，不直接暴露高管动作面。",
-            "config": {
-                "role_name": "复核负责人工作面",
-                "role_type": "custom_role",
-                "base_rule_map": {"copy": False, "download": False},
-                "dashboard_rule_map": {
-                    "管理汇报总览": {"perm": "no_perm"},
-                    "证据与评审看板": {"perm": "read_only"},
-                    "交付异常看板": {"perm": "read_only"},
-                },
-                "table_rule_map": {
-                    "分析任务": _edit_table_rule(["🧪 复核人任务", "🗓 待安排复核", "🟨 需关注任务", "🟥 已异常任务"]),
-                    "证据链": _read_only_table_rule(["🧱 硬证据", "🟡 待验证", "⚠️ 风险证据", "🚀 机会证据", "🧾 证据类型看板"]),
-                    "产出评审": _edit_table_rule(["✅ 直接采用", "🟡 补数后复核", "🔁 建议重跑", "🧪 评审看板"]),
-                    "复核历史": _edit_table_rule(["🟡 补数复核历史", "🔁 重跑历史", "✅ 直接采用历史", "🧪 复核轮次看板"]),
-                },
-            },
+            "config": _review_role_config(),
         },
     ]
 
@@ -796,3 +829,244 @@ def _edit_table_rule(visible_views: list[str]) -> dict[str, Any]:
         "field_rule": {"field_perm_mode": "all_edit"},
         "record_rule": {"record_operations": ["add", "delete"], "other_record_all_read": True},
     }
+
+
+def _executive_role_config() -> dict[str, Any]:
+    return {
+        "role_name": "高管交付面",
+        "role_type": "custom_role",
+        "base_rule_map": {"copy": False, "download": False},
+        "dashboard_rule_map": {
+            "管理汇报总览": {"perm": "read_only"},
+            "证据与评审看板": {"perm": "read_only"},
+            "交付异常看板": {"perm": "read_only"},
+        },
+        "table_rule_map": {
+            "分析任务": _read_only_table_rule(["🧭 工作流路由", "👔 拍板人任务", "⏳ 待拍板确认", "🟥 已异常任务"]),
+            "综合报告": _read_only_table_rule(["🟢 健康报告", "🟡 关注报告", "🔴 预警报告", "🚦 健康度看板"]),
+            "交付动作": _read_only_table_rule(["📣 汇报动作", "✅ 已完成动作", "❌ 失败动作"]),
+            "交付结果归档": _read_only_table_rule(["📬 待汇报归档", "⏳ 待拍板归档", "📦 归档看板"]),
+        },
+    }
+
+
+def _execution_role_config() -> dict[str, Any]:
+    return {
+        "role_name": "执行负责人工作面",
+        "role_type": "custom_role",
+        "base_rule_map": {"copy": False, "download": False},
+        "dashboard_rule_map": {
+            "管理汇报总览": {"perm": "read_only"},
+            "证据与评审看板": {"perm": "no_perm"},
+            "交付异常看板": {"perm": "read_only"},
+        },
+        "table_rule_map": {
+            "分析任务": _filtered_edit_table_rule(
+                ["⚙️ 执行人任务", "🚀 待执行落地", "🟥 已异常任务", "📅 任务甘特"],
+                _execution_task_field_rule(),
+                filter_field="当前责任角色",
+                filter_values=["执行人"],
+            ),
+            "交付动作": _filtered_edit_table_rule(
+                ["📣 汇报动作", "✅ 已完成动作", "❌ 失败动作", "🧭 动作路由"],
+                _execution_action_field_rule(),
+                filter_field="工作流路由",
+                filter_values=["直接执行"],
+            ),
+            "交付结果归档": _filtered_edit_table_rule(
+                ["🧾 待执行归档", "📦 归档看板"],
+                _execution_archive_field_rule(),
+                filter_field="归档状态",
+                filter_values=["待执行"],
+            ),
+        },
+    }
+
+
+def _review_role_config() -> dict[str, Any]:
+    return {
+        "role_name": "复核负责人工作面",
+        "role_type": "custom_role",
+        "base_rule_map": {"copy": False, "download": False},
+        "dashboard_rule_map": {
+            "管理汇报总览": {"perm": "no_perm"},
+            "证据与评审看板": {"perm": "read_only"},
+            "交付异常看板": {"perm": "read_only"},
+        },
+        "table_rule_map": {
+            "分析任务": _filtered_edit_table_rule(
+                ["🧪 复核人任务", "🗓 待安排复核", "🟨 需关注任务", "🟥 已异常任务"],
+                _review_task_field_rule(),
+                filter_field="当前责任角色",
+                filter_values=["复核人"],
+            ),
+            "证据链": _read_only_table_rule(["🧱 硬证据", "🟡 待验证", "⚠️ 风险证据", "🚀 机会证据", "🧾 证据类型看板"]),
+            "产出评审": _filtered_edit_table_rule(
+                ["✅ 直接采用", "🟡 补数后复核", "🔁 建议重跑", "🧪 评审看板"],
+                _review_result_field_rule(),
+            ),
+            "复核历史": _filtered_edit_table_rule(
+                ["🟡 补数复核历史", "🔁 重跑历史", "✅ 直接采用历史", "🧪 复核轮次看板"],
+                _review_history_field_rule(),
+            ),
+        },
+    }
+
+
+def _filtered_edit_table_rule(
+    visible_views: list[str],
+    field_rule: dict[str, Any],
+    *,
+    filter_field: str | None = None,
+    filter_values: list[str] | None = None,
+) -> dict[str, Any]:
+    record_rule: dict[str, Any] = {"record_operations": ["add", "delete"], "other_record_all_read": True}
+    if filter_field and filter_values:
+        record_rule["edit_filter_rule_group"] = {
+            "conjunction": "and",
+            "filter_rules": [
+                {
+                    "conjunction": "and",
+                    "filters": [
+                        {
+                            "field_name": filter_field,
+                            "operator": "contains" if len(filter_values) > 1 else "is",
+                            "filter_values": filter_values,
+                        }
+                    ],
+                }
+            ],
+        }
+    return {
+        "perm": "edit",
+        "view_rule": {
+            "allow_edit": True,
+            "visibility": {"all_visible": False, "visible_views": visible_views},
+        },
+        "field_rule": field_rule,
+        "record_rule": record_rule,
+    }
+
+
+def _specify_field_rule(edit_fields: list[str], read_fields: list[str], hidden_fields: list[str] | None = None) -> dict[str, Any]:
+    field_perms: dict[str, str] = {}
+    for field_name in edit_fields:
+        field_perms[field_name] = "edit"
+    for field_name in read_fields:
+        field_perms.setdefault(field_name, "read")
+    for field_name in hidden_fields or []:
+        field_perms[field_name] = "no_perm"
+    return {"field_perm_mode": "specify", "field_perms": field_perms}
+
+
+def _execution_task_field_rule() -> dict[str, Any]:
+    edit_fields = [
+        "执行负责人",
+        "执行负责人OpenID",
+        "执行截止时间",
+        "当前责任人",
+        "当前阶段",
+        "当前原生动作",
+        "自动化执行状态",
+        "是否已执行落地",
+        "执行完成时间",
+        "异常状态",
+        "异常类型",
+        "异常说明",
+        "归档状态",
+    ]
+    read_fields = [
+        "任务标题",
+        "任务编号",
+        "状态",
+        "优先级",
+        "目标对象",
+        "输出目的",
+        "业务归属",
+        "工作流路由",
+        "工作流执行包",
+        "成功标准",
+        "约束条件",
+        "最新管理摘要",
+        "最新评审动作",
+        "汇报对象",
+        "汇报对象级别",
+        "待执行确认",
+        "待复盘确认",
+        "创建时间",
+        "最近更新",
+    ]
+    return _specify_field_rule(edit_fields, read_fields, ["任务图像"])
+
+
+def _execution_action_field_rule() -> dict[str, Any]:
+    return _specify_field_rule(
+        ["动作状态", "执行结果", "动作内容"],
+        ["动作标题", "任务标题", "动作类型", "工作流路由", "关联记录ID", "生成时间"],
+    )
+
+
+def _execution_archive_field_rule() -> dict[str, Any]:
+    return _specify_field_rule(
+        ["归档状态", "执行负责人", "关联记录ID"],
+        ["归档标题", "任务标题", "任务编号", "汇报版本号", "工作流路由", "最新评审动作", "一句话结论", "管理摘要", "首要动作", "汇报就绪度", "工作流消息包", "汇报对象", "复核负责人", "生成时间"],
+    )
+
+
+def _review_task_field_rule() -> dict[str, Any]:
+    edit_fields = [
+        "复核负责人",
+        "复核负责人OpenID",
+        "复核SLA小时",
+        "建议复核时间",
+        "最新评审动作",
+        "最新评审摘要",
+        "汇报就绪度",
+        "需补数条数",
+        "当前责任人",
+        "当前阶段",
+        "当前原生动作",
+        "自动化执行状态",
+        "异常状态",
+        "异常类型",
+        "异常说明",
+        "待安排复核",
+    ]
+    read_fields = [
+        "任务标题",
+        "任务编号",
+        "状态",
+        "优先级",
+        "目标对象",
+        "输出目的",
+        "业务归属",
+        "工作流路由",
+        "成功标准",
+        "约束条件",
+        "证据条数",
+        "高置信证据数",
+        "硬证据数",
+        "待验证证据数",
+        "进入CEO汇总证据数",
+        "决策事项数",
+        "汇报对象",
+        "待拍板确认",
+        "待复盘确认",
+        "创建时间",
+        "最近更新",
+    ]
+    return _specify_field_rule(edit_fields, read_fields, ["任务图像"])
+
+
+def _review_result_field_rule() -> dict[str, Any]:
+    return _specify_field_rule(
+        ["推荐动作", "评审摘要", "真实性", "决策性", "可执行性", "闭环准备度", "需补数事项"],
+        ["任务标题", "工作流路由", "生成时间", "关联记录ID"],
+    )
+
+
+def _review_history_field_rule() -> dict[str, Any]:
+    return _specify_field_rule(
+        ["推荐动作", "触发原因", "复核结论", "新旧结论差异", "需补数事项"],
+        ["复核标题", "任务标题", "任务编号", "复核轮次", "工作流路由", "前次评审动作", "关联记录ID", "生成时间"],
+    )

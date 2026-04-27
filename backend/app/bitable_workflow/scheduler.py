@@ -560,10 +560,15 @@ async def _resolve_template_defaults(
     return {
         "template_name": str(selected.get("模板名称") or "").strip(),
         "report_audience": str(selected.get("默认汇报对象") or "").strip(),
+        "report_audience_open_id": str(selected.get("默认汇报对象OpenID") or "").strip(),
         "approval_owner": str(selected.get("默认拍板负责人") or "").strip(),
+        "approval_owner_open_id": str(selected.get("默认拍板负责人OpenID") or "").strip(),
         "execution_owner": str(selected.get("默认执行负责人") or "").strip(),
+        "execution_owner_open_id": str(selected.get("默认执行负责人OpenID") or "").strip(),
         "review_owner": str(selected.get("默认复核负责人") or "").strip(),
+        "review_owner_open_id": str(selected.get("默认复核负责人OpenID") or "").strip(),
         "retrospective_owner": str(selected.get("默认复盘负责人") or "").strip(),
+        "retrospective_owner_open_id": str(selected.get("默认复盘负责人OpenID") or "").strip(),
         "review_sla_hours": int(selected.get("默认复核SLA小时") or 0),
     }
 
@@ -1460,14 +1465,24 @@ async def _create_followup_tasks(
             record_fields["套用模板"] = str(template_defaults["template_name"])
         if template_defaults.get("report_audience"):
             record_fields["汇报对象"] = str(template_defaults["report_audience"])
+        if template_defaults.get("report_audience_open_id"):
+            record_fields["汇报对象OpenID"] = str(template_defaults["report_audience_open_id"])
         if template_defaults.get("approval_owner"):
             record_fields["拍板负责人"] = str(template_defaults["approval_owner"])
+        if template_defaults.get("approval_owner_open_id"):
+            record_fields["拍板负责人OpenID"] = str(template_defaults["approval_owner_open_id"])
         if template_defaults.get("execution_owner"):
             record_fields["执行负责人"] = str(template_defaults["execution_owner"])
+        if template_defaults.get("execution_owner_open_id"):
+            record_fields["执行负责人OpenID"] = str(template_defaults["execution_owner_open_id"])
         if template_defaults.get("review_owner"):
             record_fields["复核负责人"] = str(template_defaults["review_owner"])
+        if template_defaults.get("review_owner_open_id"):
+            record_fields["复核负责人OpenID"] = str(template_defaults["review_owner_open_id"])
         if template_defaults.get("retrospective_owner"):
             record_fields["复盘负责人"] = str(template_defaults["retrospective_owner"])
+        if template_defaults.get("retrospective_owner_open_id"):
+            record_fields["复盘负责人OpenID"] = str(template_defaults["retrospective_owner_open_id"])
         if int(template_defaults.get("review_sla_hours") or 0) > 0:
             record_fields["复核SLA小时"] = int(template_defaults["review_sla_hours"])
         # v8.6.7：跟进任务自动指向原任务，构建依赖图
@@ -1487,10 +1502,15 @@ async def _create_followup_tasks(
                     "自动化执行状态",
                     "套用模板",
                     "汇报对象",
+                    "汇报对象OpenID",
                     "拍板负责人",
+                    "拍板负责人OpenID",
                     "执行负责人",
+                    "执行负责人OpenID",
                     "复核负责人",
+                    "复核负责人OpenID",
                     "复盘负责人",
+                    "复盘负责人OpenID",
                     "复核SLA小时",
                 ],
             )
@@ -1618,14 +1638,24 @@ async def _create_review_recheck_task(
         fields["套用模板"] = str(template_defaults["template_name"])
     if template_defaults.get("report_audience"):
         fields["汇报对象"] = str(template_defaults["report_audience"])
+    if template_defaults.get("report_audience_open_id"):
+        fields["汇报对象OpenID"] = str(template_defaults["report_audience_open_id"])
     if template_defaults.get("approval_owner"):
         fields["拍板负责人"] = str(template_defaults["approval_owner"])
+    if template_defaults.get("approval_owner_open_id"):
+        fields["拍板负责人OpenID"] = str(template_defaults["approval_owner_open_id"])
     if template_defaults.get("execution_owner"):
         fields["执行负责人"] = str(template_defaults["execution_owner"])
+    if template_defaults.get("execution_owner_open_id"):
+        fields["执行负责人OpenID"] = str(template_defaults["execution_owner_open_id"])
     if template_defaults.get("review_owner"):
         fields["复核负责人"] = str(template_defaults["review_owner"])
+    if template_defaults.get("review_owner_open_id"):
+        fields["复核负责人OpenID"] = str(template_defaults["review_owner_open_id"])
     if template_defaults.get("retrospective_owner"):
         fields["复盘负责人"] = str(template_defaults["retrospective_owner"])
+    if template_defaults.get("retrospective_owner_open_id"):
+        fields["复盘负责人OpenID"] = str(template_defaults["retrospective_owner_open_id"])
     if int(template_defaults.get("review_sla_hours") or 0) > 0:
         fields["复核SLA小时"] = int(template_defaults["review_sla_hours"])
     if parent_task_number:
@@ -1645,10 +1675,15 @@ async def _create_review_recheck_task(
                 "综合评分",
                 "套用模板",
                 "汇报对象",
+                "汇报对象OpenID",
                 "拍板负责人",
+                "拍板负责人OpenID",
                 "执行负责人",
+                "执行负责人OpenID",
                 "复核负责人",
+                "复核负责人OpenID",
                 "复盘负责人",
+                "复盘负责人OpenID",
                 "复核SLA小时",
             ],
         )
