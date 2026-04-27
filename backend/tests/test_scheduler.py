@@ -139,6 +139,34 @@ class TestFollowupTasks:
         assert mock_action.await_args.args[3] == "自动跟进任务"
         assert mock_action.await_args.args[4] == "已跳过"
 
+    @pytest.mark.asyncio
+    async def test_followup_tasks_do_not_create_feishu_tasks_before_approval(self):
+        result = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[],
+            action_items=[],
+            raw_output="完成",
+            decision_items=[
+                {"summary": "批准 Q3 预算追加", "type": "ceo_decision"},
+                {"summary": "通知销售团队跟进重点客户", "type": "execute_now"},
+            ],
+        )
+        with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(return_value=[])):
+            with patch("app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields", new=AsyncMock(return_value="rec_followup")):
+                with patch("app.feishu.task.batch_create_tasks", new=AsyncMock(return_value=[{"guid": "task_1"}])) as mock_batch:
+                    from app.bitable_workflow.scheduler import _create_followup_tasks
+
+                    await _create_followup_tasks(
+                        "app_token",
+                        "tbl_task",
+                        "经营复盘",
+                        result,
+                        route="等待拍板",
+                    )
+
+        mock_batch.assert_not_awaited()
+
 
 class TestSendCompletionMessage:
     @pytest.mark.asyncio
@@ -647,6 +675,29 @@ class TestTaskDeliverySnapshot:
         assert snapshot["异常类型"] == "责任人待指派"
         assert snapshot["自动化执行状态"] == "执行中"
         assert "增长复盘任务" in snapshot["工作流消息包"]
+
+
+class TestWorkflowPayload:
+    def test_waiting_approval_route_does_not_mark_execution_queue(self):
+        ceo = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[ResultSection(title="管理摘要", content="先等管理层拍板，再安排执行。")],
+            action_items=[],
+            raw_output="summary",
+            decision_items=[
+                {"summary": "批准 Q3 预算追加", "type": "ceo_decision"},
+                {"summary": "通知销售团队跟进重点客户", "type": "execute_now"},
+            ],
+        )
+        from app.bitable_workflow.scheduler import _build_workflow_payload
+
+        payload = _build_workflow_payload("经营复盘", {}, None, ceo)
+
+        assert payload["工作流路由"] == "等待拍板"
+        assert payload["待拍板确认"] is True
+        assert payload["待创建执行任务"] is False
+        assert payload["待执行确认"] is False
 
 
 class TestRunCycleActionRouting:

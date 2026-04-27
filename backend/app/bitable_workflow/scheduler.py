@@ -684,7 +684,7 @@ def _build_workflow_payload(
         "工作流消息包": truncate_with_marker("\n".join(message_lines), 1800, "\n...[已截断]"),
         "工作流执行包": truncate_with_marker("\n\n".join(execution_lines), 1800, "\n...[已截断]"),
         "待发送汇报": route in {"直接汇报", "等待拍板"},
-        "待创建执行任务": bool(top_execute),
+        "待创建执行任务": route == "直接执行" and bool(top_execute),
         "待安排复核": route in {"补数复核", "重新分析"},
         "待拍板确认": route == "等待拍板",
         "待执行确认": route == "直接执行",
@@ -1395,11 +1395,12 @@ async def _create_followup_tasks(
         (summary, kind) for summary, kind in followups
         if kind in {"need_data", "ceo_decision", "delegated"}
     ]
+    should_create_execution_tasks = route == "直接执行" and bool(execution_items)
 
     # 1. 写入飞书任务 API（待办事项），便于在飞书客户端直接追踪
     try:
         from app.feishu.task import batch_create_tasks
-        if execution_items:
+        if should_create_execution_tasks:
             await batch_create_tasks(execution_items)
             await _write_action_record(
                 app_token,
@@ -1423,6 +1424,13 @@ async def _create_followup_tasks(
                 detail="\n".join(execution_items),
             )
             logger.info("Created %d Feishu tasks for [%s]", len(execution_items), task_title)
+        elif execution_items:
+            logger.info(
+                "Skip Feishu task creation for [%s]: route=%s execution_items=%d",
+                task_title,
+                route or "未指定",
+                len(execution_items),
+            )
     except Exception as exc:
         await _write_action_record(
             app_token,
