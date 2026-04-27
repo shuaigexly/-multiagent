@@ -163,9 +163,11 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
     assert result["native_assets"]["status_summary"]["counts"]["created"] == 1
     assert result["native_assets"]["status_summary"]["counts"]["blueprint_ready"] >= 1
     assert result["native_assets"]["manual_finish_checklist"][0]["done"] is True
-    assert result["native_manifest"]["manifest_version"] == "v1"
+    assert result["native_manifest"]["manifest_version"] == "v2"
     assert result["native_manifest"]["install_order"][0]["title"] == "启用高级权限"
     assert "lark-cli base +advperm-enable" in result["native_manifest"]["command_packs"][0]["commands"][0]
+    assert any("A1 新任务入场提醒" in command for command in result["native_manifest"]["command_packs"][2]["commands"])
+    assert any("高管交付面" in command for command in result["native_manifest"]["command_packs"][5]["commands"])
 
 
 @pytest.mark.asyncio
@@ -203,7 +205,7 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
 
     native_assets = {
         "form_blueprints": [{"name": "任务收集表单", "lifecycle_state": "manual_finish_required"}],
-        "automation_templates": [],
+        "automation_templates": [{"name": "A1 新任务入场提醒", "lifecycle_state": "blueprint_ready"}],
         "workflow_blueprints": [{"name": "W1", "lifecycle_state": "blueprint_ready"}],
         "dashboard_blueprints": [{"name": "D1", "lifecycle_state": "blueprint_ready"}],
         "role_blueprints": [{"name": "R1", "lifecycle_state": "blueprint_ready"}],
@@ -219,11 +221,13 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     )
 
     assert result["native_assets"]["form_blueprints"][0]["lifecycle_state"] == "created"
+    assert result["native_assets"]["automation_templates"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["workflow_blueprints"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["dashboard_blueprints"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["role_blueprints"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["overall_state"] == "created"
     assert result["native_assets"]["manual_finish_checklist"][2]["done"] is True
-    assert result["native_manifest"]["manifest_version"] == "v1"
+    assert result["native_manifest"]["manifest_version"] == "v2"
     assert created_logs
     assert created_logs[0]["fields"]["触发来源"] == "native_manifest.apply"
+    assert any(item["fields"]["节点名称"] == "A1 新任务入场提醒" for item in created_logs if item["fields"].get("节点名称"))

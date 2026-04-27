@@ -5,6 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.bitable_workflow.native_specs import (
+    build_automation_specs,
+    build_dashboard_specs,
+    build_role_specs,
+    build_workflow_specs,
+)
+
 
 def build_native_manifest(
     *,
@@ -14,8 +21,10 @@ def build_native_manifest(
     base_meta: dict[str, Any],
     native_assets: dict[str, Any],
 ) -> dict[str, Any]:
-    workflow_body = _workflow_body(table_name="分析任务")
-    role_body = _role_body()
+    automation_specs = build_automation_specs()
+    workflow_specs = build_workflow_specs()
+    dashboard_specs = build_dashboard_specs()
+    role_specs = build_role_specs()
     install_order = [
         {
             "step": 1,
@@ -31,18 +40,24 @@ def build_native_manifest(
         },
         {
             "step": 3,
-            "title": "创建路由工作流",
-            "surface": "workflow",
-            "why": "让拍板、执行、复核真正交给飞书工作流，而不是仅靠 API 回写。",
+            "title": "创建自动化与消息分发 scaffold",
+            "surface": "automation",
+            "why": "把入场提醒、自动汇报、执行创建、复核提醒、异常升级都推进成飞书原生触发器。",
         },
         {
             "step": 4,
-            "title": "创建管理仪表盘与图表块",
-            "surface": "dashboard",
-            "why": "把管理总览、异常雷达、证据评审放回飞书原生可视化层。",
+            "title": "创建路由与责任工作流",
+            "surface": "workflow",
+            "why": "让拍板、执行和交付路由真正交给飞书工作流，而不是仅靠 API 回写。",
         },
         {
             "step": 5,
+            "title": "创建管理仪表盘与异常雷达",
+            "surface": "dashboard",
+            "why": "把管理总览、证据评审、异常压盘放回飞书原生可视化层。",
+        },
+        {
+            "step": 6,
             "title": "创建角色与权限工作面",
             "surface": "role",
             "why": "确保高管、执行、复核在 Base 内各看各的原生工作面。",
@@ -77,31 +92,38 @@ def build_native_manifest(
             ],
         },
         {
+            "key": "automation",
+            "label": "自动化 scaffold",
+            "surface": "automation",
+            "status": "blueprint_ready",
+            "commands": _workflow_create_commands(app_token, automation_specs),
+            "notes": [
+                "这里用 workflow scaffold 承接自动化模板，避免自动化永远停在 blueprint 状态。",
+                "每个自动化都已经带上任务责任面回写、消息提醒和日志/动作沉淀骨架。",
+            ],
+            "json_bodies": [spec["body"] for spec in automation_specs],
+        },
+        {
             "key": "workflow",
             "label": "路由工作流",
             "surface": "workflow",
             "status": "blueprint_ready",
-            "commands": [
-                f"lark-cli base +workflow-create --base-token {app_token} --json {json.dumps(workflow_body, ensure_ascii=False)}",
-            ],
+            "commands": _workflow_create_commands(app_token, workflow_specs),
             "notes": [
-                "创建后默认是 disabled，需再手动启用。",
-                "当前 JSON 先给出主骨架，后续可按字段 ID/负责人映射继续细化。",
+                "创建后建议立即启用，并继续补成员映射、审批链和任务动作。",
+                "当前 JSON 不只是提示消息，而是带主表状态回写、动作沉淀和日志记录骨架。",
             ],
-            "json_body": workflow_body,
+            "json_bodies": [spec["body"] for spec in workflow_specs],
         },
         {
             "key": "dashboard",
             "label": "管理仪表盘",
             "surface": "dashboard",
             "status": "blueprint_ready",
-            "commands": [
-                f"lark-cli base +dashboard-create --base-token {app_token} --name '多 Agent 交付总览' --theme-style SimpleBlue",
-                "# 创建后继续用 +dashboard-block-create 添加统计卡、路由分布和异常雷达组件",
-            ],
+            "commands": _dashboard_commands(app_token, dashboard_specs),
             "notes": [
-                "先建空仪表盘，再串行创建图表块。",
-                "推荐优先落 3 块：工作流路由分布、待拍板确认数、异常任务数。",
+                "每个仪表盘都带可直接落地的 block 配置，按顺序串行创建即可。",
+                "优先级最高的是管理汇报总览，其次是证据与评审、交付异常压盘。",
             ],
         },
         {
@@ -109,14 +131,12 @@ def build_native_manifest(
             "label": "角色权限",
             "surface": "role",
             "status": "blueprint_ready",
-            "commands": [
-                f"lark-cli base +role-create --base-token {app_token} --json {json.dumps(role_body, ensure_ascii=False)}",
-            ],
+            "commands": _role_commands(app_token, role_specs),
             "notes": [
-                "建议先创建高管角色，再派生执行与复核角色。",
-                "更细的字段级权限与视图级权限，需要按真实业务成员继续补齐。",
+                "角色配置里已经带了 dashboard_rule_map、view_rule 和 edit/read 工作面差异。",
+                "创建后只需要继续分配真实成员，而不是从零写权限 JSON。",
             ],
-            "json_body": role_body,
+            "json_bodies": [spec["config"] for spec in role_specs],
         },
     ]
 
@@ -130,7 +150,7 @@ def build_native_manifest(
     )
 
     return {
-        "manifest_version": "v1",
+        "manifest_version": "v2",
         "app_token": app_token,
         "base_url": base_url,
         "base_meta": base_meta,
@@ -139,79 +159,29 @@ def build_native_manifest(
         "markdown": markdown,
     }
 
-
-def _workflow_body(*, table_name: str) -> dict[str, Any]:
-    return {
-        "client_token": "replace-with-unique-token",
-        "title": "分析任务原生路由工作流",
-        "steps": [
-            {
-                "id": "trigger_1",
-                "type": "AddRecordTrigger",
-                "title": "监听分析任务写入",
-                "next": "branch_1",
-                "data": {
-                    "table_name": table_name,
-                    "watched_field_name": "状态",
-                },
-            },
-            {
-                "id": "branch_1",
-                "type": "IfElseBranch",
-                "title": "判断是否进入交付阶段",
-                "next": None,
-                "children": {
-                    "links": [
-                        {"condition": '状态 = "已完成"', "to": "action_1"},
-                        {"condition": "default", "to": "action_2"},
-                    ]
-                },
-                "data": {},
-            },
-            {
-                "id": "action_1",
-                "type": "LarkMessageAction",
-                "title": "发送管理通知",
-                "next": None,
-                "data": {
-                    "receiver": [],
-                    "send_to_everyone": False,
-                    "title": [{"value_type": "text", "value": "分析任务进入交付阶段"}],
-                    "content": [{"value_type": "text", "value": "请按工作流路由继续处理该任务。"}],
-                    "btn_list": [],
-                },
-            },
-            {
-                "id": "action_2",
-                "type": "LarkMessageAction",
-                "title": "忽略未完成任务",
-                "next": None,
-                "data": {
-                    "receiver": [],
-                    "send_to_everyone": False,
-                    "title": [{"value_type": "text", "value": "任务暂不进入交付流程"}],
-                    "content": [{"value_type": "text", "value": "状态未到已完成，暂不执行原生交付动作。"}],
-                    "btn_list": [],
-                },
-            },
-        ],
-    }
+def _workflow_create_commands(app_token: str, specs: list[dict[str, Any]]) -> list[str]:
+    commands: list[str] = []
+    for spec in specs:
+        commands.append(f"# {spec['name']}")
+        commands.append(f"lark-cli base +workflow-create --base-token {app_token} --json {json.dumps(spec['body'], ensure_ascii=False)}")
+    return commands
 
 
-def _role_body() -> dict[str, Any]:
-    return {
-        "role_name": "高管交付面",
-        "role_type": "custom_role",
-        "base_rule_map": {
-            "copy": False,
-            "download": False,
-        },
-        "table_rule_map": {
-            "分析任务": {"perm": "read_only"},
-            "综合报告": {"perm": "read_only"},
-            "交付动作": {"perm": "read_only"},
-        },
-    }
+def _dashboard_commands(app_token: str, specs: list[dict[str, Any]]) -> list[str]:
+    commands: list[str] = []
+    for spec in specs:
+        commands.append(f"# {spec['name']}")
+        commands.append(f"lark-cli base +dashboard-create --base-token {app_token} --name '{spec['name']}' --theme-style SimpleBlue")
+        commands.append("# 创建后按 block_specs 顺序串行执行 +dashboard-block-create，再调用 +dashboard-arrange")
+    return commands
+
+
+def _role_commands(app_token: str, specs: list[dict[str, Any]]) -> list[str]:
+    commands: list[str] = []
+    for spec in specs:
+        commands.append(f"# {spec['name']}")
+        commands.append(f"lark-cli base +role-create --base-token {app_token} --json {json.dumps(spec['config'], ensure_ascii=False)}")
+    return commands
 
 
 def _manifest_markdown(

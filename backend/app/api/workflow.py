@@ -130,7 +130,7 @@ class ApplyNativeRequest(BaseModel):
     @field_validator("surfaces")
     @classmethod
     def check_surfaces(cls, values: list[str]) -> list[str]:
-        valid = {"form", "workflow", "dashboard", "role"}
+        valid = {"form", "automation", "workflow", "dashboard", "role"}
         invalid = [value for value in values if value not in valid]
         if invalid:
             raise ValueError(f"surfaces 只能包含: {sorted(valid)}")
@@ -313,7 +313,7 @@ async def workflow_apply_native_manifest(req: ApplyNativeRequest):
     await record_audit(
         "workflow.native_manifest.apply",
         target=app_token,
-        payload={"surfaces": req.surfaces or ["form", "workflow", "dashboard", "role"], "force": req.force},
+        payload={"surfaces": req.surfaces or ["form", "automation", "workflow", "dashboard", "role"], "force": req.force},
     )
     return result
 

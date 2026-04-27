@@ -320,6 +320,21 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 - `native_assets.manual_finish_checklist`：告诉你哪些动作还必须在飞书多维表格 UI 里补完，适合直接拿去做验收清单
 - `native_manifest`：直接给出飞书原生安装顺序、`lark-cli base` 命令模板和一份 Markdown 安装包
 
+`native_manifest` 当前已经升级到 `v2`，不再只是“空骨架”：
+
+- `automation` pack 已拆成 5 条业务 scaffold
+  - 新任务入场提醒
+  - 分析完成自动汇报
+  - 执行任务自动创建
+  - 复核提醒
+  - 异常升级提醒
+- `workflow` pack 已拆成 3 条责任工作流
+  - 路由总分发
+  - 拍板分支
+  - 执行分支
+- `dashboard` pack 已带管理汇报、证据评审、异常压盘的 block 级蓝图
+- `role` pack 已带 `dashboard_rule_map`、`view_rule` 和高管 / 执行 / 复核三类工作面配置
+
 当前口径明确区分：
 
 - `created`：本次 setup 已经在 Base 中真正创建完成
@@ -331,8 +346,8 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 - `GET /api/v1/workflow/native-manifest`
 - `POST /api/v1/workflow/native-manifest/apply`
 - 返回内容包括：
-  - `install_order`：先开高级权限、再补表单、再建 workflow / dashboard / role 的顺序
-  - `command_packs`：按 `form / workflow / dashboard / role` 输出 `lark-cli base` 命令模板
+  - `install_order`：先开高级权限、再补表单、再建 automation / workflow / dashboard / role 的顺序
+  - `command_packs`：按 `advperm / form / automation / workflow / dashboard / role` 输出 `lark-cli base` 命令模板
   - `markdown`：可直接贴进文档或交接材料的原生安装说明
 
 现在还支持两种直接执行方式：
@@ -340,16 +355,26 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 - `setup` 时传 `apply_native=true`
 - setup 完成后调用 `POST /api/v1/workflow/native-manifest/apply`
 
+前端驾驶舱还支持按 surface 选择本次 apply 范围：
+
+- `form`
+- `automation`
+- `workflow`
+- `dashboard`
+- `role`
+
 执行器会尝试：
 
 - 启用高级权限
 - 创建 / 补齐原生表单
-- 创建并启用 workflow scaffold
-- 创建 dashboard 和基础 block
-- 创建 role scaffold
+- 创建自动化 scaffold（带主表回写、交付动作 / 自动化日志沉淀）
+- 创建并启用 workflow scaffold（带责任角色和原生动作切换）
+- 创建 dashboard 和更完整的管理 / 证据 / 异常 block
+- 创建 role scaffold（带 dashboard/view/edit-read 工作面差异）
 
 并把执行结果回写到 `native_assets` 的生命周期状态里。
 同时会把逐项执行结果写进 `自动化日志` 表，触发来源为 `native_manifest.apply`。
+前端会展示逐项 `native_apply_report`，包括对象 ID、block 数、业务意图、跳过原因和权限错误。
 
 ### 注入真实数据源（让分析不再凭空估算）
 

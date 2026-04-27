@@ -13,6 +13,12 @@ from typing import Optional
 
 from app.bitable_workflow import bitable_ops, schema
 from app.bitable_workflow.native_manifest import build_native_manifest
+from app.bitable_workflow.native_specs import (
+    build_automation_specs,
+    build_dashboard_specs,
+    build_role_specs,
+    build_workflow_specs,
+)
 from app.bitable_workflow.schema import agent_output_fields, report_fields
 from app.bitable_workflow.scheduler import run_one_cycle
 from app.feishu.bitable import create_bitable, create_table, create_view
@@ -670,6 +676,10 @@ def _build_native_assets(
 ) -> dict:
     task_tid = table_ids["task"]
     template_tid = table_ids["template"]
+    automation_specs = build_automation_specs()
+    workflow_specs = build_workflow_specs()
+    dashboard_specs = build_dashboard_specs()
+    role_specs = build_role_specs()
     task_forms = view_assets.get("forms") or []
     intake_form = next((item for item in task_forms if item.get("view_name") == "📥 需求收集表"), None)
     form_blueprints = [
@@ -690,188 +700,71 @@ def _build_native_assets(
     ]
     automation_templates = [
         {
-            "name": "A1 新任务入场提醒",
+            "name": spec["name"],
             "lifecycle_state": "blueprint_ready",
             "native_surface": "automation",
             "delivery_mode": "manual_native_config",
             "api_readiness": "not_connected",
-            "next_step": "在多维表格自动化中按条件创建消息通知和动作审计",
-            "blocking_reason": "当前仓库只生成蓝图，不会自动在飞书云侧创建自动化规则",
-            "trigger": "添加记录时",
-            "condition": "状态 = 待分析",
-            "action": "发送飞书消息 + 写交付动作",
-            "primary_field": "任务来源",
-        },
-        {
-            "name": "A2 分析完成自动汇报",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "automation",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "复用工作流消息包，在自动化里绑定消息/邮件动作",
-            "blocking_reason": "仍需在飞书自动化界面将字段条件与消息动作显式绑定",
-            "trigger": "新增/修改记录满足条件时",
-            "condition": "状态 = 已完成 且 待发送汇报 = 是",
-            "action": "发送飞书消息/邮件，正文引用工作流消息包",
-            "primary_field": "工作流消息包",
-        },
-        {
-            "name": "A3 执行任务自动创建",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "automation",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "在自动化中创建飞书任务并把执行结果回写交付动作",
-            "blocking_reason": "任务创建动作仍需在飞书自动化界面中选择负责人和任务模板",
-            "trigger": "新增/修改记录满足条件时",
-            "condition": "待创建执行任务 = 是",
-            "action": "创建飞书任务并回写交付动作",
-            "primary_field": "工作流执行包",
-        },
-        {
-            "name": "A4 复核提醒",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "automation",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "用建议复核时间驱动提醒或复核任务创建",
-            "blocking_reason": "仍需在飞书自动化中补齐定时触发和负责人映射",
-            "trigger": "到达记录中的时间时",
-            "condition": "待安排复核 = 是",
-            "action": "提醒复核负责人 / 创建复核任务",
-            "primary_field": "建议复核时间",
-        },
-        {
-            "name": "A5 异常升级提醒",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "automation",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "把异常状态 = 已异常 的记录升级为人工接管提醒",
-            "blocking_reason": "仍需在飞书自动化中绑定通知对象和升级渠道",
-            "trigger": "新增/修改记录满足条件时",
-            "condition": "异常状态 = 已异常",
-            "action": "发群提醒 / 转人工接管",
-            "primary_field": "异常类型",
-        },
+            "next_step": "直接用命令包创建后，再在飞书里补齐真实成员、审批链和任务动作",
+            "blocking_reason": "当前仍需真实租户权限才能把自动化 scaffold 创建到飞书云侧",
+            "trigger": spec["trigger"],
+            "condition": spec["condition"],
+            "action": spec["action"],
+            "primary_field": spec["primary_field"],
+            "summary": spec["summary"],
+        }
+        for spec in automation_specs
     ]
     workflow_blueprints = [
         {
-            "name": "W1 路由总分发工作流",
+            "name": spec["name"],
             "status": "blueprint_ready",
             "lifecycle_state": "blueprint_ready",
             "native_surface": "workflow",
             "delivery_mode": "manual_native_config",
             "api_readiness": "not_connected",
-            "next_step": "在飞书工作流中按工作流路由字段拆分分支",
-            "blocking_reason": "当前仓库生成字段契约和分支蓝图，但未自动在飞书工作流中心创建对象",
-            "entry_condition": "状态 = 已完成",
-            "route_field": "工作流路由",
-            "branches": ["直接汇报", "等待拍板", "直接执行", "补数复核", "重新分析"],
-        },
-        {
-            "name": "W2 拍板分支工作流",
-            "status": "blueprint_ready",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "workflow",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "在工作流中串联高管卡片、拍板回写、动作审计",
-            "blocking_reason": "拍板动作目前仍由 API 回写，尚未迁移到飞书原生审批/工作流按钮链路",
-            "entry_condition": "当前责任角色 = 拍板人",
-            "actions": ["发送高管卡片", "等待拍板回写", "回写交付动作"],
-        },
-        {
-            "name": "W3 执行分支工作流",
-            "status": "blueprint_ready",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "workflow",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "在工作流中创建任务、处理失败补救并进入复盘",
-            "blocking_reason": "执行分支依赖飞书原生工作流对象，当前只落地了字段和执行包",
-            "entry_condition": "当前责任角色 = 执行人",
-            "actions": ["创建飞书任务", "失败补救", "进入复盘"],
-        },
+            "next_step": "先创建工作流 scaffold，再在飞书里补齐成员映射和审批/任务动作",
+            "blocking_reason": "当前仓库已经给出可创建 JSON，但真实落地仍依赖飞书租户权限",
+            "entry_condition": spec["entry_condition"],
+            "route_field": spec["route_field"],
+            "actions": spec["actions"],
+            "summary": spec["summary"],
+        }
+        for spec in workflow_specs
     ]
     dashboard_blueprints = [
         {
-            "name": "管理汇报总览",
+            "name": spec["name"],
             "status": "blueprint_ready",
             "lifecycle_state": "blueprint_ready",
             "native_surface": "dashboard",
             "delivery_mode": "manual_native_config",
             "api_readiness": "not_connected",
-            "next_step": "按推荐视图和指标在飞书仪表盘中拼装汇报页",
-            "blocking_reason": "当前仓库只生成仪表盘蓝图与指标口径，未自动创建飞书仪表盘对象",
-            "source_table": task_tid,
-            "focus_metrics": ["工作流路由分布", "待拍板确认数", "待执行确认数", "待安排复核数", "已异常任务数"],
-            "recommended_views": ["🧭 工作流路由", "🟥 已异常任务", "🧭 当前责任角色"],
-        },
-        {
-            "name": "证据与评审看板",
-            "status": "blueprint_ready",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "dashboard",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "在仪表盘中配置证据等级、评审动作和 CEO 汇总相关统计",
-            "blocking_reason": "需要在飞书仪表盘界面手工绑定图表块和统计口径",
-            "source_table": table_ids.get("evidence", ""),
-            "focus_metrics": ["硬证据数", "待验证证据数", "进入CEO汇总证据数"],
-            "recommended_views": ["🧱 硬证据", "🟡 待验证", "🧾 证据类型看板"],
-        },
-        {
-            "name": "交付异常看板",
-            "status": "blueprint_ready",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "dashboard",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "把拍板滞留、执行超期、复核超时、复盘滞留做成异常总览看板",
-            "blocking_reason": "当前已给出异常字段契约和推荐视图，但仪表盘对象仍需飞书内配置",
-            "source_table": task_tid,
-            "focus_metrics": ["拍板滞留", "执行超期", "复核超时", "复盘滞留"],
-            "recommended_views": ["🟥 拍板滞留", "🟥 执行超期", "🟧 复核超时", "🟪 复盘滞留"],
-        },
+            "next_step": "按 block 顺序创建后，再用飞书原生布局做管理层汇报排版",
+            "blocking_reason": "当前仓库提供的是可执行图表蓝图，真正云侧创建仍依赖权限与配额",
+            "source_table": table_ids["task"] if spec["source_table_name"] == "分析任务" else table_ids.get("evidence", task_tid),
+            "focus_metrics": spec["focus_metrics"],
+            "recommended_views": spec["recommended_views"],
+            "narrative": spec["narrative"],
+            "block_count": len(spec["block_specs"]),
+        }
+        for spec in dashboard_specs
     ]
     role_blueprints = [
         {
-            "name": "高管 / 拍板人",
+            "name": spec["name"],
             "status": "blueprint_ready",
             "lifecycle_state": "blueprint_ready",
             "native_surface": "role",
             "delivery_mode": "manual_native_config",
             "api_readiness": "not_connected",
-            "next_step": "在飞书高级权限中按角色配置视图和表级访问范围",
-            "blocking_reason": "当前仅输出角色蓝图和建议视图，未自动创建高级权限角色",
-            "focus_views": ["🧭 工作流路由", "👔 拍板人任务", "⏳ 待拍板确认", "🚦 健康度看板"],
-            "permissions_focus": ["综合报告", "分析任务"],
-        },
-        {
-            "name": "执行负责人",
-            "status": "blueprint_ready",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "role",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "把执行任务和交付动作限定在执行负责人工作面",
-            "blocking_reason": "需要在飞书权限模型中手工配置角色成员和可见视图",
-            "focus_views": ["⚙️ 执行人任务", "🚀 待执行落地", "🧾 待执行归档"],
-            "permissions_focus": ["分析任务", "交付动作"],
-        },
-        {
-            "name": "复核负责人",
-            "status": "blueprint_ready",
-            "lifecycle_state": "blueprint_ready",
-            "native_surface": "role",
-            "delivery_mode": "manual_native_config",
-            "api_readiness": "not_connected",
-            "next_step": "按复核链路配置证据链、评审表和复核历史的访问权限",
-            "blocking_reason": "复核角色当前只输出蓝图，还未自动配置到飞书高级权限",
-            "focus_views": ["🧪 复核人任务", "🗓 待安排复核", "🟡 补数复核历史"],
-            "permissions_focus": ["分析任务", "证据链", "产出评审", "复核历史"],
-        },
+            "next_step": "直接创建角色后再分配真实成员，不需要从零编权限 JSON",
+            "blocking_reason": "当前仍需 Base 管理员权限启用高级权限并创建角色",
+            "focus_views": spec["focus_views"],
+            "permissions_focus": spec["permissions_focus"],
+            "dashboard_focus": spec["dashboard_focus"],
+        }
+        for spec in role_specs
     ]
     asset_groups = [
         {"key": "forms", "label": "表单入口", "items": form_blueprints},

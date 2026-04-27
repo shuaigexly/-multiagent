@@ -9,12 +9,18 @@ from typing import Any
 
 from app.bitable_workflow import bitable_ops
 from app.bitable_workflow.native_manifest import build_native_manifest
+from app.bitable_workflow.native_specs import (
+    build_automation_specs,
+    build_dashboard_specs,
+    build_role_specs,
+    build_workflow_specs,
+)
 from app.core.text_utils import truncate_with_marker
 from app.feishu.cli_bridge import cli_base, is_cli_available
 
 logger = logging.getLogger(__name__)
 
-_ALL_SURFACES = {"form", "workflow", "dashboard", "role"}
+_ALL_SURFACES = {"form", "automation", "workflow", "dashboard", "role"}
 
 
 async def apply_native_manifest(
@@ -41,6 +47,8 @@ async def apply_native_manifest(
 
     if "form" in targets:
         await _apply_form(app_token, table_ids, assets, report, force=force, applied_at=applied_at)
+    if "automation" in targets:
+        await _apply_automations(app_token, assets, report, force=force, applied_at=applied_at)
     if "workflow" in targets:
         await _apply_workflows(app_token, assets, report, force=force, applied_at=applied_at)
     if "dashboard" in targets:
@@ -130,17 +138,13 @@ async def _apply_workflows(
     force: bool,
     applied_at: int,
 ) -> None:
-    bodies = [
-        _workflow_body("W1 路由总分发工作流", "分析任务", "状态"),
-        _workflow_body("W2 拍板分支工作流", "分析任务", "当前责任角色"),
-        _workflow_body("W3 执行分支工作流", "分析任务", "当前责任角色"),
-    ]
-    for item, body in zip(_asset_list(assets, "workflow_blueprints"), bodies):
+    specs = build_workflow_specs()
+    for item, spec in zip(_asset_list(assets, "workflow_blueprints"), specs):
         if not force and str(item.get("lifecycle_state") or "") == "created":
             report.append({"surface": "workflow", "name": str(item.get("name") or ""), "status": "skipped", "reason": "already_created"})
             continue
         try:
-            resp = await cli_base("+workflow-create", "--base-token", app_token, "--json", _json(body))
+            resp = await cli_base("+workflow-create", "--base-token", app_token, "--json", _json(spec["body"]))
             data = _resp_data(resp)
             workflow_id = str(data.get("workflow_id") or "")
             if workflow_id:
@@ -148,13 +152,60 @@ async def _apply_workflows(
             item["lifecycle_state"] = "created" if workflow_id else "manual_finish_required"
             item["cloud_object_id"] = workflow_id
             item["applied_at"] = applied_at
-            item["next_step"] = "如需更强业务逻辑，可继续在飞书工作流里扩展触发条件和动作"
+            item["next_step"] = "如需更强业务逻辑，可继续在飞书工作流里补成员映射、审批链和任务卡片动作"
             item["blocking_reason"] = "" if workflow_id else "工作流创建返回中缺少 workflow_id"
-            report.append({"surface": "workflow", "name": str(item.get("name") or ""), "status": item["lifecycle_state"], "object_id": workflow_id})
+            report.append(
+                {
+                    "surface": "workflow",
+                    "name": str(item.get("name") or ""),
+                    "status": item["lifecycle_state"],
+                    "object_id": workflow_id,
+                    "summary": str(spec.get("summary") or ""),
+                }
+            )
         except Exception as exc:
             item["lifecycle_state"] = _error_state(exc)
             item["blocking_reason"] = str(exc)
             report.append({"surface": "workflow", "name": str(item.get("name") or ""), "status": item["lifecycle_state"], "error": str(exc)})
+
+
+async def _apply_automations(
+    app_token: str,
+    assets: dict[str, Any],
+    report: list[dict[str, Any]],
+    *,
+    force: bool,
+    applied_at: int,
+) -> None:
+    specs = build_automation_specs()
+    for item, spec in zip(_asset_list(assets, "automation_templates"), specs):
+        if not force and str(item.get("lifecycle_state") or "") == "created":
+            report.append({"surface": "automation", "name": str(item.get("name") or ""), "status": "skipped", "reason": "already_created"})
+            continue
+        try:
+            resp = await cli_base("+workflow-create", "--base-token", app_token, "--json", _json(spec["body"]))
+            data = _resp_data(resp)
+            workflow_id = str(data.get("workflow_id") or "")
+            if workflow_id:
+                await cli_base("+workflow-enable", "--base-token", app_token, "--workflow-id", workflow_id)
+            item["lifecycle_state"] = "created" if workflow_id else "manual_finish_required"
+            item["cloud_object_id"] = workflow_id
+            item["applied_at"] = applied_at
+            item["next_step"] = "继续在飞书工作流中把消息、任务、审批和负责人映射替换为真实业务动作"
+            item["blocking_reason"] = "" if workflow_id else "自动化 scaffold 创建后未返回 workflow_id"
+            report.append(
+                {
+                    "surface": "automation",
+                    "name": str(item.get("name") or ""),
+                    "status": item["lifecycle_state"],
+                    "object_id": workflow_id,
+                    "summary": str(spec.get("summary") or ""),
+                }
+            )
+        except Exception as exc:
+            item["lifecycle_state"] = _error_state(exc)
+            item["blocking_reason"] = str(exc)
+            report.append({"surface": "automation", "name": str(item.get("name") or ""), "status": item["lifecycle_state"], "error": str(exc)})
 
 
 async def _apply_dashboards(
@@ -166,47 +217,18 @@ async def _apply_dashboards(
     force: bool,
     applied_at: int,
 ) -> None:
-    dashboard_specs = [
-        (
-            "管理汇报总览",
-            table_ids["task"],
-            [
-                ("analysis_tasks_total", "分析任务总量", "statistics", {"table_name": "分析任务", "count_all": True}),
-                ("workflow_route_mix", "工作流路由分布", "pie", {"table_name": "分析任务", "count_all": True, "group_by": [{"field_name": "工作流路由", "mode": "integrated"}]}),
-                ("native_text", "看板说明", "text", {"text": "# 管理汇报总览\n\n工作流路由、待拍板、待执行、异常任务一屏汇总"}),
-            ],
-        ),
-        (
-            "证据与评审看板",
-            table_ids.get("evidence", table_ids["task"]),
-            [
-                ("evidence_total", "证据链总量", "statistics", {"table_name": "证据链", "count_all": True}),
-                ("evidence_grade_mix", "证据等级分布", "pie", {"table_name": "证据链", "count_all": True, "group_by": [{"field_name": "证据等级", "mode": "integrated"}]}),
-                ("native_text", "看板说明", "text", {"text": "# 证据与评审看板\n\n围绕硬证据、待验证、CEO 汇总构建原生证据看板"}),
-            ],
-        ),
-        (
-            "交付异常看板",
-            table_ids["task"],
-            [
-                ("exception_total", "异常任务总量", "statistics", {"table_name": "分析任务", "count_all": True, "filter": {"conjunction": "and", "conditions": [{"field_name": "异常状态", "operator": "is", "value": "已异常"}]}}),
-                ("exception_type_mix", "异常类型分布", "pie", {"table_name": "分析任务", "count_all": True, "group_by": [{"field_name": "异常类型", "mode": "integrated"}], "filter": {"conjunction": "and", "conditions": [{"field_name": "异常状态", "operator": "is", "value": "已异常"}]}}),
-                ("native_text", "看板说明", "text", {"text": "# 交付异常看板\n\n围绕拍板滞留、执行超期、复核超时、复盘滞留构建异常雷达"}),
-            ],
-        ),
-    ]
+    dashboard_specs = build_dashboard_specs()
     for item, spec in zip(_asset_list(assets, "dashboard_blueprints"), dashboard_specs):
         if not force and str(item.get("lifecycle_state") or "") == "created":
             report.append({"surface": "dashboard", "name": str(item.get("name") or ""), "status": "skipped", "reason": "already_created"})
             continue
-        name, source_table_id, block_specs = spec
         try:
             created = await cli_base(
                 "+dashboard-create",
                 "--base-token",
                 app_token,
                 "--name",
-                name,
+                str(spec["name"]),
                 "--theme-style",
                 "SimpleBlue",
             )
@@ -214,8 +236,8 @@ async def _apply_dashboards(
             dashboard_id = str(data.get("dashboard_id") or "")
             if dashboard_id:
                 created_blocks: list[str] = []
-                for _, block_name, block_type, block_config in block_specs:
-                    normalized = _normalize_block_config(block_config, table_ids, source_table_id)
+                for _, block_name, block_type, block_config in spec["block_specs"]:
+                    normalized = _normalize_block_config(block_config, table_ids, table_ids["task"])
                     block_resp = await cli_base(
                         "+dashboard-block-create",
                         "--base-token",
@@ -236,11 +258,20 @@ async def _apply_dashboards(
                     await cli_base("+dashboard-arrange", "--base-token", app_token, "--dashboard-id", dashboard_id)
             item["lifecycle_state"] = "created" if dashboard_id else "manual_finish_required"
             item["cloud_object_id"] = dashboard_id
-            item["cloud_block_count"] = len(block_specs) if dashboard_id else 0
+            item["cloud_block_count"] = len(spec["block_specs"]) if dashboard_id else 0
             item["applied_at"] = applied_at
             item["next_step"] = "可继续在飞书仪表盘中补更多图表块并按需智能重排"
             item["blocking_reason"] = "" if dashboard_id else "仪表盘创建返回中缺少 dashboard_id"
-            report.append({"surface": "dashboard", "name": str(item.get("name") or ""), "status": item["lifecycle_state"], "object_id": dashboard_id, "block_count": item.get("cloud_block_count", 0)})
+            report.append(
+                {
+                    "surface": "dashboard",
+                    "name": str(item.get("name") or ""),
+                    "status": item["lifecycle_state"],
+                    "object_id": dashboard_id,
+                    "block_count": item.get("cloud_block_count", 0),
+                    "summary": str(spec.get("narrative") or ""),
+                }
+            )
         except Exception as exc:
             item["lifecycle_state"] = _error_state(exc)
             item["blocking_reason"] = str(exc)
@@ -255,22 +286,25 @@ async def _apply_roles(
     force: bool,
     applied_at: int,
 ) -> None:
-    role_specs = [
-        _role_body("高管交付面", ["分析任务", "综合报告", "交付动作"]),
-        _role_body("执行负责人工作面", ["分析任务", "交付动作", "交付结果归档"]),
-        _role_body("复核负责人工作面", ["分析任务", "证据链", "产出评审", "复核历史"]),
-    ]
-    for item, body in zip(_asset_list(assets, "role_blueprints"), role_specs):
+    role_specs = build_role_specs()
+    for item, spec in zip(_asset_list(assets, "role_blueprints"), role_specs):
         if not force and str(item.get("lifecycle_state") or "") == "created":
             report.append({"surface": "role", "name": str(item.get("name") or ""), "status": "skipped", "reason": "already_created"})
             continue
         try:
-            await cli_base("+role-create", "--base-token", app_token, "--json", _json(body))
+            await cli_base("+role-create", "--base-token", app_token, "--json", _json(spec["config"]))
             item["lifecycle_state"] = "created"
             item["applied_at"] = applied_at
             item["next_step"] = "继续在飞书中给该角色分配成员，并细化字段/视图级权限"
             item["blocking_reason"] = ""
-            report.append({"surface": "role", "name": str(item.get("name") or ""), "status": "created"})
+            report.append(
+                {
+                    "surface": "role",
+                    "name": str(item.get("name") or ""),
+                    "status": "created",
+                    "summary": str(spec.get("native_goal") or ""),
+                }
+            )
         except Exception as exc:
             item["lifecycle_state"] = _error_state(exc)
             item["blocking_reason"] = str(exc)
@@ -312,52 +346,6 @@ def _table_name_by_id(table_ids: dict[str, str], table_id: str) -> str:
         table_ids.get("template"): "模板配置中心",
     }
     return mapping.get(table_id, "分析任务")
-
-
-def _workflow_body(title: str, table_name: str, watched_field_name: str) -> dict[str, Any]:
-    token = str(int(time.time() * 1000))
-    return {
-        "client_token": token,
-        "title": title,
-        "steps": [
-            {
-                "id": "step_trigger",
-                "type": "AddRecordTrigger",
-                "title": "新增记录时触发",
-                "next": "step_notify",
-                "data": {
-                    "table_name": table_name,
-                    "watched_field_name": watched_field_name,
-                    "condition_list": None,
-                },
-            },
-            {
-                "id": "step_notify",
-                "type": "LarkMessageAction",
-                "title": "发送原生工作流提示",
-                "next": None,
-                "data": {
-                    "receiver": [],
-                    "send_to_everyone": True,
-                    "title": [{"value_type": "text", "value": title}],
-                    "content": [{"value_type": "text", "value": "该工作流已由多 Agent 交付系统自动创建，请在飞书工作流中继续补齐真实业务动作。"}],
-                    "btn_list": [],
-                },
-            },
-        ],
-    }
-
-
-def _role_body(role_name: str, table_names: list[str]) -> dict[str, Any]:
-    return {
-        "role_name": role_name,
-        "role_type": "custom_role",
-        "base_rule_map": {
-            "copy": False,
-            "download": False,
-        },
-        "table_rule_map": {table_name: {"perm": "read_only"} for table_name in table_names},
-    }
 
 
 def _normalize_block_config(block_config: dict[str, Any], table_ids: dict[str, str], source_table_id: str) -> dict[str, Any]:

@@ -173,6 +173,14 @@ const TASK_SOURCE_OPTIONS = ['手工创建', '表单提交', '跟进任务', '�
 const BUSINESS_OWNER_OPTIONS = ['综合经营', '增长', '产品', '内容', '运营', '财务'] as const;
 const AUDIENCE_LEVEL_OPTIONS = ['负责人', '部门管理层', 'CEO / CXO'] as const;
 const STATUS_ORDER = ['待分析', '分析中', '已完成', '已归档'] as const;
+type NativeSurface = 'form' | 'automation' | 'workflow' | 'dashboard' | 'role';
+const NATIVE_SURFACE_OPTIONS: Array<{ key: NativeSurface; label: string; note: string }> = [
+  { key: 'form', label: '表单', note: '任务收集入口' },
+  { key: 'automation', label: '自动化', note: '条件触发与提醒' },
+  { key: 'workflow', label: '工作流', note: '责任流转与动作沉淀' },
+  { key: 'dashboard', label: '仪表盘', note: '管理汇报与异常雷达' },
+  { key: 'role', label: '角色', note: '高级权限工作面' },
+];
 const ASSET_STATE_STYLE: Record<string, string> = {
   created: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   api_supported: 'border-sky-200 bg-sky-50 text-sky-700',
@@ -400,6 +408,7 @@ export default function BitableWorkflow() {
   const [setupMode, setSetupMode] = useState<(typeof SETUP_MODE_OPTIONS)[number]>('seed_demo');
   const [setupBaseType, setSetupBaseType] = useState<(typeof BASE_TYPE_OPTIONS)[number]>('validation');
   const [setupApplyNative, setSetupApplyNative] = useState(true);
+  const [nativeApplySurfaces, setNativeApplySurfaces] = useState<NativeSurface[]>(['form', 'automation', 'workflow', 'dashboard', 'role']);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [reportRecords, setReportRecords] = useState<TaskRecord[]>([]);
   const [evidenceRecords, setEvidenceRecords] = useState<TaskRecord[]>([]);
@@ -605,7 +614,7 @@ export default function BitableWorkflow() {
     if (!setup) return;
     setLoading(true);
     try {
-      const response = await applyNativeManifest();
+      const response = await applyNativeManifest({ surfaces: nativeApplySurfaces });
       setSetupState((prev) =>
         prev
           ? {
@@ -622,6 +631,10 @@ export default function BitableWorkflow() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleNativeSurface = (surface: NativeSurface) => {
+    setNativeApplySurfaces((prev) => (prev.includes(surface) ? prev.filter((item) => item !== surface) : [...prev, surface]));
   };
 
   const handleStop = async () => {
@@ -964,6 +977,28 @@ export default function BitableWorkflow() {
   const nativeInstallOrder = objectList(setup?.native_manifest?.install_order);
   const nativeCommandPacks = objectList(setup?.native_manifest?.command_packs);
   const nativeApplyReport = objectList(setup?.native_apply_report);
+  const nativeReadiness = useMemo(() => {
+    const counts = nativeAssetCounts || {};
+    const total = Object.values(counts).reduce((sum, value) => sum + numberValue(value), 0);
+    const created = numberValue(counts.created);
+    const percent = total > 0 ? Math.round((created / total) * 100) : 0;
+    return { total, created, percent };
+  }, [nativeAssetCounts]);
+  const nativeOpsBoard = useMemo(() => {
+    let directReport = 0;
+    let pendingApproval = 0;
+    let pendingExecution = 0;
+    let pendingReview = 0;
+    let exceptions = 0;
+    tasks.forEach((task) => {
+      if (taskWorkflowRoute(task) === '直接汇报') directReport += 1;
+      if (booleanValue(task.fields?.待拍板确认)) pendingApproval += 1;
+      if (booleanValue(task.fields?.待执行确认)) pendingExecution += 1;
+      if (booleanValue(task.fields?.待安排复核)) pendingReview += 1;
+      if (taskExceptionStatus(task) === '已异常') exceptions += 1;
+    });
+    return { directReport, pendingApproval, pendingExecution, pendingReview, exceptions };
+  }, [tasks]);
   const selectedTaskNumber = textValue(taskField(selectedTask, '任务编号'));
   const selectedProgress = selectedLive
     ? Math.max(safeProgress(taskField(selectedTask, '进度')), selectedLive.progress * 100)
@@ -1277,6 +1312,33 @@ export default function BitableWorkflow() {
                     </Button>
                   )}
                 </div>
+                {setup && (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Apply Scope</div>
+                        <div className="mt-1 text-sm font-medium text-slate-900">本次原生化执行范围</div>
+                      </div>
+                      <div className="text-xs text-slate-500">选中的面会传给 `native-manifest/apply`</div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {NATIVE_SURFACE_OPTIONS.map((item) => {
+                        const active = nativeApplySurfaces.includes(item.key);
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => toggleNativeSurface(item.key)}
+                            className={`rounded-full border px-3 py-2 text-left text-xs transition ${active ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600'}`}
+                          >
+                            {item.label}
+                            <span className={`ml-2 ${active ? 'text-slate-200' : 'text-slate-400'}`}>{item.note}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div className="mt-5 grid gap-3 rounded-2xl border border-slate-200 bg-white/88 p-4">
                   <Input
                     value={setupName}
@@ -1457,7 +1519,63 @@ export default function BitableWorkflow() {
                       </div>
                     </div>
                   );
-                })}
+                  })}
+              </div>
+
+              <div className="mt-6 grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+                <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(15,23,42,0.04),rgba(255,255,255,0.98),rgba(16,185,129,0.08))] p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Native Score</div>
+                      <div className="mt-2 text-xl font-semibold text-slate-950">原生化落地进度</div>
+                    </div>
+                    <div className="text-4xl font-semibold text-slate-950">{nativeReadiness.percent}%</div>
+                  </div>
+                  <div className="mt-4">
+                    <Progress value={nativeReadiness.percent} className="h-3" />
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-white/70 bg-white/90 p-4">
+                      <div className="text-xs uppercase tracking-[0.14em] text-slate-500">已创建</div>
+                      <div className="mt-2 text-2xl font-semibold text-emerald-700">{nativeReadiness.created}</div>
+                      <div className="mt-1 text-xs text-slate-500">真正落到飞书云侧的原生对象</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/70 bg-white/90 p-4">
+                      <div className="text-xs uppercase tracking-[0.14em] text-slate-500">总资产</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-950">{nativeReadiness.total}</div>
+                      <div className="mt-1 text-xs text-slate-500">表单、自动化、工作流、仪表盘、角色总和</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/70 bg-white/90 p-4">
+                      <div className="text-xs uppercase tracking-[0.14em] text-slate-500">本次选择</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-950">{nativeApplySurfaces.length}</div>
+                      <div className="mt-1 text-xs text-slate-500">一键原生化会作用到这些工作面</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200 bg-white/92 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Ops Snapshot</div>
+                      <div className="mt-2 text-xl font-semibold text-slate-950">交付运营快照</div>
+                    </div>
+                    <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">直接来自主表字段</div>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-5">
+                    {[
+                      { label: '直接汇报', value: nativeOpsBoard.directReport, tone: 'text-emerald-700' },
+                      { label: '待拍板', value: nativeOpsBoard.pendingApproval, tone: 'text-rose-700' },
+                      { label: '待执行', value: nativeOpsBoard.pendingExecution, tone: 'text-sky-700' },
+                      { label: '待复核', value: nativeOpsBoard.pendingReview, tone: 'text-amber-700' },
+                      { label: '已异常', value: nativeOpsBoard.exceptions, tone: 'text-violet-700' },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                        <div className="text-xs uppercase tracking-[0.14em] text-slate-500">{item.label}</div>
+                        <div className={`mt-2 text-2xl font-semibold ${item.tone}`}>{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="mt-6 grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
@@ -1654,6 +1772,7 @@ export default function BitableWorkflow() {
                           <div className="mt-3 grid gap-2 text-sm text-slate-700">
                             {textValue(item.object_id) && <div>对象 ID：{textValue(item.object_id)}</div>}
                             {typeof item.block_count === 'number' && Number(item.block_count) > 0 && <div>创建图表块：{String(item.block_count)}</div>}
+                            {textValue(item.summary) && <div>业务意图：{textValue(item.summary)}</div>}
                             {textValue(item.reason) && <div>跳过原因：{textValue(item.reason)}</div>}
                             {textValue(item.error) && <div className="text-rose-700">错误：{textValue(item.error)}</div>}
                           </div>
