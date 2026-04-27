@@ -103,6 +103,42 @@ class TestFollowupTasks:
             for call in mock_action.await_args_list
         )
 
+    @pytest.mark.asyncio
+    async def test_followup_tasks_skip_duplicate_open_record(self):
+        result = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[],
+            action_items=[],
+            raw_output="完成",
+            decision_items=[
+                {"summary": "补齐线索质量分析", "type": "need_data"},
+            ],
+        )
+        existing = [{
+            "record_id": "rec_existing",
+            "fields": {"状态": Status.PENDING},
+        }]
+        with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(return_value=existing)):
+            with patch("app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields", new=AsyncMock()) as mock_create:
+                with patch("app.bitable_workflow.scheduler._write_action_record", new=AsyncMock()) as mock_action:
+                    with patch("app.bitable_workflow.scheduler._write_automation_log", new=AsyncMock()):
+                        from app.bitable_workflow.scheduler import _create_followup_tasks
+
+                        await _create_followup_tasks(
+                            "app_token",
+                            "tbl_task",
+                            "经营复盘",
+                            result,
+                            action_tid="tbl_action",
+                            automation_log_tid="tbl_automation_log",
+                            route="补数复核",
+                        )
+
+        mock_create.assert_not_awaited()
+        assert mock_action.await_args.args[3] == "自动跟进任务"
+        assert mock_action.await_args.args[4] == "已跳过"
+
 
 class TestSendCompletionMessage:
     @pytest.mark.asyncio

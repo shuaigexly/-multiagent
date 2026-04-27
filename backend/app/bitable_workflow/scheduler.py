@@ -1451,8 +1451,55 @@ async def _create_followup_tasks(
     from app.bitable_workflow import schema as _schema
     for item, kind in analysis_items:
         purpose = "补数核验" if kind == "need_data" else "管理决策"
+        followup_title = f"[跟进] {truncate_with_marker(item, 50, '...[截断]')}"
+        try:
+            safe_title = bitable_ops.quote_filter_value(followup_title)
+            existing_rows = await bitable_ops.list_records(
+                app_token,
+                task_tid,
+                filter_expr=f"CurrentValue.[任务标题]={safe_title}",
+                max_records=20,
+            )
+            duplicate_row = next(
+                (
+                    row for row in existing_rows
+                    if (row.get("fields") or {}).get("状态") in {Status.PENDING, Status.ANALYZING}
+                ),
+                None,
+            )
+            if duplicate_row:
+                logger.info(
+                    "Skip duplicate follow-up task for [%s], existing record=%s status=%s",
+                    task_title,
+                    duplicate_row.get("record_id"),
+                    (duplicate_row.get("fields") or {}).get("状态"),
+                )
+                await _write_action_record(
+                    app_token,
+                    action_tid,
+                    task_title,
+                    "自动跟进任务",
+                    "已跳过",
+                    route=route,
+                    content=f"已存在未关闭跟进任务：{followup_title}",
+                    record_id=duplicate_row.get("record_id") or "",
+                )
+                await _write_automation_log(
+                    app_token,
+                    automation_log_tid,
+                    task_title,
+                    "跟进任务创建",
+                    "已跳过",
+                    route=route,
+                    trigger="CEO 助理行动项",
+                    summary=f"已存在未关闭跟进任务：{followup_title}",
+                    record_id=duplicate_row.get("record_id") or "",
+                )
+                continue
+        except Exception as exc:
+            logger.warning("Follow-up dedupe lookup failed for [%s]: %s", task_title, exc)
         record_fields: dict = {
-            "任务标题": f"[跟进] {truncate_with_marker(item, 50, '...[截断]')}",
+            "任务标题": followup_title,
             "分析维度": "综合分析",
             "优先级": "P2 中",
             "输出目的": purpose,
