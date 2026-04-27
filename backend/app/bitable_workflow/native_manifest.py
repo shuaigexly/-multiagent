@@ -85,7 +85,7 @@ def build_native_manifest(
             "key": "form",
             "label": "原生表单",
             "surface": "form",
-            "status": _surface_state(native_assets, "form"),
+            "status": _form_pack_state(native_assets),
             "commands": _form_commands(app_token, table_ids["task"], form_spec),
             "notes": [
                 "当前 setup 已创建表单视图；这里补的是独立表单对象与题目。",
@@ -320,3 +320,13 @@ def _advperm_state(native_assets: dict[str, Any]) -> str:
     if state:
         return state
     return _surface_state(native_assets, "role")
+
+
+def _form_pack_state(native_assets: dict[str, Any]) -> str:
+    forms = native_assets.get("form_blueprints") or []
+    if not isinstance(forms, list) or not forms:
+        return "manual_finish_required"
+    form = forms[0] or {}
+    if str(form.get("cloud_object_id") or "").strip():
+        return str(form.get("lifecycle_state") or "created")
+    return "manual_finish_required"

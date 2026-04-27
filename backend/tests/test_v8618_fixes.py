@@ -170,6 +170,7 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
     assert result["native_manifest"]["manifest_version"] == "v2"
     assert result["native_manifest"]["install_order"][0]["title"] == "启用高级权限"
     assert "lark-cli base +advperm-enable" in result["native_manifest"]["command_packs"][0]["commands"][0]
+    assert result["native_manifest"]["command_packs"][1]["status"] == "manual_finish_required"
     assert any("+form-questions-create" in command for command in result["native_manifest"]["command_packs"][1]["commands"])
     assert any("A1 新任务入场提醒" in command for command in result["native_manifest"]["command_packs"][2]["commands"])
     assert any("高管交付面" in command for command in result["native_manifest"]["command_packs"][5]["commands"])
@@ -237,6 +238,7 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     assert result["native_assets"]["manual_finish_checklist"][0]["done"] is True
     assert result["native_assets"]["manual_finish_checklist"][3]["done"] is True
     assert result["native_manifest"]["manifest_version"] == "v2"
+    assert result["native_manifest"]["command_packs"][1]["status"] == "created"
     assert created_logs
     assert created_logs[0]["fields"]["触发来源"] == "native_manifest.apply"
 
@@ -406,7 +408,7 @@ def test_native_manifest_command_pack_status_tracks_native_assets():
         table_ids={"task": "tbl_task"},
         base_meta={"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
         native_assets={
-            "form_blueprints": [{"lifecycle_state": "created"}],
+            "form_blueprints": [{"lifecycle_state": "created", "cloud_object_id": "frm_001"}],
             "automation_templates": [{"lifecycle_state": "manual_finish_required"}],
             "workflow_blueprints": [{"lifecycle_state": "created"}, {"lifecycle_state": "blueprint_ready"}],
             "dashboard_blueprints": [{"lifecycle_state": "permission_blocked"}],
