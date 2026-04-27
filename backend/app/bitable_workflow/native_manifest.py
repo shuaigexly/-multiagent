@@ -32,7 +32,7 @@ def build_native_manifest(
         {
             "step": 1,
             "title": "启用高级权限",
-            "surface": "role",
+            "surface": "advperm",
             "why": "角色工作面和高级权限依赖先启用 Base 高级权限。",
         },
         {
@@ -71,7 +71,7 @@ def build_native_manifest(
         {
             "key": "advperm",
             "label": "高级权限",
-            "surface": "role",
+            "surface": "advperm",
             "status": _advperm_state(native_assets),
             "commands": [
                 f"lark-cli base +advperm-enable --base-token {app_token}",
