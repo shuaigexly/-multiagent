@@ -381,6 +381,46 @@ async def test_workflow_confirm_updates_management_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_workflow_confirm_rejects_mismatched_action(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from fastapi import HTTPException
+    from app.api import workflow
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "等待拍板",
+                "待拍板确认": True,
+                "待执行确认": False,
+            }
+        }
+
+    update_mock = AsyncMock()
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", update_mock)
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_1",
+        action="execute",
+        actor="CEO",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await workflow.workflow_confirm(req)
+
+    assert exc_info.value.status_code == 409
+    assert "等待拍板" in exc_info.value.detail
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_delete_task_rejects_running_task_before_hard_delete():
     from fastapi import HTTPException
     from app.api import tasks

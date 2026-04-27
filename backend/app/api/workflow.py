@@ -159,6 +159,27 @@ def _safe_int(value: object) -> int:
         return 0
 
 
+def _confirm_action_allowed(action: str, task_fields: dict[str, object]) -> tuple[bool, str]:
+    route = str(task_fields.get("工作流路由") or "").strip() or "未设置"
+    pending_approval = _boolish(task_fields.get("待拍板确认"))
+    pending_execution = _boolish(task_fields.get("待执行确认"))
+    pending_retro = _boolish(task_fields.get("待复盘确认"))
+    executed = _boolish(task_fields.get("是否已执行落地"))
+
+    if action == "approve":
+        allowed = pending_approval or route == "等待拍板"
+        expected = "等待拍板"
+    elif action == "execute":
+        allowed = pending_execution or route == "直接执行"
+        expected = "直接执行"
+    else:
+        allowed = pending_retro or executed
+        expected = "待复盘确认"
+    if allowed:
+        return True, ""
+    return False, f"当前任务处于 {route}，不能执行 {action}；期望阶段为 {expected}"
+
+
 async def _resolve_seed_template_defaults(
     app_token: str,
     template_name: str,
@@ -472,6 +493,10 @@ async def workflow_confirm(req: ConfirmRequest):
         route = str(task_fields.get("工作流路由") or "").strip()
     except Exception as exc:
         logger.warning("confirm fetch task record failed record=%s: %s", req.record_id, exc)
+    if task_fields:
+        allowed, reason = _confirm_action_allowed(req.action, task_fields)
+        if not allowed:
+            raise HTTPException(status_code=409, detail=reason)
     fields: dict[str, object] = {}
     optional_keys: list[str] = []
     action_name = ""
