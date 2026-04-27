@@ -689,3 +689,43 @@ async def test_write_native_install_logs_maps_manual_finish_to_pending_completio
 
     assert written[0]["fields"]["执行状态"] == "待补完"
     assert written[1]["fields"]["执行状态"] == "执行失败"
+
+
+def test_native_role_field_rules_cover_all_non_system_fields():
+    from app.bitable_workflow import schema as workflow_schema
+    from app.bitable_workflow.native_specs import (
+        _execution_action_field_rule,
+        _execution_archive_field_rule,
+        _execution_task_field_rule,
+        _review_history_field_rule,
+        _review_result_field_rule,
+        _review_task_field_rule,
+    )
+
+    def expected_fields(fields: list[dict]) -> set[str]:
+        excluded_types = {
+            workflow_schema.CREATED_TIME_FIELD_TYPE,
+            workflow_schema.MODIFIED_TIME_FIELD_TYPE,
+            workflow_schema.AUTO_NUMBER_FIELD_TYPE,
+        }
+        return {
+            str(field["field_name"])
+            for field in fields
+            if str(field.get("field_name") or "").strip() and field.get("type") not in excluded_types
+        }
+
+    task_expected = expected_fields(workflow_schema.TASK_FIELDS)
+    assert set(_execution_task_field_rule()["field_perms"].keys()) == task_expected
+    assert set(_review_task_field_rule()["field_perms"].keys()) == task_expected
+
+    action_expected = expected_fields(workflow_schema.ACTION_FIELDS)
+    assert set(_execution_action_field_rule()["field_perms"].keys()) == action_expected
+
+    archive_expected = expected_fields(workflow_schema.DELIVERY_ARCHIVE_FIELDS)
+    assert set(_execution_archive_field_rule()["field_perms"].keys()) == archive_expected
+
+    review_expected = expected_fields(workflow_schema.REVIEW_FIELDS)
+    assert set(_review_result_field_rule()["field_perms"].keys()) == review_expected
+
+    review_history_expected = expected_fields(workflow_schema.REVIEW_HISTORY_FIELDS)
+    assert set(_review_history_field_rule()["field_perms"].keys()) == review_history_expected

@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from app.bitable_workflow import schema as workflow_schema
+
 
 def build_form_spec() -> dict[str, Any]:
     questions = [
@@ -948,14 +950,26 @@ def _filtered_edit_table_rule(
     }
 
 
-def _specify_field_rule(edit_fields: list[str], read_fields: list[str], hidden_fields: list[str] | None = None) -> dict[str, Any]:
+def _specify_field_rule(
+    all_fields: list[dict[str, Any]],
+    edit_fields: list[str],
+    read_fields: list[str],
+    hidden_fields: list[str] | None = None,
+) -> dict[str, Any]:
     field_perms: dict[str, str] = {}
+    allowed = set(_field_names(all_fields))
+    excluded = set(hidden_fields or [])
+    for field_name in allowed:
+        field_perms[field_name] = "read"
     for field_name in edit_fields:
-        field_perms[field_name] = "edit"
+        if field_name in allowed:
+            field_perms[field_name] = "edit"
     for field_name in read_fields:
-        field_perms.setdefault(field_name, "read")
-    for field_name in hidden_fields or []:
-        field_perms[field_name] = "no_perm"
+        if field_name in allowed:
+            field_perms.setdefault(field_name, "read")
+    for field_name in excluded:
+        if field_name in allowed:
+            field_perms[field_name] = "no_perm"
     return {"field_perm_mode": "specify", "field_perms": field_perms}
 
 
@@ -997,11 +1011,12 @@ def _execution_task_field_rule() -> dict[str, Any]:
         "创建时间",
         "最近更新",
     ]
-    return _specify_field_rule(edit_fields, read_fields, ["任务图像"])
+    return _specify_field_rule(workflow_schema.TASK_FIELDS, edit_fields, read_fields, ["任务图像"])
 
 
 def _execution_action_field_rule() -> dict[str, Any]:
     return _specify_field_rule(
+        workflow_schema.ACTION_FIELDS,
         ["动作状态", "执行结果", "动作内容"],
         ["动作标题", "任务标题", "动作类型", "工作流路由", "关联记录ID", "生成时间"],
     )
@@ -1009,6 +1024,7 @@ def _execution_action_field_rule() -> dict[str, Any]:
 
 def _execution_archive_field_rule() -> dict[str, Any]:
     return _specify_field_rule(
+        workflow_schema.DELIVERY_ARCHIVE_FIELDS,
         ["归档状态", "执行负责人", "关联记录ID"],
         ["归档标题", "任务标题", "任务编号", "汇报版本号", "工作流路由", "最新评审动作", "一句话结论", "管理摘要", "首要动作", "汇报就绪度", "工作流消息包", "汇报对象", "复核负责人", "生成时间"],
     )
@@ -1057,11 +1073,12 @@ def _review_task_field_rule() -> dict[str, Any]:
         "创建时间",
         "最近更新",
     ]
-    return _specify_field_rule(edit_fields, read_fields, ["任务图像"])
+    return _specify_field_rule(workflow_schema.TASK_FIELDS, edit_fields, read_fields, ["任务图像"])
 
 
 def _review_result_field_rule() -> dict[str, Any]:
     return _specify_field_rule(
+        workflow_schema.REVIEW_FIELDS,
         ["推荐动作", "评审摘要", "真实性", "决策性", "可执行性", "闭环准备度", "需补数事项"],
         ["任务标题", "工作流路由", "生成时间", "关联记录ID"],
     )
@@ -1069,6 +1086,24 @@ def _review_result_field_rule() -> dict[str, Any]:
 
 def _review_history_field_rule() -> dict[str, Any]:
     return _specify_field_rule(
+        workflow_schema.REVIEW_HISTORY_FIELDS,
         ["推荐动作", "触发原因", "复核结论", "新旧结论差异", "需补数事项"],
         ["复核标题", "任务标题", "任务编号", "复核轮次", "工作流路由", "前次评审动作", "关联记录ID", "生成时间"],
     )
+
+
+def _field_names(fields: list[dict[str, Any]]) -> list[str]:
+    excluded_types = {
+        workflow_schema.CREATED_TIME_FIELD_TYPE,
+        workflow_schema.MODIFIED_TIME_FIELD_TYPE,
+        workflow_schema.AUTO_NUMBER_FIELD_TYPE,
+    }
+    names: list[str] = []
+    for field in fields:
+        field_name = str(field.get("field_name") or "").strip()
+        if not field_name:
+            continue
+        if field.get("type") in excluded_types:
+            continue
+        names.append(field_name)
+    return names
