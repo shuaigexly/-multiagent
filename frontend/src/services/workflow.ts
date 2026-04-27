@@ -80,12 +80,31 @@ export interface RecordListResponse<T = TaskRecord> {
 
 export async function setupWorkflow(
   name = '内容运营虚拟组织',
-  options?: { mode?: 'seed_demo' | 'prod_empty' | 'template_only'; base_type?: 'template' | 'production' | 'validation' },
+  options?: {
+    mode?: 'seed_demo' | 'prod_empty' | 'template_only';
+    base_type?: 'template' | 'production' | 'validation';
+    apply_native?: boolean;
+  },
 ): Promise<WorkflowSetup> {
   const resp = await api.post('/api/v1/workflow/setup', {
     name,
     mode: options?.mode ?? 'seed_demo',
     base_type: options?.base_type ?? 'validation',
+    apply_native: options?.apply_native ?? false,
+  });
+  return resp.data;
+}
+
+export async function applyNativeManifest(
+  options?: { surfaces?: Array<'form' | 'workflow' | 'dashboard' | 'role'>; force?: boolean },
+): Promise<{
+  report: Array<Record<string, unknown>>;
+  native_assets: WorkflowSetup['native_assets'];
+  native_manifest: WorkflowSetup['native_manifest'];
+}> {
+  const resp = await api.post('/api/v1/workflow/native-manifest/apply', {
+    surfaces: options?.surfaces ?? [],
+    force: options?.force ?? false,
   });
   return resp.data;
 }

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
 from app.bitable_workflow import bitable_ops, progress_broker, runner
+from app.bitable_workflow.native_installer import apply_native_manifest
 from app.bitable_workflow.scheduler import _derive_native_bitable_contract
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
 from app.core.audit import record_audit
@@ -34,6 +35,7 @@ class SetupRequest(BaseModel):
     name: str = "内容运营虚拟组织"
     mode: str = "seed_demo"
     base_type: str = "validation"
+    apply_native: bool = False
 
     @field_validator("mode")
     @classmethod
@@ -121,6 +123,20 @@ class ConfirmRequest(BaseModel):
         return v
 
 
+class ApplyNativeRequest(BaseModel):
+    surfaces: list[str] = Field(default_factory=list)
+    force: bool = False
+
+    @field_validator("surfaces")
+    @classmethod
+    def check_surfaces(cls, values: list[str]) -> list[str]:
+        valid = {"form", "workflow", "dashboard", "role"}
+        invalid = [value for value in values if value not in valid]
+        if invalid:
+            raise ValueError(f"surfaces 只能包含: {sorted(valid)}")
+        return values
+
+
 def _boolish(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -196,11 +212,22 @@ async def workflow_setup(req: SetupRequest):
             detail="Workflow loop is running; call /stop first before re-setup",
         )
     result = await runner.setup_workflow(req.name, mode=req.mode, base_type=req.base_type)
+    if req.apply_native:
+        native_apply = await apply_native_manifest(
+            app_token=result["app_token"],
+            base_url=result["url"],
+            table_ids=result["table_ids"],
+            base_meta=result["base_meta"],
+            native_assets=result["native_assets"],
+        )
+        result["native_assets"] = native_apply["native_assets"]
+        result["native_manifest"] = native_apply["native_manifest"]
+        result["native_apply_report"] = native_apply["report"]
     _state.update(result)
     await record_audit(
         "workflow.setup",
         target=result.get("app_token", ""),
-        payload={"name": req.name, "url": result.get("url", ""), "mode": req.mode, "base_type": req.base_type},
+        payload={"name": req.name, "url": result.get("url", ""), "mode": req.mode, "base_type": req.base_type, "apply_native": req.apply_native},
     )
     return result
 
@@ -260,6 +287,34 @@ async def workflow_native_manifest():
         "base_meta": _state.get("base_meta") or {},
         "native_manifest": _state.get("native_manifest") or {},
     }
+
+
+@router.post("/native-manifest/apply", dependencies=[Depends(require_api_key)])
+async def workflow_apply_native_manifest(req: ApplyNativeRequest):
+    """执行飞书原生安装包，把 workflow/dashboard/role 等对象落到云侧。"""
+    app_token = str(_state.get("app_token") or "").strip()
+    table_ids = _state.get("table_ids") or {}
+    base_meta = _state.get("base_meta") or {}
+    native_assets = _state.get("native_assets") or {}
+    if not app_token or not table_ids or not native_assets:
+        raise HTTPException(status_code=409, detail="当前没有可执行原生化的 Base，请先完成 setup")
+    result = await apply_native_manifest(
+        app_token=app_token,
+        base_url=str(_state.get("url") or ""),
+        table_ids=table_ids,
+        base_meta=base_meta,
+        native_assets=native_assets,
+        surfaces=req.surfaces,
+        force=req.force,
+    )
+    _state["native_assets"] = result["native_assets"]
+    _state["native_manifest"] = result["native_manifest"]
+    await record_audit(
+        "workflow.native_manifest.apply",
+        target=app_token,
+        payload={"surfaces": req.surfaces or ["form", "workflow", "dashboard", "role"], "force": req.force},
+    )
+    return result
 
 
 @router.post("/seed", dependencies=[Depends(require_api_key)])

@@ -26,6 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { toast } from '@/hooks/use-toast';
 import {
+  applyNativeManifest,
   confirmTaskWorkflow,
   getStatus,
   listRecords,
@@ -392,6 +393,7 @@ export default function BitableWorkflow() {
   const [setupName, setSetupName] = useState('内容运营虚拟组织');
   const [setupMode, setSetupMode] = useState<(typeof SETUP_MODE_OPTIONS)[number]>('seed_demo');
   const [setupBaseType, setSetupBaseType] = useState<(typeof BASE_TYPE_OPTIONS)[number]>('validation');
+  const [setupApplyNative, setSetupApplyNative] = useState(true);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [reportRecords, setReportRecords] = useState<TaskRecord[]>([]);
   const [evidenceRecords, setEvidenceRecords] = useState<TaskRecord[]>([]);
@@ -567,6 +569,7 @@ export default function BitableWorkflow() {
       const response = await setupWorkflow(setupName.trim() || '内容运营虚拟组织', {
         mode: setupMode,
         base_type: setupBaseType,
+        apply_native: setupApplyNative,
       });
       setSetupState(response);
       toast({ title: '多维表格创建成功', description: response.url });
@@ -586,6 +589,28 @@ export default function BitableWorkflow() {
       toast({ title: '调度器已启动', description: '七岗协作已进入轮询模式' });
     } catch (err) {
       toast({ title: '启动失败', description: String(err), variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApplyNative = async () => {
+    if (!setup) return;
+    setLoading(true);
+    try {
+      const response = await applyNativeManifest();
+      setSetupState((prev) =>
+        prev
+          ? {
+              ...prev,
+              native_assets: response.native_assets,
+              native_manifest: response.native_manifest,
+            }
+          : prev,
+      );
+      toast({ title: '原生化执行完成', description: '已尝试创建飞书 workflow / dashboard / role 等原生对象' });
+    } catch (err) {
+      toast({ title: '原生化执行失败', description: String(err), variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -1229,6 +1254,11 @@ export default function BitableWorkflow() {
                   <Button variant="ghost" onClick={refreshTasks} disabled={!setup} className="h-10 rounded-full px-4">
                     <RefreshCw className="mr-2 h-4 w-4" /> 刷新
                   </Button>
+                  {setup && (
+                    <Button variant="outline" onClick={handleApplyNative} disabled={loading} className="h-10 rounded-full px-5">
+                      <Sparkles className="mr-2 h-4 w-4" /> 一键原生化
+                    </Button>
+                  )}
                 </div>
                 <div className="mt-5 grid gap-3 rounded-2xl border border-slate-200 bg-white/88 p-4">
                   <Input
@@ -1269,6 +1299,15 @@ export default function BitableWorkflow() {
                     <div>`template_only`：建模板 Base，适合复制出多个业务交付空间。</div>
                     <div>`validation / production / template`：明确这份 Base 的用途和验收口径。</div>
                   </div>
+                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={setupApplyNative}
+                      onChange={(e) => setSetupApplyNative(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    setup 后立即尝试创建飞书原生 workflow / dashboard / role
+                  </label>
                 </div>
                 {setup ? (
                   <div className="mt-5 space-y-3 rounded-2xl border border-slate-200 bg-white/85 p-4 text-sm">

@@ -68,6 +68,19 @@ async def cli_create_slides(
     return await _run_cli(args)
 
 
+async def cli_base(shortcut: str, *args: str) -> dict:
+    """Run a lark-base shortcut, for example `+advperm-enable` or `+dashboard-create`."""
+    cmd = [
+        "npx",
+        "--yes",
+        f"@larksuite/cli@{_LARK_CLI_VERSION}",
+        "lark-base",
+        shortcut,
+        *args,
+    ]
+    return await _run_cli(cmd)
+
+
 async def _run_cli(args: list[str]) -> dict:
     env = {
         **os.environ,

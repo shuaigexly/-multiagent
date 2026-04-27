@@ -329,10 +329,26 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 新增原生安装包能力：
 
 - `GET /api/v1/workflow/native-manifest`
+- `POST /api/v1/workflow/native-manifest/apply`
 - 返回内容包括：
   - `install_order`：先开高级权限、再补表单、再建 workflow / dashboard / role 的顺序
   - `command_packs`：按 `form / workflow / dashboard / role` 输出 `lark-cli base` 命令模板
   - `markdown`：可直接贴进文档或交接材料的原生安装说明
+
+现在还支持两种直接执行方式：
+
+- `setup` 时传 `apply_native=true`
+- setup 完成后调用 `POST /api/v1/workflow/native-manifest/apply`
+
+执行器会尝试：
+
+- 启用高级权限
+- 创建 / 补齐原生表单
+- 创建并启用 workflow scaffold
+- 创建 dashboard 和基础 block
+- 创建 role scaffold
+
+并把执行结果回写到 `native_assets` 的生命周期状态里。
 
 ### 注入真实数据源（让分析不再凭空估算）
 

@@ -36,6 +36,13 @@
 3. `markdown`
    - 一份适合直接复制到交接文档、项目 wiki、飞书文档里的原生安装说明
 
+另外还支持：
+
+- `POST /api/v1/workflow/native-manifest/apply`
+- 或 setup 时传 `apply_native=true`
+
+这会直接尝试把 `workflow / dashboard / role / form` 创建到飞书云侧，而不只是返回说明。
+
 ---
 
 ## 3. 当前原生化边界

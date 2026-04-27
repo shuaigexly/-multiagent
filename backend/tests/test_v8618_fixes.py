@@ -166,3 +166,53 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
     assert result["native_manifest"]["manifest_version"] == "v1"
     assert result["native_manifest"]["install_order"][0]["title"] == "启用高级权限"
     assert "lark-cli base +advperm-enable" in result["native_manifest"]["command_packs"][0]["commands"][0]
+
+
+@pytest.mark.asyncio
+async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
+    from app.bitable_workflow.native_installer import apply_native_manifest
+
+    async def fake_cli_base(shortcut: str, *args: str):
+        if shortcut == "+advperm-enable":
+            return {"ok": True, "data": {"success": True}}
+        if shortcut == "+form-create":
+            return {"ok": True, "data": {"id": "vew_form_created"}}
+        if shortcut == "+workflow-create":
+            return {"ok": True, "data": {"workflow_id": "wkf_auto_created"}}
+        if shortcut == "+workflow-enable":
+            return {"ok": True, "data": {"workflow_id": "wkf_auto_created", "status": "enabled"}}
+        if shortcut == "+dashboard-create":
+            return {"ok": True, "data": {"dashboard_id": "blk_auto_created"}}
+        if shortcut == "+dashboard-block-create":
+            return {"ok": True, "data": {"block": {"block_id": "cht_auto_created"}, "created": True}}
+        if shortcut == "+role-create":
+            return {"ok": True, "data": {"success": True}}
+        raise AssertionError(f"unexpected shortcut {shortcut}")
+
+    monkeypatch.setattr("app.bitable_workflow.native_installer.is_cli_available", lambda: True)
+    monkeypatch.setattr("app.bitable_workflow.native_installer.cli_base", fake_cli_base)
+
+    native_assets = {
+        "form_blueprints": [{"name": "任务收集表单", "lifecycle_state": "manual_finish_required"}],
+        "automation_templates": [],
+        "workflow_blueprints": [{"name": "W1", "lifecycle_state": "blueprint_ready"}],
+        "dashboard_blueprints": [{"name": "D1", "lifecycle_state": "blueprint_ready"}],
+        "role_blueprints": [{"name": "R1", "lifecycle_state": "blueprint_ready"}],
+        "manual_finish_checklist": [{}, {}, {"done": False}, {"done": False}, {"done": False}],
+    }
+    result = await apply_native_manifest(
+        app_token="app_token",
+        base_url="https://feishu.cn/base/app_token",
+        table_ids={"task": "tbl_task", "evidence": "tbl_evidence", "report": "tbl_report"},
+        base_meta={"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
+        native_assets=native_assets,
+        force=True,
+    )
+
+    assert result["native_assets"]["form_blueprints"][0]["lifecycle_state"] == "created"
+    assert result["native_assets"]["workflow_blueprints"][0]["lifecycle_state"] == "created"
+    assert result["native_assets"]["dashboard_blueprints"][0]["lifecycle_state"] == "created"
+    assert result["native_assets"]["role_blueprints"][0]["lifecycle_state"] == "created"
+    assert result["native_assets"]["overall_state"] == "created"
+    assert result["native_assets"]["manual_finish_checklist"][2]["done"] is True
+    assert result["native_manifest"]["manifest_version"] == "v1"
