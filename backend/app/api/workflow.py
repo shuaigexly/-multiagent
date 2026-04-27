@@ -670,6 +670,7 @@ async def workflow_confirm(req: ConfirmRequest):
     action_tid = table_ids.get("action")
     automation_log_tid = table_ids.get("automation_log")
     archive_tid = table_ids.get("archive")
+    effective_route = str(merged_task_fields.get("工作流路由") or route).strip()
     if action_tid and task_title:
         await bitable_ops.create_record_optional_fields(
             req.app_token,
@@ -679,7 +680,7 @@ async def workflow_confirm(req: ConfirmRequest):
                 "任务标题": task_title,
                 "动作类型": "工作流记录",
                 "动作状态": action_status,
-                "工作流路由": route,
+                "工作流路由": effective_route,
                 "动作内容": action_summary,
                 "执行结果": f"{actor} 通过驾驶舱回写 {req.action}",
                 "关联记录ID": req.record_id,
@@ -696,7 +697,7 @@ async def workflow_confirm(req: ConfirmRequest):
                 "节点名称": action_name,
                 "触发来源": "驾驶舱回写",
                 "执行状态": action_status,
-                "工作流路由": route,
+                "工作流路由": effective_route,
                 "日志摘要": action_summary,
                 "详细结果": f"{actor} 于驾驶舱执行 {req.action}，已同步回写主表字段。",
                 "关联记录ID": req.record_id,

@@ -444,6 +444,7 @@ async def test_workflow_confirm_approve_syncs_latest_archive_record_to_execution
     from app.api import workflow
 
     update_calls = []
+    log_calls = []
 
     async def fake_update_record(_app_token, table_id, record_id, fields, optional_keys=None):
         update_calls.append(
@@ -454,6 +455,16 @@ async def test_workflow_confirm_approve_syncs_latest_archive_record_to_execution
                 "optional_keys": list(optional_keys or []),
             }
         )
+
+    async def fake_create_record(_app_token, table_id, fields, optional_keys=None):
+        log_calls.append(
+            {
+                "table_id": table_id,
+                "fields": dict(fields),
+                "optional_keys": list(optional_keys or []),
+            }
+        )
+        return "rec_log"
 
     async def fake_get_record(_app_token, _table_id, _record_id):
         return {
@@ -478,7 +489,7 @@ async def test_workflow_confirm_approve_syncs_latest_archive_record_to_execution
     monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update_record)
     monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
     monkeypatch.setattr(workflow.bitable_ops, "list_records", fake_list_records)
-    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", fake_create_record)
     monkeypatch.setattr(workflow, "record_audit", AsyncMock())
     workflow._state.clear()
     workflow._state.update(
@@ -513,6 +524,8 @@ async def test_workflow_confirm_approve_syncs_latest_archive_record_to_execution
         "关联记录ID": "rec_1",
     }
     assert archive_call["optional_keys"] == ["工作流路由", "归档状态", "关联记录ID"]
+    assert len(log_calls) == 2
+    assert all(call["fields"]["工作流路由"] == "直接执行" for call in log_calls)
 
 
 @pytest.mark.asyncio
