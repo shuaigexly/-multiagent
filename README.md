@@ -318,12 +318,21 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 - `native_assets.status_summary`：按 `created / manual_finish_required / blueprint_ready / permission_blocked` 汇总当前 Base 的原生资产落地状态
 - `native_assets.asset_groups`：按 `表单 / 自动化 / 工作流 / 仪表盘 / 角色` 输出分组级状态矩阵
 - `native_assets.manual_finish_checklist`：告诉你哪些动作还必须在飞书多维表格 UI 里补完，适合直接拿去做验收清单
+- `native_manifest`：直接给出飞书原生安装顺序、`lark-cli base` 命令模板和一份 Markdown 安装包
 
 当前口径明确区分：
 
 - `created`：本次 setup 已经在 Base 中真正创建完成
 - `manual_finish_required`：对象已具备基础形态，但还需要在飞书 UI 中开共享、启用或补最后一步
 - `blueprint_ready`：字段契约和落地蓝图已生成，但飞书云侧原生对象仍需后续配置
+
+新增原生安装包能力：
+
+- `GET /api/v1/workflow/native-manifest`
+- 返回内容包括：
+  - `install_order`：先开高级权限、再补表单、再建 workflow / dashboard / role 的顺序
+  - `command_packs`：按 `form / workflow / dashboard / role` 输出 `lark-cli base` 命令模板
+  - `markdown`：可直接贴进文档或交接材料的原生安装说明
 
 ### 注入真实数据源（让分析不再凭空估算）
 

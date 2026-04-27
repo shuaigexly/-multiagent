@@ -41,6 +41,12 @@ export interface WorkflowSetup {
     manual_finish_checklist?: Array<Record<string, unknown>>;
     template_center_table_id?: string;
   };
+  native_manifest?: {
+    manifest_version?: string;
+    install_order?: Array<Record<string, unknown>>;
+    command_packs?: Array<Record<string, unknown>>;
+    markdown?: string;
+  };
   table_ids: {
     task: string;
     output: string;

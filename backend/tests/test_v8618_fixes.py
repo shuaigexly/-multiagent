@@ -163,3 +163,6 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
     assert result["native_assets"]["status_summary"]["counts"]["created"] == 1
     assert result["native_assets"]["status_summary"]["counts"]["blueprint_ready"] >= 1
     assert result["native_assets"]["manual_finish_checklist"][0]["done"] is True
+    assert result["native_manifest"]["manifest_version"] == "v1"
+    assert result["native_manifest"]["install_order"][0]["title"] == "启用高级权限"
+    assert "lark-cli base +advperm-enable" in result["native_manifest"]["command_packs"][0]["commands"][0]

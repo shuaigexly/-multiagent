@@ -251,6 +251,17 @@ async def workflow_native_assets():
     }
 
 
+@router.get("/native-manifest", dependencies=[Depends(require_api_key)])
+async def workflow_native_manifest():
+    """返回当前 Base 的飞书原生安装包、命令模板和安装顺序。"""
+    return {
+        "app_token": _state.get("app_token", ""),
+        "url": _state.get("url", ""),
+        "base_meta": _state.get("base_meta") or {},
+        "native_manifest": _state.get("native_manifest") or {},
+    }
+
+
 @router.post("/seed", dependencies=[Depends(require_api_key)])
 async def workflow_seed(req: SeedRequest):
     """向分析任务表写入一条新的待处理任务。"""

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.bitable_workflow import bitable_ops, schema
+from app.bitable_workflow.native_manifest import build_native_manifest
 from app.bitable_workflow.schema import agent_output_fields, report_fields
 from app.bitable_workflow.scheduler import run_one_cycle
 from app.feishu.bitable import create_bitable, create_table, create_view
@@ -154,6 +155,13 @@ async def setup_workflow(
         view_assets=view_assets,
         base_meta=base_meta,
     )
+    native_manifest = build_native_manifest(
+        app_token=app_token,
+        base_url=result["url"],
+        table_ids=table_ids,
+        base_meta=base_meta,
+        native_assets=native_assets,
+    )
 
     logger.info("Workflow setup complete: app_token=%s url=%s", app_token, result["url"])
     return {
@@ -162,6 +170,7 @@ async def setup_workflow(
         "table_ids": table_ids,
         "base_meta": base_meta,
         "native_assets": native_assets,
+        "native_manifest": native_manifest,
     }
 
 

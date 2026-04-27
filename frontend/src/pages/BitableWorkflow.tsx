@@ -433,6 +433,7 @@ export default function BitableWorkflow() {
             url: st.state.url || '',
             base_meta: st.state.base_meta,
             native_assets: st.state.native_assets,
+            native_manifest: st.state.native_manifest,
             table_ids: st.state.table_ids as WorkflowSetup['table_ids'],
           });
           if (textValue(st.state.base_meta?.mode) && SETUP_MODE_OPTIONS.includes(st.state.base_meta.mode as (typeof SETUP_MODE_OPTIONS)[number])) {
@@ -919,6 +920,8 @@ export default function BitableWorkflow() {
     : [];
   const nativeChecklist = objectList(setup?.native_assets?.manual_finish_checklist);
   const nativeAssetCounts = setup?.native_assets?.status_summary?.counts || {};
+  const nativeInstallOrder = objectList(setup?.native_manifest?.install_order);
+  const nativeCommandPacks = objectList(setup?.native_manifest?.command_packs);
   const selectedTaskNumber = textValue(taskField(selectedTask, '任务编号'));
   const selectedProgress = selectedLive
     ? Math.max(safeProgress(taskField(selectedTask, '进度')), selectedLive.progress * 100)
@@ -1471,6 +1474,83 @@ export default function BitableWorkflow() {
                               </div>
                             </div>
                             <div className="mt-3 text-sm leading-6 text-slate-700">{textValue(item.step)}</div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(15,23,42,0.02),rgba(255,255,255,0.98),rgba(8,145,178,0.05))] p-5">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Native Install Pack</div>
+                    <div className="mt-2 text-xl font-semibold text-slate-950">飞书原生安装命令包</div>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                      这部分不是说明文，而是按 `lark-cli base` 组织的原生安装顺序和命令模板。它的作用是把当前蓝图继续推进成飞书云侧真实对象。
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600">
+                    manifest {textValue(setup?.native_manifest?.manifest_version) || 'v1'}
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-4 xl:grid-cols-[0.78fr_1.22fr]">
+                  <div className="rounded-[22px] border border-slate-200 bg-white/92 p-4">
+                    <div className="text-sm font-semibold text-slate-950">安装顺序</div>
+                    <div className="mt-4 space-y-3">
+                      {nativeInstallOrder.length === 0 ? (
+                        <EmptyState text="当前没有可展示的安装顺序。" />
+                      ) : (
+                        nativeInstallOrder.map((item) => (
+                          <div key={`${textValue(item.step)}-${textValue(item.title)}`} className="rounded-[18px] border border-slate-200 bg-slate-50/80 p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white">
+                                {textValue(item.step)}
+                              </div>
+                              <div className="text-sm font-semibold text-slate-950">{textValue(item.title)}</div>
+                            </div>
+                            <div className="mt-2 text-sm leading-6 text-slate-600">{textValue(item.why)}</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {nativeCommandPacks.length === 0 ? (
+                      <EmptyState text="当前没有可展示的命令包。" />
+                    ) : (
+                      nativeCommandPacks.map((pack) => {
+                        const status = textValue(pack.status) || 'blueprint_ready';
+                        const commands = Array.isArray(pack.commands) ? (pack.commands as unknown[]) : [];
+                        const notes = Array.isArray(pack.notes) ? (pack.notes as unknown[]) : [];
+                        return (
+                          <div key={textValue(pack.key) || textValue(pack.label)} className="rounded-[22px] border border-slate-200 bg-white/92 p-4 shadow-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold text-slate-950">{textValue(pack.label)}</div>
+                                <div className="mt-1 text-xs text-slate-500">{textValue(pack.surface)} 原生能力</div>
+                              </div>
+                              <div className={`rounded-full border px-3 py-1 text-xs font-medium ${ASSET_STATE_STYLE[status] || 'border-slate-200 bg-white text-slate-600'}`}>
+                                {ASSET_STATE_LABEL[status] || status}
+                              </div>
+                            </div>
+                            <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-950 p-4 text-[12px] leading-6 text-slate-100">
+                              <pre className="whitespace-pre-wrap font-mono">
+                                {commands.map((command) => String(command || '')).join('\n')}
+                              </pre>
+                            </div>
+                            {notes.length > 0 && (
+                              <div className="mt-4 flex flex-wrap gap-2">
+                                {notes.map((note) => (
+                                  <span key={String(note)} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                                    {String(note)}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })
