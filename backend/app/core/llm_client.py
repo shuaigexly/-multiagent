@@ -418,9 +418,19 @@ async def call_llm_with_tools(
                 *[_run_tool(tc) for tc in tool_calls],
                 return_exceptions=True,
             )
-            for outcome in outcomes:
+            # v8.6.20-r9（审计 #4）：OpenAI tool-calling 协议强制 — assistant
+            # message.tool_calls 中每个 tool_call_id，下一轮 messages 必须有对应
+            # role=tool 响应。之前异常 outcome 时直接 continue 不 append → 下一轮
+            # 请求 400 An assistant message with 'tool_calls' must be followed by
+            # tool messages，工具循环就此中断。改为对失败也补 error 占位 tool 消息。
+            for tc, outcome in zip(tool_calls, outcomes):
                 if isinstance(outcome, Exception):
-                    logger.warning("tool.failed iter=%s err=%s", iteration, outcome)
+                    logger.warning("tool.failed iter=%s id=%s err=%s", iteration, tc.id, outcome)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": f"[tool error] {type(outcome).__name__}: {outcome}",
+                    })
                     continue
                 tc_id, tool_name, result = outcome
                 logger.info(

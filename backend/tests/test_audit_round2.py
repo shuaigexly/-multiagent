@@ -140,3 +140,24 @@ async def test_call_llm_with_tools_accepts_on_token():
 
     sig = inspect.signature(call_llm_with_tools)
     assert "on_token" in sig.parameters
+
+
+def test_call_llm_with_tools_source_appends_error_for_failed_tool():
+    """v8.6.20-r9（审计 #4）：源码层防回归 — call_llm_with_tools 必须在 tool 失败时
+    append role=tool 错误占位消息，否则下一轮请求违反 OpenAI 协议（400 An assistant
+    message with 'tool_calls' must be followed by tool messages）。"""
+    import inspect
+    from app.core.llm_client import call_llm_with_tools
+    src = inspect.getsource(call_llm_with_tools)
+    # 旧实现：`if isinstance(outcome, Exception):\n    logger.warning(...)\n    continue`
+    # 修复后：异常分支也 append role=tool message
+    assert "isinstance(outcome, Exception)" in src
+    # 失败分支必须有 messages.append role=tool 而不是只 continue
+    failure_block_start = src.index("isinstance(outcome, Exception)")
+    failure_block_next_continue = src.index("continue", failure_block_start)
+    block = src[failure_block_start:failure_block_next_continue]
+    assert "messages.append" in block, (
+        "失败分支必须 append 错误占位 tool 消息，否则违反 OpenAI tool-calling 协议"
+    )
+    assert '"role": "tool"' in block
+    assert "tool_call_id" in block

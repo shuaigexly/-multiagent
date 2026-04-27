@@ -816,8 +816,9 @@ async def _apply_template_config(
         merged["复盘负责人"] = str(selected.get("默认复盘负责人") or "").strip()
     if not str(merged.get("复盘负责人OpenID") or "").strip():
         merged["复盘负责人OpenID"] = str(selected.get("默认复盘负责人OpenID") or "").strip()
-    if int(merged.get("复核SLA小时") or 0) <= 0:
-        merged["复核SLA小时"] = int(selected.get("默认复核SLA小时") or 0)
+    # v8.6.20-r9（审计 #7）：int(...) 对富文本/带单位字符串炸；统一用 _safe_int_field
+    if _safe_int_field(merged.get("复核SLA小时")) <= 0:
+        merged["复核SLA小时"] = _safe_int_field(selected.get("默认复核SLA小时"))
     route_buckets = _derive_workflow_route(review_fields, ceo_result)[1]
     template_task_fields = dict(task_fields)
     template_task_fields.update(
@@ -875,11 +876,13 @@ def _build_task_delivery_snapshot(
     if review_fields:
         review_summary = str(review_fields.get("评审摘要") or review_fields.get("评审结论") or "").strip()
         review_action = str(review_fields.get("推荐动作") or "").strip()
+        # v8.6.20-r9（审计 #7）：Rating 字段在某些 sdk 路径下返回 dict {"value": 4}；
+        # 用 _safe_int_field 兼容 dict/list/str/int。
         readiness_values = [
-            int(review_fields.get("真实性") or 0),
-            int(review_fields.get("决策性") or 0),
-            int(review_fields.get("可执行性") or 0),
-            int(review_fields.get("闭环准备度") or 0),
+            _safe_int_field(review_fields.get("真实性")),
+            _safe_int_field(review_fields.get("决策性")),
+            _safe_int_field(review_fields.get("可执行性")),
+            _safe_int_field(review_fields.get("闭环准备度")),
         ]
         readiness = round(sum(readiness_values) / len(readiness_values)) if all(readiness_values) else 0
         need_data_count = _count_bullets(review_fields.get("需补数事项"))
@@ -1596,8 +1599,9 @@ async def _create_followup_tasks(
             record_fields["复盘负责人"] = str(template_defaults["retrospective_owner"])
         if template_defaults.get("retrospective_owner_open_id"):
             record_fields["复盘负责人OpenID"] = str(template_defaults["retrospective_owner_open_id"])
-        if int(template_defaults.get("review_sla_hours") or 0) > 0:
-            record_fields["复核SLA小时"] = int(template_defaults["review_sla_hours"])
+        # v8.6.20-r9（审计 #7）：用 _safe_int_field 防 list/带单位字符串
+        if _safe_int_field(template_defaults.get("review_sla_hours")) > 0:
+            record_fields["复核SLA小时"] = _safe_int_field(template_defaults.get("review_sla_hours"))
         # v8.6.7：跟进任务自动指向原任务，构建依赖图
         if parent_task_number:
             record_fields["依赖任务编号"] = str(parent_task_number)
@@ -1769,8 +1773,9 @@ async def _create_review_recheck_task(
         fields["复盘负责人"] = str(template_defaults["retrospective_owner"])
     if template_defaults.get("retrospective_owner_open_id"):
         fields["复盘负责人OpenID"] = str(template_defaults["retrospective_owner_open_id"])
-    if int(template_defaults.get("review_sla_hours") or 0) > 0:
-        fields["复核SLA小时"] = int(template_defaults["review_sla_hours"])
+    # v8.6.20-r9（审计 #7）
+    if _safe_int_field(template_defaults.get("review_sla_hours")) > 0:
+        fields["复核SLA小时"] = _safe_int_field(template_defaults.get("review_sla_hours"))
     if parent_task_number:
         fields["依赖任务编号"] = str(parent_task_number)
     try:

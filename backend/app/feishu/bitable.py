@@ -290,7 +290,10 @@ async def _create_view_impl(
         json={"view_name": view_name, "view_type": view_type},
     )
     r.raise_for_status()
-    data = r.json()
+    try:
+        data = r.json()
+    except Exception:
+        data = {"code": -1, "msg": f"non-JSON response (status={r.status_code}): {r.text[:200]!r}"}
     if data.get("code") != 0:
         raise RuntimeError(
             f"创建视图失败: {view_name} code={data.get('code')} msg={data.get('msg')}"
@@ -574,7 +577,10 @@ async def _find_primary_field(app_token: str, table_id: str) -> tuple[str | None
     url = f"{base}/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
     r = await _get_http_client().get(url, headers={"Authorization": f"Bearer {token}"})
     r.raise_for_status()
-    data = r.json()
+    try:
+        data = r.json()
+    except Exception:
+        return None, None, None
     if data.get("code") != 0:
         return None, None, None
     items = data.get("data", {}).get("items", []) or []
@@ -603,7 +609,10 @@ async def _rename_field_via_http(
         json=payload,
     )
     r.raise_for_status()
-    data = r.json()
+    try:
+        data = r.json()
+    except Exception:
+        data = {"code": -1, "msg": f"non-JSON response (status={r.status_code}): {r.text[:200]!r}"}
     if data.get("code") != 0:
         raise RuntimeError(
             f"rename primary field failed: code={data.get('code')} msg={data.get('msg')} "
@@ -671,7 +680,10 @@ async def _create_field_http(app_token: str, table_id: str, field: dict) -> str:
         json=payload,
     )
     r.raise_for_status()
-    data = r.json()
+    try:
+        data = r.json()
+    except Exception:
+        data = {"code": -1, "msg": f"non-JSON response (status={r.status_code}): {r.text[:200]!r}"}
     if data.get("code") != 0:
         raise RuntimeError(
             f"创建字段失败: {field['field_name']} code={data.get('code')} msg={data.get('msg')}"

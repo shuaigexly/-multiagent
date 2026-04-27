@@ -58,14 +58,30 @@ async def publish(task_id: str, event_type: str, payload: dict) -> None:
             logger.debug("SSE subscriber queue full for task=%s, dropping event", task_id)
 
 
-async def subscribe(task_id: str) -> AsyncIterator[dict]:
-    """SSE 端点调用此迭代器逐条推送事件。断开时自动注销。"""
+async def subscribe(task_id: str, *, keepalive_seconds: float = 15.0) -> AsyncIterator[dict]:
+    """SSE 端点调用此迭代器逐条推送事件。断开时自动注销。
+
+    v8.6.20-r9（审计 #3）：之前 `await q.get()` 无超时永久阻塞 — 客户端关浏览器
+    的同时任务卡在长 LLM 调用（几分钟无 publish）→ q.get() 不返回 → finally
+    清理永远不触发 → _subscribers 累积僵尸队列。加 keepalive，每 N 秒醒一次
+    yield 一条 keepalive 事件让 FastAPI 检测客户端断开后跳出循环。"""
     q: asyncio.Queue = asyncio.Queue(maxsize=100)
     async with _get_lock():
         _subscribers[task_id].append(q)
     try:
         while True:
-            msg = await q.get()
+            try:
+                msg = await asyncio.wait_for(q.get(), timeout=keepalive_seconds)
+            except asyncio.TimeoutError:
+                # 心跳事件 — FastAPI 在 yield 后检查 request.is_disconnected()
+                # 客户端已断开会 raise ClientDisconnect，进 finally 清理队列
+                yield {
+                    "task_id": task_id,
+                    "event_type": "keepalive",
+                    "payload": {},
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                }
+                continue
             yield msg
             if msg.get("event_type") in {"task.done", "task.error"}:
                 break

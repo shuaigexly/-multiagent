@@ -772,6 +772,21 @@ async def test_run_one_cycle_does_not_hang_with_first_completed():
             pass
 
 
+def test_send_card_message_sanitizes_lark_md_at_all_injection():
+    """v8.6.20-r9（审计 #5 安全）：LLM raw_output 中的 <at user_id="all"></at>
+    / <a href> / <img> 必须被消毒，否则飞书 lark_md 会真的 @ 全员或加载钓鱼链接。"""
+    from app.feishu.im import _sanitize_lark_md
+    out = _sanitize_lark_md("分析完成！<at user_id=\"all\"></at>")
+    assert "<at" not in out
+    assert "＜at" in out  # 全角 `<` 替换
+    out2 = _sanitize_lark_md("点击 <a href=\"http://evil.com\">这里</a>")
+    assert "<a " not in out2 and "<a\t" not in out2
+    out3 = _sanitize_lark_md("<img src=\"x\" />")
+    assert "<img" not in out3
+    # 普通中文+英文不受影响
+    assert _sanitize_lark_md("正常分析报告 normal text") == "正常分析报告 normal text"
+
+
 def test_send_card_message_truncates_long_title():
     """v8.6.20-r8（审计 #2）：飞书 plain_text 卡片标题硬上限 ~250；超长会触发
     MessageContentInvalid。task_title 来自 SeedRequest 没 max_length，必须截断。"""

@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 from typing import Optional
 
 from lark_oapi.api.im.v1 import (
@@ -86,6 +87,22 @@ async def send_card_message(
 _VALID_HEADER_COLORS = {"blue", "wathet", "turquoise", "green", "yellow", "orange", "red", "carmine", "violet", "purple", "indigo", "grey"}
 
 
+# v8.6.20-r9（审计 #5 安全）：飞书 lark_md 会解析 <at user_id="all"></at>、
+# <at user_id="ou_xxx"></at>、<a href>、<img> 等控制语法。LLM raw_output 直接进
+# lark_md → 注入 @all / 钓鱼链接 / 图片广告。这里把这些标签的 `<` 换成全角 `＜`，
+# 让飞书把它当字面文字渲染。仅触发 lark_md 解析的标签前缀做替换，常规文本不影响。
+_LARK_MD_DANGEROUS_PATTERNS = re.compile(
+    r"<(/?(?:at|a |a\b|img|button|font|action))",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_lark_md(text: str) -> str:
+    if not text:
+        return ""
+    return _LARK_MD_DANGEROUS_PATTERNS.sub(r"＜\1", text)
+
+
 def _normalize_card_fields(fields: Optional[list]) -> list[tuple[str, str]]:
     """规范化 fields：过滤空、截断 label/value，丢弃非 (str, str) 项。"""
     out: list[tuple[str, str]] = []
@@ -97,7 +114,8 @@ def _normalize_card_fields(fields: Optional[list]) -> list[tuple[str, str]]:
         label, value = str(item[0] or "").strip(), str(item[1] or "").strip()
         if not label or not value:
             continue
-        out.append((label[:30], value[:200]))
+        # v8.6.20-r9（审计 #5）：fields 也做 lark_md 安全消毒
+        out.append((label[:30], _sanitize_lark_md(value[:200])))
     return out
 
 
@@ -115,10 +133,13 @@ async def _send_card_message_impl(
         raise ValueError("未配置飞书群 ID")
 
     template = header_color if header_color in _VALID_HEADER_COLORS else "blue"
+    # v8.6.20-r9（审计 #5）：content 来自 LLM raw_output，必须先 sanitize lark_md
+    # 控制标签防 @all / 钓鱼链接 / img 注入。
+    safe_content = _sanitize_lark_md(truncate_with_marker(content, 3000))
     elements: list[dict] = [
         {
             "tag": "div",
-            "text": {"tag": "lark_md", "content": truncate_with_marker(content, 3000)},
+            "text": {"tag": "lark_md", "content": safe_content},
         }
     ]
     norm_fields = _normalize_card_fields(fields)

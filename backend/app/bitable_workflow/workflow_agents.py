@@ -1179,17 +1179,29 @@ async def update_performance(
         logger.warning("Performance: failed to fetch existing rows: %s", exc)
         all_rows = []
 
-    perf_by_name: dict[str, dict] = {
-        row.get("fields", {}).get("员工姓名", ""): row
-        for row in all_rows
-    }
+    # v8.6.20-r9（审计 #1）：员工姓名 是 Text 字段，飞书 list_records 偶尔返回
+    # 富文本数组 [{"text":"产品经理","type":"text"}] —— 直接放进 dict-key 会 raise
+    # TypeError: unhashable type: 'list'，让整个 update_performance 被 except 静默
+    # 吞掉；或某些 sdk 路径下 stringified key 永远 miss → 每 cycle create 一行 →
+    # 效能表无限膨胀。先拍平再做 key。
+    from app.bitable_workflow.scheduler import _flatten_record_fields
+    perf_by_name: dict[str, dict] = {}
+    for row in all_rows:
+        flat = _flatten_record_fields(row.get("fields") or {})
+        name = flat.get("员工姓名") or ""
+        if isinstance(name, str) and name:
+            perf_by_name[name] = {**row, "fields": flat}
 
     for result in results:
         try:
             existing = perf_by_name.get(result.agent_name)
             if existing:
                 rid = existing["record_id"]
-                prev = float(existing.get("fields", {}).get("处理任务数", 0) or 0)
+                prev_raw = (existing.get("fields") or {}).get("处理任务数", 0)
+                try:
+                    prev = float(prev_raw or 0)
+                except (TypeError, ValueError):
+                    prev = 0.0
                 new_count = prev + 1
                 activity = min(5, 1 + int(new_count // 2))  # 1,2,3,4,5 递进
                 await bitable_ops.update_record(

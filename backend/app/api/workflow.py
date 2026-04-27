@@ -594,7 +594,16 @@ async def workflow_confirm(req: ConfirmRequest):
     task_fields: dict[str, object] = {}
     try:
         task_record = await bitable_ops.get_record(req.app_token, req.table_id, req.record_id)
-        task_fields = task_record.get("fields") or {}
+        # v8.6.20-r9（审计 #2）：飞书 get_record 把 Text/SingleSelect 字段返成富文本
+        # 数组或 dict，str() 直接拿到 "[{'text':'等待拍板',...}]" 这种字面量，
+        # 跟 "等待拍板" 字符串永不相等 → 拍板 promote/拒绝判定全部错路径。
+        from app.bitable_workflow.scheduler import _flatten_record_fields
+        raw_fields = task_record.get("fields") or {}
+        task_fields = _flatten_record_fields(raw_fields)
+        # SingleSelect 偶尔返回 dict {"text":"...","name":"..."}，再补一层
+        for k, v in list(task_fields.items()):
+            if isinstance(v, dict):
+                task_fields[k] = v.get("text") or v.get("name") or ""
         task_title = str(task_fields.get("任务标题") or "").strip()
         route = str(task_fields.get("工作流路由") or "").strip()
     except Exception as exc:
