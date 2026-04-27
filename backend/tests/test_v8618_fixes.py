@@ -185,6 +185,8 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
             return {"ok": True, "data": {"dashboard_id": "blk_auto_created"}}
         if shortcut == "+dashboard-block-create":
             return {"ok": True, "data": {"block": {"block_id": "cht_auto_created"}, "created": True}}
+        if shortcut == "+dashboard-arrange":
+            return {"ok": True, "data": {"dashboard_id": "blk_auto_created", "arranged": True}}
         if shortcut == "+role-create":
             return {"ok": True, "data": {"success": True}}
         raise AssertionError(f"unexpected shortcut {shortcut}")

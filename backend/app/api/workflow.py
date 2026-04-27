@@ -309,6 +309,7 @@ async def workflow_apply_native_manifest(req: ApplyNativeRequest):
     )
     _state["native_assets"] = result["native_assets"]
     _state["native_manifest"] = result["native_manifest"]
+    _state["native_apply_report"] = result["report"]
     await record_audit(
         "workflow.native_manifest.apply",
         target=app_token,

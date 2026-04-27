@@ -47,6 +47,7 @@ export interface WorkflowSetup {
     command_packs?: Array<Record<string, unknown>>;
     markdown?: string;
   };
+  native_apply_report?: Array<Record<string, unknown>>;
   table_ids: {
     task: string;
     output: string;

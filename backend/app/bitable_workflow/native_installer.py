@@ -157,15 +157,39 @@ async def _apply_dashboards(
     applied_at: int,
 ) -> None:
     dashboard_specs = [
-        ("管理汇报总览", table_ids["task"], "分析任务总量", "工作流路由、待拍板、待执行、异常任务一屏汇总"),
-        ("证据与评审看板", table_ids.get("evidence", table_ids["task"]), "证据链总量", "围绕硬证据、待验证、CEO 汇总构建原生证据看板"),
-        ("交付异常看板", table_ids["task"], "异常任务总量", "围绕拍板滞留、执行超期、复核超时、复盘滞留构建异常雷达"),
+        (
+            "管理汇报总览",
+            table_ids["task"],
+            [
+                ("analysis_tasks_total", "分析任务总量", "statistics", {"table_name": "分析任务", "count_all": True}),
+                ("workflow_route_mix", "工作流路由分布", "pie", {"table_name": "分析任务", "count_all": True, "group_by": [{"field_name": "工作流路由", "mode": "integrated"}]}),
+                ("native_text", "看板说明", "text", {"text": "# 管理汇报总览\n\n工作流路由、待拍板、待执行、异常任务一屏汇总"}),
+            ],
+        ),
+        (
+            "证据与评审看板",
+            table_ids.get("evidence", table_ids["task"]),
+            [
+                ("evidence_total", "证据链总量", "statistics", {"table_name": "证据链", "count_all": True}),
+                ("evidence_grade_mix", "证据等级分布", "pie", {"table_name": "证据链", "count_all": True, "group_by": [{"field_name": "证据等级", "mode": "integrated"}]}),
+                ("native_text", "看板说明", "text", {"text": "# 证据与评审看板\n\n围绕硬证据、待验证、CEO 汇总构建原生证据看板"}),
+            ],
+        ),
+        (
+            "交付异常看板",
+            table_ids["task"],
+            [
+                ("exception_total", "异常任务总量", "statistics", {"table_name": "分析任务", "count_all": True, "filter": {"conjunction": "and", "conditions": [{"field_name": "异常状态", "operator": "is", "value": "已异常"}]}}),
+                ("exception_type_mix", "异常类型分布", "pie", {"table_name": "分析任务", "count_all": True, "group_by": [{"field_name": "异常类型", "mode": "integrated"}], "filter": {"conjunction": "and", "conditions": [{"field_name": "异常状态", "operator": "is", "value": "已异常"}]}}),
+                ("native_text", "看板说明", "text", {"text": "# 交付异常看板\n\n围绕拍板滞留、执行超期、复核超时、复盘滞留构建异常雷达"}),
+            ],
+        ),
     ]
     for item, spec in zip(_asset_list(assets, "dashboard_blueprints"), dashboard_specs):
         if not force and str(item.get("lifecycle_state") or "") == "created":
             report.append({"surface": "dashboard", "name": str(item.get("name") or ""), "status": "skipped", "reason": "already_created"})
             continue
-        name, source_table_id, stat_name, text_body = spec
+        name, source_table_id, block_specs = spec
         try:
             created = await cli_base(
                 "+dashboard-create",
@@ -179,38 +203,34 @@ async def _apply_dashboards(
             data = _resp_data(created)
             dashboard_id = str(data.get("dashboard_id") or "")
             if dashboard_id:
-                await cli_base(
-                    "+dashboard-block-create",
-                    "--base-token",
-                    app_token,
-                    "--dashboard-id",
-                    dashboard_id,
-                    "--name",
-                    stat_name,
-                    "--type",
-                    "statistics",
-                    "--data-config",
-                    _json({"table_name": _table_name_by_id(table_ids, source_table_id), "count_all": True}),
-                )
-                await cli_base(
-                    "+dashboard-block-create",
-                    "--base-token",
-                    app_token,
-                    "--dashboard-id",
-                    dashboard_id,
-                    "--name",
-                    "看板说明",
-                    "--type",
-                    "text",
-                    "--data-config",
-                    _json({"text": f"# {name}\n\n{text_body}"}),
-                )
+                created_blocks: list[str] = []
+                for _, block_name, block_type, block_config in block_specs:
+                    normalized = _normalize_block_config(block_config, table_ids, source_table_id)
+                    block_resp = await cli_base(
+                        "+dashboard-block-create",
+                        "--base-token",
+                        app_token,
+                        "--dashboard-id",
+                        dashboard_id,
+                        "--name",
+                        block_name,
+                        "--type",
+                        block_type,
+                        "--data-config",
+                        _json(normalized),
+                    )
+                    block_id = str((_resp_data(block_resp).get("block") or {}).get("block_id") or "")
+                    if block_id:
+                        created_blocks.append(block_id)
+                if created_blocks:
+                    await cli_base("+dashboard-arrange", "--base-token", app_token, "--dashboard-id", dashboard_id)
             item["lifecycle_state"] = "created" if dashboard_id else "manual_finish_required"
             item["cloud_object_id"] = dashboard_id
+            item["cloud_block_count"] = len(block_specs) if dashboard_id else 0
             item["applied_at"] = applied_at
             item["next_step"] = "可继续在飞书仪表盘中补更多图表块并按需智能重排"
             item["blocking_reason"] = "" if dashboard_id else "仪表盘创建返回中缺少 dashboard_id"
-            report.append({"surface": "dashboard", "name": str(item.get("name") or ""), "status": item["lifecycle_state"], "object_id": dashboard_id})
+            report.append({"surface": "dashboard", "name": str(item.get("name") or ""), "status": item["lifecycle_state"], "object_id": dashboard_id, "block_count": item.get("cloud_block_count", 0)})
         except Exception as exc:
             item["lifecycle_state"] = _error_state(exc)
             item["blocking_reason"] = str(exc)
@@ -328,6 +348,13 @@ def _role_body(role_name: str, table_names: list[str]) -> dict[str, Any]:
         },
         "table_rule_map": {table_name: {"perm": "read_only"} for table_name in table_names},
     }
+
+
+def _normalize_block_config(block_config: dict[str, Any], table_ids: dict[str, str], source_table_id: str) -> dict[str, Any]:
+    normalized = copy.deepcopy(block_config)
+    if normalized.get("table_name") == "AUTO":
+        normalized["table_name"] = _table_name_by_id(table_ids, source_table_id)
+    return normalized
 
 
 def _refresh_native_assets(assets: dict[str, Any]) -> None:

@@ -187,6 +187,12 @@ const ASSET_STATE_LABEL: Record<string, string> = {
   manual_finish_required: '待人工补完',
   permission_blocked: '权限受阻',
 };
+const APPLY_REPORT_STYLE: Record<string, string> = {
+  created: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  skipped: 'border-slate-200 bg-slate-100 text-slate-600',
+  manual_finish_required: 'border-amber-200 bg-amber-50 text-amber-800',
+  permission_blocked: 'border-rose-200 bg-rose-50 text-rose-700',
+};
 
 function textValue(value: unknown) {
   return typeof value === 'string' ? value : '';
@@ -436,6 +442,7 @@ export default function BitableWorkflow() {
             base_meta: st.state.base_meta,
             native_assets: st.state.native_assets,
             native_manifest: st.state.native_manifest,
+            native_apply_report: st.state.native_apply_report,
             table_ids: st.state.table_ids as WorkflowSetup['table_ids'],
           });
           if (textValue(st.state.base_meta?.mode) && SETUP_MODE_OPTIONS.includes(st.state.base_meta.mode as (typeof SETUP_MODE_OPTIONS)[number])) {
@@ -605,6 +612,7 @@ export default function BitableWorkflow() {
               ...prev,
               native_assets: response.native_assets,
               native_manifest: response.native_manifest,
+              native_apply_report: response.report,
             }
           : prev,
       );
@@ -947,6 +955,7 @@ export default function BitableWorkflow() {
   const nativeAssetCounts = setup?.native_assets?.status_summary?.counts || {};
   const nativeInstallOrder = objectList(setup?.native_manifest?.install_order);
   const nativeCommandPacks = objectList(setup?.native_manifest?.command_packs);
+  const nativeApplyReport = objectList(setup?.native_apply_report);
   const selectedTaskNumber = textValue(taskField(selectedTask, '任务编号'));
   const selectedProgress = selectedLive
     ? Math.max(safeProgress(taskField(selectedTask, '进度')), selectedLive.progress * 100)
@@ -1595,6 +1604,55 @@ export default function BitableWorkflow() {
                       })
                     )}
                   </div>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-[24px] border border-slate-200 bg-white/92 p-5">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Native Apply Report</div>
+                    <div className="mt-2 text-xl font-semibold text-slate-950">原生化执行报告</div>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                      这里展示最近一次原生化执行的逐项结果，不再只看蓝图状态，而是看哪些对象真的创建了、哪些被跳过、哪些仍被权限或产品边界卡住。
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
+                    {nativeApplyReport.length > 0 ? `最近执行 ${nativeApplyReport.length} 项` : '尚未执行'}
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                  {nativeApplyReport.length === 0 ? (
+                    <div className="xl:col-span-2">
+                      <EmptyState text="当前还没有原生化执行报告。可以在 setup 时勾选自动原生化，或点击“一键原生化”立即执行。" />
+                    </div>
+                  ) : (
+                    nativeApplyReport.map((item) => {
+                      const status = textValue(item.status) || 'manual_finish_required';
+                      return (
+                        <div key={`${textValue(item.surface)}-${textValue(item.name)}`} className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold text-slate-950">{textValue(item.name) || '未命名对象'}</div>
+                              <div className="mt-1 text-xs text-slate-500">{textValue(item.surface)} 原生能力</div>
+                            </div>
+                            <div className={`rounded-full border px-3 py-1 text-xs font-medium ${APPLY_REPORT_STYLE[status] || 'border-slate-200 bg-white text-slate-600'}`}>
+                              {status === 'created'
+                                ? '已创建'
+                                : status === 'skipped'
+                                  ? '已跳过'
+                                  : ASSET_STATE_LABEL[status] || status}
+                            </div>
+                          </div>
+                          <div className="mt-3 grid gap-2 text-sm text-slate-700">
+                            {textValue(item.object_id) && <div>对象 ID：{textValue(item.object_id)}</div>}
+                            {typeof item.block_count === 'number' && Number(item.block_count) > 0 && <div>创建图表块：{String(item.block_count)}</div>}
+                            {textValue(item.reason) && <div>跳过原因：{textValue(item.reason)}</div>}
+                            {textValue(item.error) && <div className="text-rose-700">错误：{textValue(item.error)}</div>}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
