@@ -154,6 +154,34 @@ class TestMigrateOne:
         mock_update.assert_not_called()  # 也没回填
 
     @pytest.mark.asyncio
+    async def test_rename_failure_after_delete_returns_issues_not_raises(self):
+        """v8.6.20-r7（审计 #4）：DELETE 已成功 + RENAME 失败时，返回带 issues 的状态
+        而不是 raise，保留影子字段供用户手工救场。否则旧 Formula 已删 + 影子未改名
+        → schema 永久不一致（综合评分不存在 + 综合评分__migrating 残留）。"""
+        records = [{"record_id": "r1", "fields": {"优先级": "P1 高"}}]
+        with patch.object(mig, "_list_table_id", return_value="tbl_x"), \
+             patch.object(mig, "_list_fields", return_value=[
+                 {"field_name": "综合评分", "type": 20, "field_id": "fid_old"}
+             ]), \
+             patch.object(mig, "_delete_field", new=AsyncMock()) as mock_del, \
+             patch.object(mig, "_create_number_field", new=AsyncMock(return_value="fid_shadow")), \
+             patch.object(mig, "_rename_field", new=AsyncMock(side_effect=RuntimeError("PUT 91402 NOTEXIST"))) as mock_rename, \
+             patch("app.bitable_workflow.bitable_ops.list_records", new=AsyncMock(return_value=records)), \
+             patch("app.bitable_workflow.bitable_ops.update_record", new=AsyncMock()):
+            res = await mig.migrate_one(
+                "app", "分析任务", "综合评分", "优先级", priority_score, dry_run=False,
+            )
+        # 不再 raise，返回 issues
+        assert res.get("issues")
+        assert "RENAME 失败" in res["issues"][0]
+        assert res.get("shadow_field_id") == "fid_shadow"
+        assert res.get("old_field_id") == "fid_old"
+        # DELETE 已经发生
+        mock_del.assert_called_once()
+        # RENAME 已经尝试
+        mock_rename.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_high_failure_rate_keeps_old_field(self):
         """v8.6.20-r6 防回归：回填失败率 > 50% 时保留旧字段 + 影子，不 rename。"""
         records = [

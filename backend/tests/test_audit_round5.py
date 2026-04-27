@@ -72,21 +72,21 @@ async def test_claim_lock_singleton_under_concurrency():
 
 @pytest.mark.asyncio
 async def test_local_cycle_lock_singleton(monkeypatch):
-    """v8.1: scheduler._LOCAL_CYCLE_LOCK 不会因并发 cycle 启动产生多把锁。"""
+    """v8.1: 同一 (app_token, task_tid) 多线程并发取锁不应产生多把锁。
+    v8.6.20-r7：本地锁字典化按 base 分键 — 同 key 仍然单例，不同 key 互不阻塞。"""
     from app.bitable_workflow import scheduler
 
-    scheduler._LOCAL_CYCLE_LOCK = None
+    # 重置字典确保用例隔离
+    scheduler._LOCAL_CYCLE_LOCKS.clear()
 
-    def get_then_release():
-        # 模拟 _acquire_cycle_lock 的懒初始化部分（不调真函数避免 Redis 依赖）
-        if scheduler._LOCAL_CYCLE_LOCK is None:
-            with scheduler._LOCAL_CYCLE_LOCK_INIT:
-                if scheduler._LOCAL_CYCLE_LOCK is None:
-                    scheduler._LOCAL_CYCLE_LOCK = asyncio.Lock()
-        return scheduler._LOCAL_CYCLE_LOCK
+    def get_lock_for_app1():
+        return scheduler._get_local_cycle_lock("app1", "tid1")
 
-    locks = await asyncio.gather(*[asyncio.to_thread(get_then_release) for _ in range(20)])
+    locks = await asyncio.gather(*[asyncio.to_thread(get_lock_for_app1) for _ in range(20)])
     assert all(l is locks[0] for l in locks)
+    # 跨 base 不应同一锁
+    other = scheduler._get_local_cycle_lock("app2", "tid1")
+    assert other is not locks[0]
 
 
 # ---- bug 35: PIL LANCZOS 兼容 Pillow >= 10 ----

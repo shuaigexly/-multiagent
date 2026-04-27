@@ -736,6 +736,31 @@ async def test_workflow_has_execution_items_uses_canonical_flag(monkeypatch):
     assert _workflow_has_execution_items({"待创建执行任务": ""}) is False
 
 
+def test_workflow_has_execution_items_flattens_richtext():
+    """v8.6.20-r7（审计 #7）：飞书 search/get_record 把 text 字段返成富文本数组
+    `[{"text": "...", "type": "text"}]`。如果不拍平 → str(list) 永远不以「执行项：」
+    开头 → fallback 永远 False → 拍板任务永远卡住。"""
+    from app.api.workflow import _workflow_has_execution_items
+
+    # 富文本布尔字段（飞书可能回成 list）
+    assert _workflow_has_execution_items({
+        "待创建执行任务": [{"text": "true", "type": "text"}],
+    }) is True
+
+    # 富文本「工作流执行包」字段 — 拍平后扫到执行项 + bullet
+    assert _workflow_has_execution_items({
+        "工作流执行包": [
+            {"text": "路由：等待拍板\n", "type": "text"},
+            {"text": "执行项：\n- 通知销售跟进重点客户", "type": "text"},
+        ],
+    }) is True
+
+    # 富文本但拍平后无内容 → False
+    assert _workflow_has_execution_items({
+        "工作流执行包": [{"text": "", "type": "text"}],
+    }) is False
+
+
 @pytest.mark.asyncio
 async def test_workflow_confirm_rejects_mismatched_action(monkeypatch):
     sse_pkg = ModuleType("sse_starlette")

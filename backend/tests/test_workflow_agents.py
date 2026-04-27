@@ -209,6 +209,45 @@ class TestEstimateUrgency:
         # raw_output 含 🔴 → emoji 启发式给 5；但 🟢 健康 cap → 3
         assert _estimate_urgency(result) == 3
 
+    def test_white_data_insufficient_forces_urgency_1(self):
+        """v8.6.20-r7（审计 #5）：⚪ 数据不足 → 紧急度强制 1，不取 raw_score 默认 3。"""
+        result = AgentResult(
+            agent_id="ceo", agent_name="CEO 助理",
+            sections=[],
+            action_items=[],
+            raw_output="FALLBACK: LLM unavailable",
+            health_hint="⚪",
+        )
+        assert _estimate_urgency(result) == 1
+
+
+class TestNormalizeSingleSelect:
+    """v8.6.20-r7（审计 #9）：normalize 兼容 NFC/variation selector/全角空格。"""
+
+    def test_handles_variation_selector(self):
+        from app.bitable_workflow.workflow_agents import _normalize_singleselect
+        allowed = {"🟢 健康", "🟡 关注", "🔴 预警", "⚪ 数据不足"}
+        # 带 emoji presentation selector U+FE0F
+        out = _normalize_singleselect("🟢️ 健康", allowed, "⚪ 数据不足")
+        assert out == "🟢 健康"
+
+    def test_handles_fullwidth_space(self):
+        from app.bitable_workflow.workflow_agents import _normalize_singleselect
+        allowed = {"🟢 健康"}
+        out = _normalize_singleselect("🟢　健康", allowed, "⚪ 数据不足")
+        assert out == "🟢 健康"
+
+    def test_handles_zero_width_chars(self):
+        from app.bitable_workflow.workflow_agents import _normalize_singleselect
+        allowed = {"🟢 健康"}
+        out = _normalize_singleselect("🟢​ 健康", allowed, "⚪ 数据不足")
+        assert out == "🟢 健康"
+
+    def test_falls_back_when_unknown(self):
+        from app.bitable_workflow.workflow_agents import _normalize_singleselect
+        out = _normalize_singleselect("瞎写", {"🟢 健康"}, "⚪ 数据不足")
+        assert out == "⚪ 数据不足"
+
 
 class TestWriteCeoReport:
     @pytest.mark.asyncio

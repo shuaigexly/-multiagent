@@ -677,27 +677,34 @@ class BaseAgent(ABC):
         if meta_match:
             try:
                 meta = _json.loads(meta_match.group(1))
-                if isinstance(meta, dict):
-                    health_hint = str(meta.get("health", "")).strip()
-                    confidence_hint = int(meta.get("confidence", 0) or 0)
-                    actions_raw = meta.get("actions") or []
-                    if isinstance(actions_raw, list):
-                        structured_actions = [a for a in actions_raw if isinstance(a, dict) and a.get("summary")]
-                    evidence_raw = meta.get("evidence") or []
-                    if isinstance(evidence_raw, list):
-                        structured_evidence = [
-                            a for a in evidence_raw
-                            if isinstance(a, dict) and a.get("claim") and a.get("evidence")
-                        ]
-                    decisions_raw = meta.get("decisions") or []
-                    if isinstance(decisions_raw, list):
-                        decision_items = [
-                            a for a in decisions_raw
-                            if isinstance(a, dict) and a.get("summary")
-                        ]
-                raw = meta_pattern.sub("", raw).strip()
             except Exception as exc:
-                logger.warning("[%s] metadata parse failed: %s", self.agent_id, exc)
+                meta = None
+                logger.warning("[%s] metadata json parse failed: %s", self.agent_id, exc)
+            if isinstance(meta, dict):
+                # v8.6.20-r7（审计 #12）：每个字段独立 try，避免 confidence="high" 这种
+                # LLM 偷懒输入炸掉整个 metadata 块导致 health/actions/evidence 全丢失。
+                health_hint = str(meta.get("health", "")).strip()
+                try:
+                    confidence_hint = int(meta.get("confidence", 0) or 0)
+                except (TypeError, ValueError):
+                    confidence_hint = 0
+                    logger.debug("[%s] confidence non-numeric, defaulting to 0", self.agent_id)
+                actions_raw = meta.get("actions") or []
+                if isinstance(actions_raw, list):
+                    structured_actions = [a for a in actions_raw if isinstance(a, dict) and a.get("summary")]
+                evidence_raw = meta.get("evidence") or []
+                if isinstance(evidence_raw, list):
+                    structured_evidence = [
+                        a for a in evidence_raw
+                        if isinstance(a, dict) and a.get("claim") and a.get("evidence")
+                    ]
+                decisions_raw = meta.get("decisions") or []
+                if isinstance(decisions_raw, list):
+                    decision_items = [
+                        a for a in decisions_raw
+                        if isinstance(a, dict) and a.get("summary")
+                    ]
+            raw = meta_pattern.sub("", raw).strip()
 
         sections = []
         action_items = []

@@ -189,20 +189,28 @@ def _workflow_has_execution_items(task_fields: dict[str, object]) -> bool:
     """是否有待落地执行项 — 优先看 scheduler 写入的「待创建执行任务」布尔，
     fallback 才扫文本（应对老 base 没有这字段的情况）。
 
-    v8.6.20-r6：审计 #5/#9 修订 —— 之前只扫 工作流执行包 文本里的「执行项：」
-    前缀，会被自定义模板/用户手改成另一个标题（如「待执行清单：」）漏判，
-    或者被「头部还在但条目已删空」误判为有执行项。直接读 scheduler 维护的
-    canonical 布尔字段 `待创建执行任务` 最可靠。
+    v8.6.20-r6 审计 #5/#9：之前只扫文本前缀会被模板/用户改坏；
+    canonical 字段是 `待创建执行任务`。
+    v8.6.20-r7 审计 #7：飞书 search/get_record 返回 text 字段为富文本数组
+    `[{"text": "...", "type": "text"}]`，str() 直接拿到字面量永远不以「执行项：」
+    开头 → fallback 永远 False → 已拍板任务卡在「等待拍板」无法 promote 到执行队列。
+    必须先把富文本拍平。
     """
-    flag = task_fields.get("待创建执行任务")
+    def _flatten(v):
+        if isinstance(v, list):
+            return "".join(seg.get("text", "") for seg in v if isinstance(seg, dict))
+        return v
+
+    flag = _flatten(task_fields.get("待创建执行任务"))
     if isinstance(flag, bool):
         return flag
     if isinstance(flag, str):
         return flag.strip().lower() in {"true", "1", "是", "yes"}
     if isinstance(flag, (int, float)) and not isinstance(flag, bool):
         return bool(flag)
-    # 老 base 没有该字段 → 文本兜底
-    payload = str(task_fields.get("工作流执行包") or "").strip()
+    # 老 base 没有该字段 → 文本兜底（先拍平富文本）
+    payload_raw = _flatten(task_fields.get("工作流执行包"))
+    payload = str(payload_raw or "").strip()
     if not payload:
         return False
     lines = [line.strip() for line in payload.splitlines() if line.strip()]

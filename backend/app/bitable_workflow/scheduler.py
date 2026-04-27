@@ -61,9 +61,23 @@ def _flatten_record_fields(fields: dict) -> dict:
 
 # 单轮最多处理任务数（每条任务触发 7 次 LLM 调用）
 _MAX_PER_CYCLE = 3
-_LOCAL_CYCLE_LOCK: asyncio.Lock | None = None
+# v8.6.20-r7（审计 #3）：本地锁按 (app_token, task_tid) 分键，避免 Redis 不可用降级时
+# 不同 base 的 cycle 互相阻塞（之前用全局单 Lock，B 必须等 A 整轮 LLM 全跑完）。
+_LOCAL_CYCLE_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 import threading as _threading
-_LOCAL_CYCLE_LOCK_INIT = _threading.Lock()
+_LOCAL_CYCLE_LOCKS_INIT = _threading.Lock()
+
+
+def _get_local_cycle_lock(app_token: str, task_tid: str) -> asyncio.Lock:
+    key = (app_token, task_tid)
+    lock = _LOCAL_CYCLE_LOCKS.get(key)
+    if lock is None:
+        with _LOCAL_CYCLE_LOCKS_INIT:
+            lock = _LOCAL_CYCLE_LOCKS.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                _LOCAL_CYCLE_LOCKS[key] = lock
+    return lock
 _LOCK_TTL_SECONDS = int(os.getenv("WORKFLOW_CYCLE_LOCK_TTL_SECONDS", "900"))
 _RECOVER_STALE_MINUTES = int(os.getenv("WORKFLOW_RECOVER_STALE_MINUTES", "30"))
 _ALLOW_LOCAL_WORKFLOW_LOCK = os.getenv("WORKFLOW_ALLOW_LOCAL_LOCK", "").lower() in {
@@ -82,13 +96,10 @@ def _cycle_lock_key(app_token: str, task_tid: str) -> str:
 
 
 async def _acquire_cycle_lock(app_token: str, task_tid: str) -> tuple[object | None, str | None]:
-    # v8.1 修复：双检锁懒初始化，防止并发 cycle 启动各自创建独立 Lock 实例 → 本地互斥失效
-    global _LOCAL_CYCLE_LOCK
-    if _LOCAL_CYCLE_LOCK is None:
-        with _LOCAL_CYCLE_LOCK_INIT:
-            if _LOCAL_CYCLE_LOCK is None:
-                _LOCAL_CYCLE_LOCK = asyncio.Lock()
-    await _LOCAL_CYCLE_LOCK.acquire()
+    # v8.1：双检锁懒初始化；v8.6.20-r7（审计 #3）：按 (app_token, task_tid) 分键，
+    # 不再用全局单 Lock 阻塞跨 base 的并发 cycle。
+    local_lock = _get_local_cycle_lock(app_token, task_tid)
+    await local_lock.acquire()
     owner = _owner_id()
     try:
         import redis.asyncio as aioredis
@@ -102,14 +113,14 @@ async def _acquire_cycle_lock(app_token: str, task_tid: str) -> tuple[object | N
             ex=_LOCK_TTL_SECONDS,
         )
         if not ok:
-            _LOCAL_CYCLE_LOCK.release()
+            local_lock.release()
             await client.aclose()
             return None, None
         return client, owner
     except Exception as exc:
         env = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
         if env in {"prod", "production"} and not _ALLOW_LOCAL_WORKFLOW_LOCK:
-            _LOCAL_CYCLE_LOCK.release()
+            local_lock.release()
             raise RuntimeError("Redis workflow lock is required in production") from exc
         logger.warning("Redis workflow lock unavailable; using in-process lock only: %s", exc)
         return None, owner
@@ -124,8 +135,10 @@ async def _release_cycle_lock(lock_client: object | None, owner: str | None, app
                 await lock_client.delete(key)
             await lock_client.aclose()
     finally:
-        if _LOCAL_CYCLE_LOCK is not None and _LOCAL_CYCLE_LOCK.locked():
-            _LOCAL_CYCLE_LOCK.release()
+        # 按 (app_token, task_tid) 取自己的锁释放，不再操作全局
+        local_lock = _LOCAL_CYCLE_LOCKS.get((app_token, task_tid))
+        if local_lock is not None and local_lock.locked():
+            local_lock.release()
 
 
 async def _renew_cycle_lock(lock_client: object, owner: str, app_token: str, task_tid: str) -> None:

@@ -27,7 +27,7 @@ import sys
 import httpx
 
 from app.bitable_workflow import bitable_ops
-from app.bitable_workflow.bitable_ops import _safe_json
+from app.bitable_workflow.bitable_ops import _safe_json, _invalidate_field_cache
 from app.bitable_workflow.schema import priority_score, health_score
 from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 
@@ -169,6 +169,11 @@ async def migrate_one(
 
         # 1. CREATE 影子 Number（成功后才碰旧字段）
         shadow_fid = await _create_number_field(http, app_token, tid, shadow_name)
+        # v8.6.20-r7（审计 #6）：建/删/改字段后必须清 field_exists 缓存
+        try:
+            _invalidate_field_cache(app_token, tid)
+        except Exception:
+            pass
         print(f"  ✓ 已建影子字段 {shadow_name!r} ({shadow_fid})")
 
         # 2. 回填到影子字段（失败按 record 收集）
@@ -205,11 +210,41 @@ async def migrate_one(
 
         # 3. DELETE 旧 Formula
         await _delete_field(http, app_token, tid, old_fid)
+        try:
+            _invalidate_field_cache(app_token, tid)
+        except Exception:
+            pass
         print(f"  ✓ 已删除原 Formula 字段 {old_fid}")
 
-        # 4. 重命名影子 → 目标名（用 _create_field_http 不支持 PATCH 名字，用底层 PUT）
-        renamed = await _rename_field(http, app_token, tid, shadow_fid, field_name)
-        print(f"  ✓ 已重命名影子字段 → {field_name!r}")
+        # 4. 重命名影子 → 目标名（用 PUT /fields/{field_id}）
+        # v8.6.20-r7（审计 #4）：rename 失败时，schema 处于「旧字段已删 + 影子字段名仍带
+        # __migrating 后缀」的不一致中间态，scheduler 写「综合评分」会全部 silently strip。
+        # 这里捕获 rename 异常，立即返回带 issues 的状态，让调用方/用户尽快人工救场（去
+        # 飞书 UI 把影子字段重命名）。不再无脑 raise 葬送已经回填好的影子数据。
+        try:
+            renamed = await _rename_field(http, app_token, tid, shadow_fid, field_name)
+            try:
+                _invalidate_field_cache(app_token, tid)
+            except Exception:
+                pass
+            print(f"  ✓ 已重命名影子字段 → {field_name!r}")
+        except Exception as rename_exc:
+            err = (
+                f"DELETE 已成功但 RENAME 失败：{rename_exc}；"
+                f"影子字段 '{shadow_name}' (id={shadow_fid}) 仍存在，请到飞书 UI 手工重命名为 '{field_name}'。"
+            )
+            logger.error(err)
+            print(f"  ✗ {err}")
+            return {
+                "table": table_name,
+                "old_field_id": old_fid,
+                "shadow_field_id": shadow_fid,
+                "shadow_name": shadow_name,
+                "backfilled": bf_count,
+                "total_records": len(records),
+                "failed_record_ids": failed_record_ids,
+                "issues": [err],
+            }
 
         return {
             "table": table_name,

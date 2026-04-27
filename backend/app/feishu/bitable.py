@@ -538,21 +538,31 @@ async def _ensure_table_fields(
     # v8.6.19：仅 Formula 字段（type=20）创建失败时降级（warn + continue），
     # 其他字段失败仍抛错触发 setup_workflow rollback。
     FORMULA_FIELD_TYPE = 20
+    # v8.6.20-r7（审计 #6）：每次成功创建/失败降级都清 field_exists 60s 缓存，
+    # 避免同进程随后跑的 setup 重试 / scheduler 路径决策时命中 stale miss。
+    try:
+        from app.bitable_workflow.bitable_ops import _invalidate_field_cache
+    except Exception:
+        _invalidate_field_cache = None
     for field in fields[1:]:
         try:
             await _create_field(client, app_token, table_id, field)
+            if _invalidate_field_cache:
+                try:
+                    _invalidate_field_cache(app_token, table_id)
+                except Exception:
+                    pass
         except Exception as exc:
             if field.get("type") == FORMULA_FIELD_TYPE:
                 logger.warning(
                     "Formula field %r creation failed (non-fatal): %s",
                     field.get("field_name"), exc,
                 )
-                # 失败也要清缓存，避免 field_exists 短时间命中旧 miss
-                try:
-                    from app.bitable_workflow.bitable_ops import _invalidate_field_cache
-                    _invalidate_field_cache(app_token, table_id)
-                except Exception:
-                    pass
+                if _invalidate_field_cache:
+                    try:
+                        _invalidate_field_cache(app_token, table_id)
+                    except Exception:
+                        pass
                 continue
             raise
 

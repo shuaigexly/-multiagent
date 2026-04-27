@@ -261,14 +261,17 @@ async def test_workflow_lock_requires_redis_in_production(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("WORKFLOW_ALLOW_LOCAL_LOCK", raising=False)
     monkeypatch.setattr(scheduler, "_ALLOW_LOCAL_WORKFLOW_LOCK", False)
-    monkeypatch.setattr(scheduler, "_LOCAL_CYCLE_LOCK", None)
+    # v8.6.20-r7：字典化按 (app_token, task_tid) 分键，重置确保用例隔离
+    scheduler._LOCAL_CYCLE_LOCKS.clear()
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
     with pytest.raises(RuntimeError, match="Redis workflow lock is required"):
         await scheduler._acquire_cycle_lock("app", "tbl")
 
-    assert scheduler._LOCAL_CYCLE_LOCK is not None
-    assert not scheduler._LOCAL_CYCLE_LOCK.locked()
+    # 失败时本地锁必须被释放（否则下次获取会死锁）
+    local_lock = scheduler._LOCAL_CYCLE_LOCKS.get(("app", "tbl"))
+    assert local_lock is not None
+    assert not local_lock.locked()
 
 
 @pytest.mark.asyncio

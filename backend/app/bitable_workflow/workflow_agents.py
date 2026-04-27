@@ -20,6 +20,8 @@ import asyncio
 import hashlib
 import json as _json
 import logging
+import re
+import unicodedata
 from datetime import datetime
 from typing import Optional
 
@@ -698,15 +700,18 @@ _AGENT_ROLE_LABELS_ALLOWED = {opt["name"] for opt in __import__("app.bitable_wor
 
 def _normalize_singleselect(value: str, allowed: set[str], fallback: str) -> str:
     """SingleSelect 字段写入前严格校验：必须 ∈ allowed；含不可见字符或空白漂移会被
-    飞书当成新 option 创建（schema 外 hidden option_id），filter 视图命中漂移。"""
+    飞书当成新 option 创建（schema 外 hidden option_id），filter 视图命中漂移。
+
+    v8.6.20-r7（审计 #9）：补 NFC 归一化 + emoji variation selector U+FE0E/U+FE0F +
+    全角空格 U+3000，应对从 HTML/Word/中文输入法粘贴的 LLM/用户输入。"""
     if not value:
         return fallback
-    s = str(value).strip()
-    # 移除 zero-width 字符
-    for ch in ("​", "‌", "‍", "﻿"):
+    s = unicodedata.normalize("NFC", str(value)).strip()
+    # 移除 zero-width 字符 + emoji variation selectors
+    for ch in ("​", "‌", "‍", "﻿", "︎", "️"):
         s = s.replace(ch, "")
-    # NBSP -> 普通 space（飞书 schema 用普通 space）
-    s = s.replace(" ", " ")
+    # NBSP -> 普通 space + 全角空格 U+3000 -> 普通 space
+    s = s.replace(" ", " ").replace("　", " ")
     if s in allowed:
         return s
     return fallback
@@ -760,12 +765,16 @@ def _estimate_urgency(ceo_result: AgentResult) -> int:
             raw_score = 2
 
     # v8.6.20-r3：按健康度 cap 紧急度上限，避免「🟢 健康 + 紧急度=5」逻辑矛盾
+    # v8.6.20-r7（审计 #5）：⚪ 数据不足 不再返回 raw_score（之前默认 raw=3 会给出
+    # 「数据不足但紧急度=3 火」的误导信号），改为强制 1。
     health = _extract_health(ceo_result)
+    if "⚪" in health or "数据不足" in health:
+        return 1
     if "🟢" in health:
-        return min(raw_score, 3)  # 🟢 健康 → 紧急度不超过 3（中等）
+        return min(raw_score, 3)
     if "🟡" in health:
-        return min(raw_score, 4)  # 🟡 关注 → 紧急度不超过 4
-    return raw_score  # 🔴 预警 / ⚪ 数据不足 → 不 cap，原值（最高 5）
+        return min(raw_score, 4)
+    return raw_score  # 🔴 预警 → 不 cap，原值（最高 5）
 
 
 def _format_sections(result: AgentResult, max_chars: int = 2000) -> str:
