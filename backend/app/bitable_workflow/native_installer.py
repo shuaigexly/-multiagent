@@ -520,12 +520,26 @@ def _refresh_native_assets(assets: dict[str, Any]) -> None:
     workflow_state = _group_state(workflow_items)
     dashboard_state = _group_state(dashboard_items)
     role_state = _group_state(role_items)
+    advperm_state = str(assets.get("advperm_state") or "blueprint_ready")
     form_done = any(str(item.get("shared_url") or "").strip() for item in form_items)
     automation_done = bool(automation_items) and all(str(item.get("lifecycle_state") or "") == "created" for item in automation_items)
     workflow_done = bool(workflow_items) and all(str(item.get("lifecycle_state") or "") == "created" for item in workflow_items)
     dashboard_done = bool(dashboard_items) and all(str(item.get("lifecycle_state") or "") == "created" for item in dashboard_items)
     role_done = bool(role_items) and all(str(item.get("lifecycle_state") or "") == "created" for item in role_items)
-    if len(checklist) >= 5:
+    if len(checklist) >= 6:
+        checklist[0]["state"] = advperm_state
+        checklist[0]["done"] = advperm_state == "created"
+        checklist[1]["state"] = form_state
+        checklist[1]["done"] = form_done
+        checklist[2]["state"] = automation_state
+        checklist[2]["done"] = automation_done
+        checklist[3]["state"] = workflow_state
+        checklist[3]["done"] = workflow_done
+        checklist[4]["state"] = dashboard_state
+        checklist[4]["done"] = dashboard_done
+        checklist[5]["state"] = role_state
+        checklist[5]["done"] = role_done
+    elif len(checklist) >= 5:
         checklist[0]["state"] = form_state
         checklist[0]["done"] = form_done
         checklist[1]["state"] = automation_state

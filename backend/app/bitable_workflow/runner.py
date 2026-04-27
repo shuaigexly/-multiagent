@@ -820,6 +820,7 @@ def _build_native_assets(
         "manual_finish_checklist": _build_manual_finish_checklist(
             task_tid=task_tid,
             table_ids=table_ids,
+            advperm_state="blueprint_ready",
             form_blueprints=form_blueprints,
             automation_templates=automation_templates,
             workflow_blueprints=workflow_blueprints,
@@ -878,6 +879,7 @@ def _build_manual_finish_checklist(
     *,
     task_tid: str,
     table_ids: dict,
+    advperm_state: str,
     form_blueprints: list[dict],
     automation_templates: list[dict],
     workflow_blueprints: list[dict],
@@ -886,6 +888,15 @@ def _build_manual_finish_checklist(
 ) -> list[dict[str, object]]:
     intake_form = form_blueprints[0] if form_blueprints else {}
     return [
+        {
+            "name": "启用 Base 高级权限",
+            "surface": "高级权限",
+            "state": advperm_state,
+            "done": advperm_state == "created",
+            "owner": "Base 管理员",
+            "target_table": task_tid,
+            "step": "先启用 Base 高级权限，再继续创建自定义角色和分角色工作面。",
+        },
         {
             "name": "开放任务收集表单",
             "surface": "表单",

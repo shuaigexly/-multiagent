@@ -164,7 +164,7 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
     assert result["native_assets"]["form_blueprints"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["status_summary"]["counts"]["created"] == 1
     assert result["native_assets"]["status_summary"]["counts"]["blueprint_ready"] >= 1
-    assert result["native_assets"]["manual_finish_checklist"][0]["done"] is True
+    assert result["native_assets"]["manual_finish_checklist"][1]["done"] is True
     assert result["native_manifest"]["manifest_version"] == "v2"
     assert result["native_manifest"]["install_order"][0]["title"] == "启用高级权限"
     assert "lark-cli base +advperm-enable" in result["native_manifest"]["command_packs"][0]["commands"][0]
@@ -214,7 +214,7 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
         "workflow_blueprints": [{"name": "W1", "lifecycle_state": "blueprint_ready"}],
         "dashboard_blueprints": [{"name": "D1", "lifecycle_state": "blueprint_ready"}],
         "role_blueprints": [{"name": "R1", "lifecycle_state": "blueprint_ready"}],
-        "manual_finish_checklist": [{}, {}, {"done": False}, {"done": False}, {"done": False}],
+        "manual_finish_checklist": [{}, {}, {}, {"done": False}, {"done": False}, {"done": False}],
     }
     result = await apply_native_manifest(
         app_token="app_token",
@@ -232,7 +232,8 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     assert result["native_assets"]["dashboard_blueprints"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["role_blueprints"][0]["lifecycle_state"] == "created"
     assert result["native_assets"]["overall_state"] == "created"
-    assert result["native_assets"]["manual_finish_checklist"][2]["done"] is True
+    assert result["native_assets"]["manual_finish_checklist"][0]["done"] is True
+    assert result["native_assets"]["manual_finish_checklist"][3]["done"] is True
     assert result["native_manifest"]["manifest_version"] == "v2"
     assert created_logs
     assert created_logs[0]["fields"]["触发来源"] == "native_manifest.apply"
@@ -274,7 +275,7 @@ async def test_apply_native_manifest_marks_form_manual_when_form_id_missing(monk
         "workflow_blueprints": [],
         "dashboard_blueprints": [],
         "role_blueprints": [],
-        "manual_finish_checklist": [{}, {}, {"done": False}, {"done": False}, {"done": False}],
+        "manual_finish_checklist": [{}, {}, {}, {"done": False}, {"done": False}, {"done": False}],
     }
     result = await apply_native_manifest(
         app_token="app_token",
@@ -478,6 +479,7 @@ async def test_apply_native_manifest_refreshes_checklist_states_and_done(monkeyp
         "dashboard_blueprints": [{"name": "D1", "lifecycle_state": "blueprint_ready"}],
         "role_blueprints": [{"name": "R1", "lifecycle_state": "blueprint_ready"}],
         "manual_finish_checklist": [
+            {"name": "启用 Base 高级权限", "state": "blueprint_ready", "done": False},
             {"name": "开放任务收集表单", "state": "manual_finish_required", "done": False},
             {"name": "配置主表自动化模板", "state": "blueprint_ready", "done": False},
             {"name": "创建路由工作流", "state": "blueprint_ready", "done": False},
@@ -496,16 +498,18 @@ async def test_apply_native_manifest_refreshes_checklist_states_and_done(monkeyp
     )
 
     checklist = result["native_assets"]["manual_finish_checklist"]
-    assert checklist[0]["state"] == "manual_finish_required"
-    assert checklist[0]["done"] is False
-    assert checklist[1]["state"] == "created"
-    assert checklist[1]["done"] is True
+    assert checklist[0]["state"] == "created"
+    assert checklist[0]["done"] is True
+    assert checklist[1]["state"] == "manual_finish_required"
+    assert checklist[1]["done"] is False
     assert checklist[2]["state"] == "created"
     assert checklist[2]["done"] is True
     assert checklist[3]["state"] == "created"
     assert checklist[3]["done"] is True
     assert checklist[4]["state"] == "created"
     assert checklist[4]["done"] is True
+    assert checklist[5]["state"] == "created"
+    assert checklist[5]["done"] is True
 
 
 @pytest.mark.asyncio
