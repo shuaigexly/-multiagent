@@ -988,14 +988,16 @@ export default function BitableWorkflow() {
     ? setup?.native_assets?.asset_groups || []
     : [];
   const nativeChecklist = objectList(setup?.native_assets?.manual_finish_checklist);
-  const nativeAssetCounts = setup?.native_assets?.status_summary?.counts || {};
+  const nativeAssetCounts = useMemo(
+    () => setup?.native_assets?.status_summary?.counts || {},
+    [setup?.native_assets?.status_summary?.counts],
+  );
   const nativeInstallOrder = objectList(setup?.native_manifest?.install_order);
   const nativeCommandPacks = objectList(setup?.native_manifest?.command_packs);
   const nativeApplyReport = objectList(setup?.native_apply_report);
   const nativeReadiness = useMemo(() => {
-    const counts = nativeAssetCounts || {};
-    const total = Object.values(counts).reduce((sum, value) => sum + numberValue(value), 0);
-    const created = numberValue(counts.created);
+    const total = Object.values(nativeAssetCounts).reduce((sum, value) => sum + numberValue(value), 0);
+    const created = numberValue(nativeAssetCounts.created);
     const percent = total > 0 ? Math.round((created / total) * 100) : 0;
     return { total, created, percent };
   }, [nativeAssetCounts]);
