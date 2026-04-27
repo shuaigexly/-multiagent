@@ -381,6 +381,60 @@ async def test_workflow_confirm_updates_management_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_workflow_confirm_approve_promotes_waiting_approval_task_to_execution(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_update_record(_app_token, _table_id, _record_id, fields, optional_keys=None):
+        captured["fields"] = fields
+        captured["optional_keys"] = optional_keys or []
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "等待拍板",
+                "待拍板确认": True,
+                "拍板负责人": "CEO",
+                "汇报对象": "CEO",
+                "工作流执行包": "路由：等待拍板\n\n执行项：\n- 通知销售团队跟进重点客户",
+            }
+        }
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update_record)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log"}})
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_1",
+        action="approve",
+        actor="CEO",
+    )
+
+    result = await workflow.workflow_confirm(req)
+
+    assert result["action"] == "approve"
+    assert captured["fields"]["工作流路由"] == "直接执行"
+    assert captured["fields"]["待执行确认"] is True
+    assert captured["fields"]["待创建执行任务"] is True
+    assert captured["fields"]["归档状态"] == "待执行"
+    assert captured["fields"]["当前责任角色"] == "执行人"
+    assert captured["fields"]["当前原生动作"] == "执行落地"
+    assert "执行截止时间" in captured["fields"]
+
+
+@pytest.mark.asyncio
 async def test_workflow_confirm_rejects_mismatched_action(monkeypatch):
     sse_pkg = ModuleType("sse_starlette")
     sse_mod = ModuleType("sse_starlette.sse")

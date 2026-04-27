@@ -180,6 +180,13 @@ def _confirm_action_allowed(action: str, task_fields: dict[str, object]) -> tupl
     return False, f"当前任务处于 {route}，不能执行 {action}；期望阶段为 {expected}"
 
 
+def _workflow_has_execution_items(task_fields: dict[str, object]) -> bool:
+    payload = str(task_fields.get("工作流执行包") or "").strip()
+    if not payload:
+        return False
+    return any(line.strip().startswith(("执行项：", "执行项:")) for line in payload.splitlines())
+
+
 async def _resolve_seed_template_defaults(
     app_token: str,
     template_name: str,
@@ -502,6 +509,7 @@ async def workflow_confirm(req: ConfirmRequest):
     action_name = ""
     action_status = "已完成"
     action_summary = ""
+    promote_to_execution = req.action == "approve" and route == "等待拍板" and _workflow_has_execution_items(task_fields)
 
     if req.action == "approve":
         fields.update(
@@ -515,6 +523,21 @@ async def workflow_confirm(req: ConfirmRequest):
         optional_keys.extend(["待拍板确认", "拍板人", "拍板时间"])
         action_name = "管理拍板确认"
         action_summary = f"{actor} 已回写拍板结果"
+        if promote_to_execution:
+            fields.update(
+                {
+                    "工作流路由": "直接执行",
+                    "待发送汇报": False,
+                    "待创建执行任务": True,
+                    "待执行确认": True,
+                    "归档状态": "待执行",
+                }
+            )
+            optional_keys.extend(["工作流路由", "待发送汇报", "待创建执行任务", "待执行确认", "归档状态"])
+            if not task_fields.get("执行截止时间"):
+                fields["执行截止时间"] = int(datetime.now(tz=timezone.utc).timestamp() * 1000) + 72 * 3600 * 1000
+                optional_keys.append("执行截止时间")
+            action_summary = f"{actor} 已回写拍板结果，并推进到执行队列"
     elif req.action == "execute":
         fields.update(
             {
