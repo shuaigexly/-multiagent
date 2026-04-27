@@ -295,6 +295,12 @@ function yesNoLabel(value: unknown) {
   return booleanValue(value) ? '是' : '否';
 }
 
+function sortTasksByLatest(tasks: TaskRecord[]) {
+  return [...tasks].sort(
+    (left, right) => recordTimestamp(right, ['最近更新', '创建时间']) - recordTimestamp(left, ['最近更新', '创建时间']),
+  );
+}
+
 function scoreStars(score: unknown) {
   const clamped = clampScore(score);
   return `${'★'.repeat(clamped)}${'☆'.repeat(Math.max(0, 5 - clamped))}`;
@@ -554,11 +560,13 @@ export default function BitableWorkflow() {
   const handleManagementConfirm = async (
     action: 'approve' | 'execute' | 'retrospective',
     successTitle: string,
+    task: TaskRecord | null | undefined = selectedTask,
   ) => {
-    if (!setup || !selectedTask) return;
+    if (!setup || !task) return;
     try {
-      await confirmTaskWorkflow(setup.app_token, setup.table_ids.task, selectedTask.record_id, action);
+      await confirmTaskWorkflow(setup.app_token, setup.table_ids.task, task.record_id, action);
       toast({ title: successTitle, description: '已回写到分析任务主表' });
+      setSelectedTaskId(task.record_id);
       refreshTasks();
     } catch (err) {
       toast({ title: '回写失败', description: String(err), variant: 'destructive' });
@@ -717,6 +725,23 @@ export default function BitableWorkflow() {
       if (retroFlag) inRetrospective += 1;
     });
     return { pendingApproval, approved, pendingExecution, executed, inRetrospective };
+  }, [tasks]);
+  const roleWorkspace = useMemo(() => {
+    const approval = sortTasksByLatest(
+      tasks.filter((task) => taskWorkflowRoute(task) === '等待拍板' && !booleanValue(task.fields?.是否已拍板)),
+    );
+    const execution = sortTasksByLatest(
+      tasks.filter((task) => taskWorkflowRoute(task) === '直接执行' && !booleanValue(task.fields?.是否已执行落地)),
+    );
+    const review = sortTasksByLatest(tasks.filter((task) => booleanValue(task.fields?.待安排复核)));
+    const retrospective = sortTasksByLatest(
+      tasks.filter(
+        (task) =>
+          !booleanValue(task.fields?.是否进入复盘) &&
+          (booleanValue(task.fields?.是否已执行落地) || textValue(task.fields?.归档状态) === '已归档'),
+      ),
+    );
+    return { approval, execution, review, retrospective };
   }, [tasks]);
 
   const templateOverview = useMemo(() => {
@@ -1146,6 +1171,159 @@ export default function BitableWorkflow() {
                   </div>
                 );
               })}
+            </section>
+
+            <section className="rounded-[30px] border border-white/70 bg-white/90 p-6 shadow-[0_20px_64px_rgba(15,23,42,0.06)]">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Role Workspace</p>
+                  <h2 className="mt-2 font-serif text-3xl font-semibold text-slate-950">角色化交付工作台</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                    按拍板人、执行人、复核人、复盘负责人拆开待办队列，让多维表格交付闭环真正落到角色工作面，而不是只停留在任务总览。
+                  </p>
+                </div>
+                <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
+                  角色待办 {roleWorkspace.approval.length + roleWorkspace.execution.length + roleWorkspace.review.length + roleWorkspace.retrospective.length} 条
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 xl:grid-cols-2 2xl:grid-cols-4">
+                {[
+                  {
+                    key: 'approval',
+                    title: '拍板人队列',
+                    note: '等待管理层确认是否拍板',
+                    items: roleWorkspace.approval,
+                    accent: 'border-rose-200 bg-rose-50 text-rose-700',
+                    button: '回写拍板',
+                    action: 'approve' as const,
+                    empty: '当前没有待拍板任务。',
+                  },
+                  {
+                    key: 'execution',
+                    title: '执行人队列',
+                    note: '待推进并回写执行完成',
+                    items: roleWorkspace.execution,
+                    accent: 'border-sky-200 bg-sky-50 text-sky-700',
+                    button: '回写执行完成',
+                    action: 'execute' as const,
+                    empty: '当前没有待执行落地任务。',
+                  },
+                  {
+                    key: 'review',
+                    title: '复核人队列',
+                    note: '待补数、待重跑或待安排复核',
+                    items: roleWorkspace.review,
+                    accent: 'border-amber-200 bg-amber-50 text-amber-700',
+                    button: '',
+                    action: null,
+                    empty: '当前没有待复核任务。',
+                  },
+                  {
+                    key: 'retrospective',
+                    title: '复盘队列',
+                    note: '交付已完成，待正式进入复盘',
+                    items: roleWorkspace.retrospective,
+                    accent: 'border-violet-200 bg-violet-50 text-violet-700',
+                    button: '标记进入复盘',
+                    action: 'retrospective' as const,
+                    empty: '当前没有待进入复盘的任务。',
+                  },
+                ].map((lane) => (
+                  <div key={lane.key} className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.86),rgba(255,255,255,0.98))] p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${lane.accent}`}>
+                          {lane.title}
+                        </div>
+                        <div className="mt-3 text-sm leading-6 text-slate-600">{lane.note}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-semibold text-slate-950">{lane.items.length}</div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Tasks</div>
+                      </div>
+                    </div>
+
+                    {lane.items.length === 0 ? (
+                      <div className="mt-4">
+                        <EmptyState text={lane.empty} />
+                      </div>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {lane.items.slice(0, 4).map((task) => (
+                          <div key={task.record_id} className="rounded-[20px] border border-slate-200 bg-white/92 p-4">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTaskId(task.record_id)}
+                              className="w-full text-left"
+                            >
+                              <div className="text-sm font-semibold leading-6 text-slate-950">{taskTitle(task)}</div>
+                              <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                                {textValue(task.fields?.输出目的) && (
+                                  <span className={`rounded-full border px-2.5 py-1 ${PURPOSE_STYLE[textValue(task.fields?.输出目的)] || 'border-slate-200 bg-white text-slate-600'}`}>
+                                    {textValue(task.fields?.输出目的)}
+                                  </span>
+                                )}
+                                {textValue(task.fields?.工作流路由) && (
+                                  <span className={`rounded-full border px-2.5 py-1 ${ROUTE_STYLE[textValue(task.fields?.工作流路由)] || 'border-slate-200 bg-white text-slate-600'}`}>
+                                    {textValue(task.fields?.工作流路由)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-3 grid gap-2 text-xs text-slate-500">
+                                <div>
+                                  负责人：
+                                  {lane.key === 'approval'
+                                    ? textValue(task.fields?.拍板人) || textValue(task.fields?.汇报对象) || '待指定'
+                                    : lane.key === 'execution'
+                                      ? textValue(task.fields?.执行负责人) || '待指定'
+                                      : lane.key === 'review'
+                                        ? textValue(task.fields?.复核负责人) || '待指定'
+                                        : textValue(task.fields?.执行负责人) || textValue(task.fields?.汇报对象) || '待指定'}
+                                </div>
+                                <div>
+                                  时间：
+                                  {lane.key === 'approval'
+                                    ? formatDateValue(task.fields?.拍板时间)
+                                    : lane.key === 'execution'
+                                      ? formatDateValue(task.fields?.执行截止时间)
+                                      : lane.key === 'review'
+                                        ? formatDateValue(task.fields?.建议复核时间)
+                                        : formatDateValue(task.fields?.执行完成时间)}
+                                </div>
+                              </div>
+                            </button>
+                            {lane.action && (
+                              <div className="mt-4">
+                                <Button
+                                  variant="outline"
+                                  className="w-full rounded-full"
+                                  onClick={() =>
+                                    handleManagementConfirm(
+                                      lane.action,
+                                      lane.action === 'approve'
+                                        ? '已确认拍板'
+                                        : lane.action === 'execute'
+                                          ? '已确认执行落地'
+                                          : '已标记进入复盘',
+                                      task,
+                                    )
+                                  }
+                                >
+                                  {lane.button}
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {lane.items.length > 4 && (
+                          <div className="px-2 text-xs text-slate-500">还有 {lane.items.length - 4} 条未展开显示。</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </section>
 
             <section className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
