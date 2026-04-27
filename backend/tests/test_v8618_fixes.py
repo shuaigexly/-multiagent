@@ -244,6 +244,41 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_apply_native_manifest_supports_advperm_only_surface(monkeypatch):
+    from app.bitable_workflow.native_installer import apply_native_manifest
+
+    called_shortcuts: list[str] = []
+
+    async def fake_cli_base(shortcut: str, *args: str):
+        called_shortcuts.append(shortcut)
+        if shortcut == "+advperm-enable":
+            return {"ok": True, "data": {"success": True}}
+        raise AssertionError(f"unexpected shortcut {shortcut}")
+
+    monkeypatch.setattr("app.bitable_workflow.native_installer.is_cli_available", lambda: True)
+    monkeypatch.setattr("app.bitable_workflow.native_installer.cli_base", fake_cli_base)
+    monkeypatch.setattr(
+        "app.bitable_workflow.native_installer.bitable_ops.create_record_optional_fields",
+        AsyncMock(return_value="rec_native_log"),
+    )
+
+    result = await apply_native_manifest(
+        app_token="app_token",
+        base_url="https://feishu.cn/base/app_token",
+        table_ids={"task": "tbl_task", "evidence": "tbl_evidence", "report": "tbl_report", "automation_log": "tbl_log"},
+        base_meta={"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
+        native_assets={"advperm_state": "blueprint_ready"},
+        surfaces=["advperm"],
+        force=True,
+    )
+
+    assert result["surfaces"] == ["advperm"]
+    assert called_shortcuts == ["+advperm-enable"]
+    assert result["report"][0]["surface"] == "advperm"
+    assert result["native_assets"]["advperm_state"] == "created"
+
+
+@pytest.mark.asyncio
 async def test_apply_native_manifest_marks_form_manual_when_form_id_missing(monkeypatch):
     from app.bitable_workflow.native_installer import apply_native_manifest
 

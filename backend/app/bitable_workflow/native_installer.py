@@ -21,7 +21,7 @@ from app.feishu.cli_bridge import cli_base, is_cli_available
 
 logger = logging.getLogger(__name__)
 
-_ALL_SURFACES = {"form", "automation", "workflow", "dashboard", "role"}
+_ALL_SURFACES = {"advperm", "form", "automation", "workflow", "dashboard", "role"}
 
 
 async def apply_native_manifest(
@@ -44,7 +44,7 @@ async def apply_native_manifest(
     applied_at = int(time.time())
 
     advperm_ready = True
-    if "role" in targets:
+    if "advperm" in targets or "role" in targets:
         advperm_ready = await _apply_advperm(app_token, assets, report)
 
     if "form" in targets:
