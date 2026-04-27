@@ -322,6 +322,7 @@ TASK_FIELDS = [
         "options": ARCHIVE_STATUS_OPTIONS,
     },
     {"field_name": "是否已拍板", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {"field_name": "待拍板确认", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
     {"field_name": "拍板人", "type": TEXT_FIELD_TYPE},
     {
         "field_name": "拍板时间",
@@ -330,6 +331,7 @@ TASK_FIELDS = [
         "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
     },
     {"field_name": "是否已执行落地", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {"field_name": "待执行确认", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
     {
         "field_name": "执行完成时间",
         "type": DATE_FIELD_TYPE,
@@ -337,6 +339,7 @@ TASK_FIELDS = [
         "property": {"date_formatter": "yyyy-MM-dd HH:mm", "auto_fill": False},
     },
     {"field_name": "是否进入复盘", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
+    {"field_name": "待复盘确认", "type": CHECKBOX_FIELD_TYPE, "ui_type": "Checkbox"},
     {
         "field_name": "创建时间",
         "type": CREATED_TIME_FIELD_TYPE,

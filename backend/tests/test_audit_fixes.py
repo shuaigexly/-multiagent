@@ -350,6 +350,7 @@ async def test_workflow_confirm_updates_management_fields(monkeypatch):
     assert result["record_id"] == "rec_1"
     assert result["action"] == "approve"
     assert captured["fields"]["是否已拍板"] is True
+    assert captured["fields"]["待拍板确认"] is False
     assert captured["fields"]["拍板人"] == "CEO"
     assert "拍板时间" in captured["fields"]
     assert "拍板时间" in captured["optional_keys"]

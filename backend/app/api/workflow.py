@@ -292,6 +292,15 @@ async def workflow_confirm(req: ConfirmRequest):
     """回写主表管理确认字段：拍板、执行落地、进入复盘。"""
     now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     actor = req.actor.strip() or "驾驶舱操作"
+    route = ""
+    task_title = ""
+    try:
+        task_record = await bitable_ops.get_record(req.app_token, req.table_id, req.record_id)
+        task_fields = task_record.get("fields") or {}
+        task_title = str(task_fields.get("任务标题") or "").strip()
+        route = str(task_fields.get("工作流路由") or "").strip()
+    except Exception as exc:
+        logger.warning("confirm fetch task record failed record=%s: %s", req.record_id, exc)
     fields: dict[str, object] = {}
     optional_keys: list[str] = []
     action_name = ""
@@ -302,25 +311,29 @@ async def workflow_confirm(req: ConfirmRequest):
         fields.update(
             {
                 "是否已拍板": True,
+                "待拍板确认": False,
                 "拍板人": actor,
                 "拍板时间": now_ms,
             }
         )
-        optional_keys.extend(["拍板人", "拍板时间"])
+        optional_keys.extend(["待拍板确认", "拍板人", "拍板时间"])
         action_name = "管理拍板确认"
         action_summary = f"{actor} 已回写拍板结果"
     elif req.action == "execute":
         fields.update(
             {
                 "是否已执行落地": True,
+                "待执行确认": False,
+                "待复盘确认": True,
                 "执行完成时间": now_ms,
             }
         )
-        optional_keys.append("执行完成时间")
+        optional_keys.extend(["待执行确认", "待复盘确认", "执行完成时间"])
         action_name = "执行落地确认"
         action_summary = "已回写执行完成时间"
     elif req.action == "retrospective":
-        fields.update({"是否进入复盘": True})
+        fields.update({"是否进入复盘": True, "待复盘确认": False})
+        optional_keys.append("待复盘确认")
         action_name = "进入复盘确认"
         action_summary = "已标记任务进入复盘"
 
@@ -340,16 +353,6 @@ async def workflow_confirm(req: ConfirmRequest):
     table_ids = _state.get("table_ids") or {}
     action_tid = table_ids.get("action")
     automation_log_tid = table_ids.get("automation_log")
-    task_title = ""
-    route = ""
-    try:
-        task_record = await bitable_ops.get_record(req.app_token, req.table_id, req.record_id)
-        task_fields = task_record.get("fields") or {}
-        task_title = str(task_fields.get("任务标题") or "").strip()
-        route = str(task_fields.get("工作流路由") or "").strip()
-    except Exception as exc:
-        logger.warning("confirm fetch task record failed record=%s: %s", req.record_id, exc)
-
     if action_tid and task_title:
         await bitable_ops.create_record_optional_fields(
             req.app_token,

@@ -206,6 +206,17 @@ function formatDateValue(value: unknown) {
   }).format(new Date(ts));
 }
 
+function hoursSince(value: unknown) {
+  const ts = parseTimeValue(value);
+  if (!ts) return 0;
+  return Math.max(0, Math.round((Date.now() - ts) / 3_600_000));
+}
+
+function isPastDue(value: unknown) {
+  const ts = parseTimeValue(value);
+  return ts > 0 && ts < Date.now();
+}
+
 function splitListText(value: unknown, limit = 4) {
   return textValue(value)
     .split(/\n+/)
@@ -728,20 +739,48 @@ export default function BitableWorkflow() {
   }, [tasks]);
   const roleWorkspace = useMemo(() => {
     const approval = sortTasksByLatest(
-      tasks.filter((task) => taskWorkflowRoute(task) === '等待拍板' && !booleanValue(task.fields?.是否已拍板)),
+      tasks.filter((task) => booleanValue(task.fields?.待拍板确认)),
     );
     const execution = sortTasksByLatest(
-      tasks.filter((task) => taskWorkflowRoute(task) === '直接执行' && !booleanValue(task.fields?.是否已执行落地)),
+      tasks.filter((task) => booleanValue(task.fields?.待执行确认)),
     );
     const review = sortTasksByLatest(tasks.filter((task) => booleanValue(task.fields?.待安排复核)));
     const retrospective = sortTasksByLatest(
-      tasks.filter(
-        (task) =>
-          !booleanValue(task.fields?.是否进入复盘) &&
-          (booleanValue(task.fields?.是否已执行落地) || textValue(task.fields?.归档状态) === '已归档'),
-      ),
+      tasks.filter((task) => booleanValue(task.fields?.待复盘确认)),
     );
     return { approval, execution, review, retrospective };
+  }, [tasks]);
+  const exceptionWorkspace = useMemo(() => {
+    const approvalStale = sortTasksByLatest(
+      tasks.filter(
+        (task) =>
+          booleanValue(task.fields?.待拍板确认) &&
+          hoursSince(task.fields?.完成日期 || task.fields?.最近更新) >= 24,
+      ),
+    );
+    const executionOverdue = sortTasksByLatest(
+      tasks.filter(
+        (task) =>
+          booleanValue(task.fields?.待执行确认) &&
+          isPastDue(task.fields?.执行截止时间),
+      ),
+    );
+    const reviewOverdue = sortTasksByLatest(
+      tasks.filter(
+        (task) =>
+          booleanValue(task.fields?.待安排复核) &&
+          !booleanValue(task.fields?.是否已执行落地) &&
+          isPastDue(task.fields?.建议复核时间),
+      ),
+    );
+    const retrospectiveStale = sortTasksByLatest(
+      tasks.filter(
+        (task) =>
+          booleanValue(task.fields?.待复盘确认) &&
+          hoursSince(task.fields?.执行完成时间) >= 48,
+      ),
+    );
+    return { approvalStale, executionOverdue, reviewOverdue, retrospectiveStale };
   }, [tasks]);
 
   const templateOverview = useMemo(() => {
@@ -1315,6 +1354,113 @@ export default function BitableWorkflow() {
                               </div>
                             )}
                           </div>
+                        ))}
+                        {lane.items.length > 4 && (
+                          <div className="px-2 text-xs text-slate-500">还有 {lane.items.length - 4} 条未展开显示。</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-[30px] border border-white/70 bg-white/90 p-6 shadow-[0_20px_64px_rgba(15,23,42,0.06)]">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Exception Radar</p>
+                  <h2 className="mt-2 font-serif text-3xl font-semibold text-slate-950">交付异常雷达</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                    这里不看正常流转，只看真正可能拖慢产出的异常节点：拍板滞留、执行超期、复核超时、复盘迟迟不启动。
+                  </p>
+                </div>
+                <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
+                  异常 {exceptionWorkspace.approvalStale.length + exceptionWorkspace.executionOverdue.length + exceptionWorkspace.reviewOverdue.length + exceptionWorkspace.retrospectiveStale.length} 条
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 xl:grid-cols-2 2xl:grid-cols-4">
+                {[
+                  {
+                    key: 'approval-stale',
+                    title: '拍板滞留',
+                    note: '等待拍板超过 24 小时',
+                    items: exceptionWorkspace.approvalStale,
+                    accent: 'border-rose-200 bg-rose-50 text-rose-700',
+                    empty: '当前没有超 24 小时未拍板任务。',
+                  },
+                  {
+                    key: 'execution-overdue',
+                    title: '执行超期',
+                    note: '已到执行截止时间仍未回写完成',
+                    items: exceptionWorkspace.executionOverdue,
+                    accent: 'border-orange-200 bg-orange-50 text-orange-700',
+                    empty: '当前没有执行超期任务。',
+                  },
+                  {
+                    key: 'review-overdue',
+                    title: '复核超时',
+                    note: '建议复核时间已到但仍未关闭复核链路',
+                    items: exceptionWorkspace.reviewOverdue,
+                    accent: 'border-amber-200 bg-amber-50 text-amber-700',
+                    empty: '当前没有复核超时任务。',
+                  },
+                  {
+                    key: 'retrospective-stale',
+                    title: '复盘滞后',
+                    note: '执行完成超过 48 小时仍未进入复盘',
+                    items: exceptionWorkspace.retrospectiveStale,
+                    accent: 'border-violet-200 bg-violet-50 text-violet-700',
+                    empty: '当前没有复盘滞后任务。',
+                  },
+                ].map((lane) => (
+                  <div key={lane.key} className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.86),rgba(255,255,255,0.98))] p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${lane.accent}`}>
+                          {lane.title}
+                        </div>
+                        <div className="mt-3 text-sm leading-6 text-slate-600">{lane.note}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-semibold text-slate-950">{lane.items.length}</div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Cases</div>
+                      </div>
+                    </div>
+
+                    {lane.items.length === 0 ? (
+                      <div className="mt-4">
+                        <EmptyState text={lane.empty} />
+                      </div>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {lane.items.slice(0, 4).map((task) => (
+                          <button
+                            key={task.record_id}
+                            type="button"
+                            onClick={() => setSelectedTaskId(task.record_id)}
+                            className="w-full rounded-[20px] border border-slate-200 bg-white/92 p-4 text-left transition hover:border-slate-300"
+                          >
+                            <div className="text-sm font-semibold leading-6 text-slate-950">{taskTitle(task)}</div>
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                              {textValue(task.fields?.工作流路由) && (
+                                <span className={`rounded-full border px-2.5 py-1 ${ROUTE_STYLE[textValue(task.fields?.工作流路由)] || 'border-slate-200 bg-white text-slate-600'}`}>
+                                  {textValue(task.fields?.工作流路由)}
+                                </span>
+                              )}
+                              {textValue(task.fields?.输出目的) && (
+                                <span className={`rounded-full border px-2.5 py-1 ${PURPOSE_STYLE[textValue(task.fields?.输出目的)] || 'border-slate-200 bg-white text-slate-600'}`}>
+                                  {textValue(task.fields?.输出目的)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-3 text-xs leading-6 text-slate-500">
+                              {lane.key === 'approval-stale' && `滞留时长：${hoursSince(task.fields?.完成日期 || task.fields?.最近更新)} 小时`}
+                              {lane.key === 'execution-overdue' && `执行截止：${formatDateValue(task.fields?.执行截止时间)}`}
+                              {lane.key === 'review-overdue' && `建议复核：${formatDateValue(task.fields?.建议复核时间)}`}
+                              {lane.key === 'retrospective-stale' && `执行完成后已过：${hoursSince(task.fields?.执行完成时间)} 小时`}
+                            </div>
+                          </button>
                         ))}
                         {lane.items.length > 4 && (
                           <div className="px-2 text-xs text-slate-500">还有 {lane.items.length - 4} 条未展开显示。</div>
