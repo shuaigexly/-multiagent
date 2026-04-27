@@ -166,7 +166,26 @@ const EVIDENCE_USAGE_STYLE: Record<string, string> = {
 };
 
 const PURPOSE_OPTIONS = ['经营诊断', '管理决策', '执行跟进', '汇报展示', '补数核验'] as const;
+const SETUP_MODE_OPTIONS = ['seed_demo', 'prod_empty', 'template_only'] as const;
+const BASE_TYPE_OPTIONS = ['validation', 'production', 'template'] as const;
+const TASK_SOURCE_OPTIONS = ['手工创建', '表单提交', '跟进任务', '复核任务', '外部系统同步'] as const;
+const BUSINESS_OWNER_OPTIONS = ['综合经营', '增长', '产品', '内容', '运营', '财务'] as const;
+const AUDIENCE_LEVEL_OPTIONS = ['负责人', '部门管理层', 'CEO / CXO'] as const;
 const STATUS_ORDER = ['待分析', '分析中', '已完成', '已归档'] as const;
+const ASSET_STATE_STYLE: Record<string, string> = {
+  created: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  api_supported: 'border-sky-200 bg-sky-50 text-sky-700',
+  blueprint_ready: 'border-violet-200 bg-violet-50 text-violet-700',
+  manual_finish_required: 'border-amber-200 bg-amber-50 text-amber-800',
+  permission_blocked: 'border-rose-200 bg-rose-50 text-rose-700',
+};
+const ASSET_STATE_LABEL: Record<string, string> = {
+  created: '已创建',
+  api_supported: 'API 可接',
+  blueprint_ready: '蓝图就绪',
+  manual_finish_required: '待人工补完',
+  permission_blocked: '权限受阻',
+};
 
 function textValue(value: unknown) {
   return typeof value === 'string' ? value : '';
@@ -370,6 +389,9 @@ export default function BitableWorkflow() {
   const [setup, setSetupState] = useState<WorkflowSetup | null>(null);
   const [running, setRunning] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [setupName, setSetupName] = useState('内容运营虚拟组织');
+  const [setupMode, setSetupMode] = useState<(typeof SETUP_MODE_OPTIONS)[number]>('seed_demo');
+  const [setupBaseType, setSetupBaseType] = useState<(typeof BASE_TYPE_OPTIONS)[number]>('validation');
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [reportRecords, setReportRecords] = useState<TaskRecord[]>([]);
   const [evidenceRecords, setEvidenceRecords] = useState<TaskRecord[]>([]);
@@ -385,6 +407,9 @@ export default function BitableWorkflow() {
   const [newTaskBackground, setNewTaskBackground] = useState('');
   const [newTaskAudience, setNewTaskAudience] = useState('');
   const [newTaskPurpose, setNewTaskPurpose] = useState<(typeof PURPOSE_OPTIONS)[number]>('经营诊断');
+  const [newTaskSource, setNewTaskSource] = useState<(typeof TASK_SOURCE_OPTIONS)[number]>('手工创建');
+  const [newTaskBusinessOwner, setNewTaskBusinessOwner] = useState<(typeof BUSINESS_OWNER_OPTIONS)[number]>('综合经营');
+  const [newTaskAudienceLevel, setNewTaskAudienceLevel] = useState<(typeof AUDIENCE_LEVEL_OPTIONS)[number]>('负责人');
   const [newTaskSuccessCriteria, setNewTaskSuccessCriteria] = useState('');
   const [newTaskConstraints, setNewTaskConstraints] = useState('');
   const [newTaskDatasetRef, setNewTaskDatasetRef] = useState('');
@@ -410,6 +435,12 @@ export default function BitableWorkflow() {
             native_assets: st.state.native_assets,
             table_ids: st.state.table_ids as WorkflowSetup['table_ids'],
           });
+          if (textValue(st.state.base_meta?.mode) && SETUP_MODE_OPTIONS.includes(st.state.base_meta.mode as (typeof SETUP_MODE_OPTIONS)[number])) {
+            setSetupMode(st.state.base_meta.mode as (typeof SETUP_MODE_OPTIONS)[number]);
+          }
+          if (textValue(st.state.base_meta?.base_type) && BASE_TYPE_OPTIONS.includes(st.state.base_meta.base_type as (typeof BASE_TYPE_OPTIONS)[number])) {
+            setSetupBaseType(st.state.base_meta.base_type as (typeof BASE_TYPE_OPTIONS)[number]);
+          }
         }
       } catch (err) {
         console.warn('getStatus failed', err);
@@ -532,7 +563,10 @@ export default function BitableWorkflow() {
   const handleSetup = async () => {
     setLoading(true);
     try {
-      const response = await setupWorkflow();
+      const response = await setupWorkflow(setupName.trim() || '内容运营虚拟组织', {
+        mode: setupMode,
+        base_type: setupBaseType,
+      });
       setSetupState(response);
       toast({ title: '多维表格创建成功', description: response.url });
     } catch (err) {
@@ -579,6 +613,9 @@ export default function BitableWorkflow() {
         '综合分析',
         newTaskBackground.trim(),
         {
+          task_source: newTaskSource,
+          business_owner: newTaskBusinessOwner,
+          audience_level: newTaskAudienceLevel,
           target_audience: newTaskAudience.trim(),
           output_purpose: newTaskPurpose,
           success_criteria: newTaskSuccessCriteria.trim(),
@@ -600,6 +637,9 @@ export default function BitableWorkflow() {
       setNewTaskBackground('');
       setNewTaskAudience('');
       setNewTaskPurpose('经营诊断');
+      setNewTaskSource('手工创建');
+      setNewTaskBusinessOwner('综合经营');
+      setNewTaskAudienceLevel('负责人');
       setNewTaskSuccessCriteria('');
       setNewTaskConstraints('');
       setNewTaskDatasetRef('');
@@ -874,6 +914,11 @@ export default function BitableWorkflow() {
   const nativeWorkflowBlueprints = objectList(setup?.native_assets?.workflow_blueprints);
   const nativeDashboardBlueprints = objectList(setup?.native_assets?.dashboard_blueprints);
   const nativeRoleBlueprints = objectList(setup?.native_assets?.role_blueprints);
+  const nativeAssetGroups = Array.isArray(setup?.native_assets?.asset_groups)
+    ? setup?.native_assets?.asset_groups || []
+    : [];
+  const nativeChecklist = objectList(setup?.native_assets?.manual_finish_checklist);
+  const nativeAssetCounts = setup?.native_assets?.status_summary?.counts || {};
   const selectedTaskNumber = textValue(taskField(selectedTask, '任务编号'));
   const selectedProgress = selectedLive
     ? Math.max(safeProgress(taskField(selectedTask, '进度')), selectedLive.progress * 100)
@@ -1182,6 +1227,46 @@ export default function BitableWorkflow() {
                     <RefreshCw className="mr-2 h-4 w-4" /> 刷新
                   </Button>
                 </div>
+                <div className="mt-5 grid gap-3 rounded-2xl border border-slate-200 bg-white/88 p-4">
+                  <Input
+                    value={setupName}
+                    onChange={(e) => setSetupName(e.target.value)}
+                    placeholder="Base 名称"
+                    className="h-11 rounded-2xl border-slate-200 bg-slate-50/80"
+                  />
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Select value={setupMode} onValueChange={(value) => setSetupMode(value as (typeof SETUP_MODE_OPTIONS)[number])}>
+                      <SelectTrigger className="h-11 rounded-2xl border-slate-200 bg-slate-50/80">
+                        <SelectValue placeholder="初始化模式" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SETUP_MODE_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={setupBaseType} onValueChange={(value) => setSetupBaseType(value as (typeof BASE_TYPE_OPTIONS)[number])}>
+                      <SelectTrigger className="h-11 rounded-2xl border-slate-200 bg-slate-50/80">
+                        <SelectValue placeholder="Base 类型" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {BASE_TYPE_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2 text-xs text-slate-500 md:grid-cols-2">
+                    <div>`seed_demo`：建完整演示 Base，直接带种子任务和数据源。</div>
+                    <div>`prod_empty`：建生产空 Base，只保留结构、模板和原生资产。</div>
+                    <div>`template_only`：建模板 Base，适合复制出多个业务交付空间。</div>
+                    <div>`validation / production / template`：明确这份 Base 的用途和验收口径。</div>
+                  </div>
+                </div>
                 {setup ? (
                   <div className="mt-5 space-y-3 rounded-2xl border border-slate-200 bg-white/85 p-4 text-sm">
                     <a
@@ -1265,6 +1350,11 @@ export default function BitableWorkflow() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                  {setup?.native_assets?.overall_state && (
+                    <span className={`rounded-full border px-3 py-1 ${ASSET_STATE_STYLE[setup.native_assets.overall_state] || 'border-slate-200 bg-white text-slate-600'}`}>
+                      当前落地状态：{ASSET_STATE_LABEL[setup.native_assets.overall_state] || setup.native_assets.overall_state}
+                    </span>
+                  )}
                   {setup?.base_meta?.base_type && (
                     <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
                       Base 类型：{setup.base_meta.base_type}
@@ -1285,11 +1375,11 @@ export default function BitableWorkflow() {
 
               <div className="mt-6 grid gap-4 xl:grid-cols-5">
                 {[
-                  { label: '表单蓝图', value: nativeFormBlueprints.length, note: nativeFormBlueprints[0]?.shared_url ? '已生成共享入口' : '等待共享或人工启用', icon: Database, surface: 'from-cyan-100 via-white to-sky-50', accent: 'text-cyan-700' },
-                  { label: '自动化模板', value: nativeAutomationTemplates.length, note: '围绕主表字段直接触发', icon: Sparkles, surface: 'from-emerald-100 via-white to-teal-50', accent: 'text-emerald-700' },
-                  { label: '工作流蓝图', value: nativeWorkflowBlueprints.length, note: '按工作流路由拆分分支', icon: Activity, surface: 'from-rose-100 via-white to-orange-50', accent: 'text-rose-700' },
-                  { label: '仪表盘蓝图', value: nativeDashboardBlueprints.length, note: '面向管理汇报和异常跟踪', icon: Target, surface: 'from-violet-100 via-white to-indigo-50', accent: 'text-violet-700' },
-                  { label: '角色蓝图', value: nativeRoleBlueprints.length, note: '按高管/执行/复核拆分工作面', icon: Briefcase, surface: 'from-amber-100 via-white to-yellow-50', accent: 'text-amber-700' },
+                  { label: '已创建', value: nativeAssetCounts.created || 0, note: '已经在 Base 中真正落下来的原生资产', icon: CheckCircle2, surface: 'from-emerald-100 via-white to-cyan-50', accent: 'text-emerald-700' },
+                  { label: '待人工补完', value: nativeAssetCounts.manual_finish_required || 0, note: '还差共享、启用或最后一步配置', icon: ShieldAlert, surface: 'from-amber-100 via-white to-orange-50', accent: 'text-amber-700' },
+                  { label: '蓝图就绪', value: nativeAssetCounts.blueprint_ready || 0, note: '字段契约和落地说明已准备好', icon: Layers3, surface: 'from-violet-100 via-white to-indigo-50', accent: 'text-violet-700' },
+                  { label: '表单入口', value: nativeFormBlueprints.length, note: nativeFormBlueprints[0]?.shared_url ? '已形成收集入口' : '仍需补共享链接', icon: Database, surface: 'from-cyan-100 via-white to-sky-50', accent: 'text-cyan-700' },
+                  { label: '自动化 / 工作流', value: nativeAutomationTemplates.length + nativeWorkflowBlueprints.length, note: '围绕主表字段和路由条件组织', icon: Sparkles, surface: 'from-rose-100 via-white to-orange-50', accent: 'text-rose-700' },
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
@@ -1309,6 +1399,84 @@ export default function BitableWorkflow() {
                     </div>
                   );
                 })}
+              </div>
+
+              <div className="mt-6 grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+                <div className="rounded-[24px] border border-slate-200 bg-white/92 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Readiness Matrix</div>
+                      <div className="mt-2 text-xl font-semibold text-slate-950">原生资产落地矩阵</div>
+                    </div>
+                    <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                      共 {setup?.native_assets?.status_summary?.total_assets || 0} 项
+                    </div>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {nativeAssetGroups.map((group) => (
+                      <div key={group.key} className="rounded-[20px] border border-slate-200 bg-slate-50/80 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-950">{group.label}</div>
+                            <div className="mt-1 text-xs text-slate-500">{group.count} 项原生资产</div>
+                          </div>
+                          <div className={`rounded-full border px-3 py-1 text-xs font-medium ${ASSET_STATE_STYLE[group.state] || 'border-slate-200 bg-white text-slate-600'}`}>
+                            {ASSET_STATE_LABEL[group.state] || group.state}
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
+                          {Object.entries(group.counts || {})
+                            .filter(([, count]) => Number(count) > 0)
+                            .map(([state, count]) => (
+                              <span
+                                key={state}
+                                className={`rounded-full border px-2.5 py-1 ${ASSET_STATE_STYLE[state] || 'border-slate-200 bg-white text-slate-600'}`}
+                              >
+                                {ASSET_STATE_LABEL[state] || state} {count}
+                              </span>
+                            ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200 bg-white/92 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Native Checklist</div>
+                      <div className="mt-2 text-xl font-semibold text-slate-950">飞书内补完清单</div>
+                    </div>
+                    <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                      直接按这份清单做验收
+                    </div>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {nativeChecklist.length === 0 ? (
+                      <EmptyState text="当前没有可展示的补完清单。" />
+                    ) : (
+                      nativeChecklist.map((item) => {
+                        const state = textValue(item.state) || 'blueprint_ready';
+                        return (
+                          <div key={textValue(item.name)} className="rounded-[20px] border border-slate-200 bg-slate-50/80 p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold text-slate-950">{textValue(item.name)}</div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {textValue(item.surface)} · 负责人 {textValue(item.owner) || '待指定'}
+                                </div>
+                              </div>
+                              <div className={`rounded-full border px-3 py-1 text-xs font-medium ${booleanValue(item.done) ? ASSET_STATE_STYLE.created : ASSET_STATE_STYLE[state] || 'border-slate-200 bg-white text-slate-600'}`}>
+                                {booleanValue(item.done) ? '已就绪' : ASSET_STATE_LABEL[state] || state}
+                              </div>
+                            </div>
+                            <div className="mt-3 text-sm leading-6 text-slate-700">{textValue(item.step)}</div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="mt-6 grid gap-4 xl:grid-cols-2">
@@ -2486,6 +2654,10 @@ export default function BitableWorkflow() {
                     <div>
                       <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Task Intake</p>
                       <h2 className="mt-2 text-2xl font-semibold text-slate-950">新增分析任务</h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        这里写入的不只是标题和背景，还会把 `任务来源 / 业务归属 / 汇报对象级别 / 模板 / 负责人 / SLA`
+                        一起沉淀到 `分析任务` 主表，直接成为后续多维表格原生自动化的触发契约。
+                      </p>
                     </div>
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                       推荐：目标对象 + 成功标准 + 引用数据集
@@ -2506,6 +2678,50 @@ export default function BitableWorkflow() {
                       onChange={(e) => setNewTaskBackground(e.target.value)}
                       className="rounded-2xl border-slate-200 bg-slate-50/80"
                     />
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <Select value={newTaskSource} onValueChange={(value) => setNewTaskSource(value as (typeof TASK_SOURCE_OPTIONS)[number])}>
+                        <SelectTrigger className="h-12 rounded-2xl border-slate-200 bg-slate-50/80">
+                          <SelectValue placeholder="任务来源" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TASK_SOURCE_OPTIONS.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={newTaskBusinessOwner}
+                        onValueChange={(value) => setNewTaskBusinessOwner(value as (typeof BUSINESS_OWNER_OPTIONS)[number])}
+                      >
+                        <SelectTrigger className="h-12 rounded-2xl border-slate-200 bg-slate-50/80">
+                          <SelectValue placeholder="业务归属" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {BUSINESS_OWNER_OPTIONS.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={newTaskAudienceLevel}
+                        onValueChange={(value) => setNewTaskAudienceLevel(value as (typeof AUDIENCE_LEVEL_OPTIONS)[number])}
+                      >
+                        <SelectTrigger className="h-12 rounded-2xl border-slate-200 bg-slate-50/80">
+                          <SelectValue placeholder="汇报对象级别" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {AUDIENCE_LEVEL_OPTIONS.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <div className="grid gap-4 md:grid-cols-2">
                       <Input
                         placeholder="目标对象，如：CEO / 产品负责人 / 经营会"

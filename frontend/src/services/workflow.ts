@@ -12,11 +12,33 @@ export interface WorkflowSetup {
   };
   native_assets?: {
     status?: string;
+    overall_state?: string;
+    state_descriptions?: Record<string, string>;
+    status_summary?: {
+      overall_state?: string;
+      total_assets?: number;
+      counts?: Record<string, number>;
+      groups?: Array<{
+        key: string;
+        label: string;
+        count: number;
+        state: string;
+        counts: Record<string, number>;
+      }>;
+    };
+    asset_groups?: Array<{
+      key: string;
+      label: string;
+      count: number;
+      state: string;
+      counts: Record<string, number>;
+    }>;
     form_blueprints?: Array<Record<string, unknown>>;
     automation_templates?: Array<Record<string, unknown>>;
     workflow_blueprints?: Array<Record<string, unknown>>;
     dashboard_blueprints?: Array<Record<string, unknown>>;
     role_blueprints?: Array<Record<string, unknown>>;
+    manual_finish_checklist?: Array<Record<string, unknown>>;
     template_center_table_id?: string;
   };
   table_ids: {

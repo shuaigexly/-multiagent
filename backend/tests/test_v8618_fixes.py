@@ -157,4 +157,9 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
     assert result["base_meta"]["mode"] == "prod_empty"
     assert result["base_meta"]["base_type"] == "production"
     assert result["native_assets"]["status"] == "blueprint_ready"
+    assert result["native_assets"]["overall_state"] == "blueprint_ready"
     assert result["native_assets"]["form_blueprints"][0]["shared_url"] == "https://feishu.cn/form/abc"
+    assert result["native_assets"]["form_blueprints"][0]["lifecycle_state"] == "created"
+    assert result["native_assets"]["status_summary"]["counts"]["created"] == 1
+    assert result["native_assets"]["status_summary"]["counts"]["blueprint_ready"] >= 1
+    assert result["native_assets"]["manual_finish_checklist"][0]["done"] is True

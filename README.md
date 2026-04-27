@@ -315,6 +315,15 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 
 - `base_meta`：`base_type / mode / schema_version / initialized_at`
 - `native_assets`：表单入口、自动化模板、工作流蓝图、仪表盘蓝图、角色蓝图
+- `native_assets.status_summary`：按 `created / manual_finish_required / blueprint_ready / permission_blocked` 汇总当前 Base 的原生资产落地状态
+- `native_assets.asset_groups`：按 `表单 / 自动化 / 工作流 / 仪表盘 / 角色` 输出分组级状态矩阵
+- `native_assets.manual_finish_checklist`：告诉你哪些动作还必须在飞书多维表格 UI 里补完，适合直接拿去做验收清单
+
+当前口径明确区分：
+
+- `created`：本次 setup 已经在 Base 中真正创建完成
+- `manual_finish_required`：对象已具备基础形态，但还需要在飞书 UI 中开共享、启用或补最后一步
+- `blueprint_ready`：字段契约和落地蓝图已生成，但飞书云侧原生对象仍需后续配置
 
 ### 注入真实数据源（让分析不再凭空估算）
 

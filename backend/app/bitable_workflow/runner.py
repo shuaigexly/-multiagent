@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = "v8.6.20-r6"
 DEFAULT_SETUP_MODE = "seed_demo"
 DEFAULT_BASE_TYPE = "validation"
+NATIVE_ASSET_STATES = {
+    "blueprint_ready": "已生成蓝图，但尚未在飞书云侧创建原生对象",
+    "api_supported": "官方能力支持，待后续接入自动创建",
+    "created": "当前 setup 已在 Base 中创建完成",
+    "manual_finish_required": "需要在飞书 UI 里补完最后一步",
+    "permission_blocked": "当前权限不足，无法继续创建或共享",
+}
 
 _running = False
 _stop_event: Optional[asyncio.Event] = None
@@ -660,6 +667,12 @@ def _build_native_assets(
         {
             "name": "任务收集表单",
             "status": "ready" if intake_form and intake_form.get("shared_url") else "manual_share_required",
+            "lifecycle_state": "created" if intake_form and intake_form.get("shared_url") else "manual_finish_required",
+            "native_surface": "form",
+            "delivery_mode": "setup_created_view",
+            "api_readiness": "connected",
+            "next_step": "直接把共享链接发给业务方收集新任务" if intake_form and intake_form.get("shared_url") else "在飞书 UI 中开启表单共享，拿到可直接投递的链接",
+            "blocking_reason": "" if intake_form and intake_form.get("shared_url") else "表单视图已创建，但共享链接仍需在飞书内确认或开启",
             "table_id": task_tid,
             "view_id": (intake_form or {}).get("view_id", ""),
             "shared_url": (intake_form or {}).get("shared_url", ""),
@@ -669,6 +682,12 @@ def _build_native_assets(
     automation_templates = [
         {
             "name": "A1 新任务入场提醒",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "automation",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "在多维表格自动化中按条件创建消息通知和动作审计",
+            "blocking_reason": "当前仓库只生成蓝图，不会自动在飞书云侧创建自动化规则",
             "trigger": "添加记录时",
             "condition": "状态 = 待分析",
             "action": "发送飞书消息 + 写交付动作",
@@ -676,6 +695,12 @@ def _build_native_assets(
         },
         {
             "name": "A2 分析完成自动汇报",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "automation",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "复用工作流消息包，在自动化里绑定消息/邮件动作",
+            "blocking_reason": "仍需在飞书自动化界面将字段条件与消息动作显式绑定",
             "trigger": "新增/修改记录满足条件时",
             "condition": "状态 = 已完成 且 待发送汇报 = 是",
             "action": "发送飞书消息/邮件，正文引用工作流消息包",
@@ -683,6 +708,12 @@ def _build_native_assets(
         },
         {
             "name": "A3 执行任务自动创建",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "automation",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "在自动化中创建飞书任务并把执行结果回写交付动作",
+            "blocking_reason": "任务创建动作仍需在飞书自动化界面中选择负责人和任务模板",
             "trigger": "新增/修改记录满足条件时",
             "condition": "待创建执行任务 = 是",
             "action": "创建飞书任务并回写交付动作",
@@ -690,6 +721,12 @@ def _build_native_assets(
         },
         {
             "name": "A4 复核提醒",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "automation",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "用建议复核时间驱动提醒或复核任务创建",
+            "blocking_reason": "仍需在飞书自动化中补齐定时触发和负责人映射",
             "trigger": "到达记录中的时间时",
             "condition": "待安排复核 = 是",
             "action": "提醒复核负责人 / 创建复核任务",
@@ -697,6 +734,12 @@ def _build_native_assets(
         },
         {
             "name": "A5 异常升级提醒",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "automation",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "把异常状态 = 已异常 的记录升级为人工接管提醒",
+            "blocking_reason": "仍需在飞书自动化中绑定通知对象和升级渠道",
             "trigger": "新增/修改记录满足条件时",
             "condition": "异常状态 = 已异常",
             "action": "发群提醒 / 转人工接管",
@@ -707,6 +750,12 @@ def _build_native_assets(
         {
             "name": "W1 路由总分发工作流",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "workflow",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "在飞书工作流中按工作流路由字段拆分分支",
+            "blocking_reason": "当前仓库生成字段契约和分支蓝图，但未自动在飞书工作流中心创建对象",
             "entry_condition": "状态 = 已完成",
             "route_field": "工作流路由",
             "branches": ["直接汇报", "等待拍板", "直接执行", "补数复核", "重新分析"],
@@ -714,12 +763,24 @@ def _build_native_assets(
         {
             "name": "W2 拍板分支工作流",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "workflow",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "在工作流中串联高管卡片、拍板回写、动作审计",
+            "blocking_reason": "拍板动作目前仍由 API 回写，尚未迁移到飞书原生审批/工作流按钮链路",
             "entry_condition": "当前责任角色 = 拍板人",
             "actions": ["发送高管卡片", "等待拍板回写", "回写交付动作"],
         },
         {
             "name": "W3 执行分支工作流",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "workflow",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "在工作流中创建任务、处理失败补救并进入复盘",
+            "blocking_reason": "执行分支依赖飞书原生工作流对象，当前只落地了字段和执行包",
             "entry_condition": "当前责任角色 = 执行人",
             "actions": ["创建飞书任务", "失败补救", "进入复盘"],
         },
@@ -728,6 +789,12 @@ def _build_native_assets(
         {
             "name": "管理汇报总览",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "dashboard",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "按推荐视图和指标在飞书仪表盘中拼装汇报页",
+            "blocking_reason": "当前仓库只生成仪表盘蓝图与指标口径，未自动创建飞书仪表盘对象",
             "source_table": task_tid,
             "focus_metrics": ["工作流路由分布", "待拍板确认数", "待执行确认数", "待安排复核数", "已异常任务数"],
             "recommended_views": ["🧭 工作流路由", "🟥 已异常任务", "🧭 当前责任角色"],
@@ -735,6 +802,12 @@ def _build_native_assets(
         {
             "name": "证据与评审看板",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "dashboard",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "在仪表盘中配置证据等级、评审动作和 CEO 汇总相关统计",
+            "blocking_reason": "需要在飞书仪表盘界面手工绑定图表块和统计口径",
             "source_table": table_ids.get("evidence", ""),
             "focus_metrics": ["硬证据数", "待验证证据数", "进入CEO汇总证据数"],
             "recommended_views": ["🧱 硬证据", "🟡 待验证", "🧾 证据类型看板"],
@@ -742,6 +815,12 @@ def _build_native_assets(
         {
             "name": "交付异常看板",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "dashboard",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "把拍板滞留、执行超期、复核超时、复盘滞留做成异常总览看板",
+            "blocking_reason": "当前已给出异常字段契约和推荐视图，但仪表盘对象仍需飞书内配置",
             "source_table": task_tid,
             "focus_metrics": ["拍板滞留", "执行超期", "复核超时", "复盘滞留"],
             "recommended_views": ["🟥 拍板滞留", "🟥 执行超期", "🟧 复核超时", "🟪 复盘滞留"],
@@ -751,24 +830,54 @@ def _build_native_assets(
         {
             "name": "高管 / 拍板人",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "role",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "在飞书高级权限中按角色配置视图和表级访问范围",
+            "blocking_reason": "当前仅输出角色蓝图和建议视图，未自动创建高级权限角色",
             "focus_views": ["🧭 工作流路由", "👔 拍板人任务", "⏳ 待拍板确认", "🚦 健康度看板"],
             "permissions_focus": ["综合报告", "分析任务"],
         },
         {
             "name": "执行负责人",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "role",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "把执行任务和交付动作限定在执行负责人工作面",
+            "blocking_reason": "需要在飞书权限模型中手工配置角色成员和可见视图",
             "focus_views": ["⚙️ 执行人任务", "🚀 待执行落地", "🧾 待执行归档"],
             "permissions_focus": ["分析任务", "交付动作"],
         },
         {
             "name": "复核负责人",
             "status": "blueprint_ready",
+            "lifecycle_state": "blueprint_ready",
+            "native_surface": "role",
+            "delivery_mode": "manual_native_config",
+            "api_readiness": "not_connected",
+            "next_step": "按复核链路配置证据链、评审表和复核历史的访问权限",
+            "blocking_reason": "复核角色当前只输出蓝图，还未自动配置到飞书高级权限",
             "focus_views": ["🧪 复核人任务", "🗓 待安排复核", "🟡 补数复核历史"],
             "permissions_focus": ["分析任务", "证据链", "产出评审", "复核历史"],
         },
     ]
+    asset_groups = [
+        {"key": "forms", "label": "表单入口", "items": form_blueprints},
+        {"key": "automations", "label": "自动化模板", "items": automation_templates},
+        {"key": "workflows", "label": "工作流蓝图", "items": workflow_blueprints},
+        {"key": "dashboards", "label": "仪表盘蓝图", "items": dashboard_blueprints},
+        {"key": "roles", "label": "角色蓝图", "items": role_blueprints},
+    ]
+    status_summary = _summarize_native_asset_states(asset_groups)
     return {
-        "status": "blueprint_ready",
+        "status": status_summary["overall_state"],
+        "overall_state": status_summary["overall_state"],
+        "state_descriptions": NATIVE_ASSET_STATES,
+        "status_summary": status_summary,
+        "asset_groups": status_summary["groups"],
         "base_meta": base_meta,
         "base_url": base_url,
         "app_token": app_token,
@@ -777,8 +886,121 @@ def _build_native_assets(
         "workflow_blueprints": workflow_blueprints,
         "dashboard_blueprints": dashboard_blueprints,
         "role_blueprints": role_blueprints,
+        "manual_finish_checklist": _build_manual_finish_checklist(
+            task_tid=task_tid,
+            table_ids=table_ids,
+            form_blueprints=form_blueprints,
+            automation_templates=automation_templates,
+            workflow_blueprints=workflow_blueprints,
+            dashboard_blueprints=dashboard_blueprints,
+            role_blueprints=role_blueprints,
+        ),
         "template_center_table_id": template_tid,
     }
+
+
+def _summarize_native_asset_states(asset_groups: list[dict]) -> dict:
+    priority = {
+        "permission_blocked": 5,
+        "manual_finish_required": 4,
+        "blueprint_ready": 3,
+        "api_supported": 2,
+        "created": 1,
+    }
+    counts: dict[str, int] = {key: 0 for key in NATIVE_ASSET_STATES}
+    groups: list[dict[str, object]] = []
+    overall_state = "created"
+
+    for group in asset_groups:
+        items = group.get("items") or []
+        group_counts: dict[str, int] = {key: 0 for key in NATIVE_ASSET_STATES}
+        group_state = "created"
+        for item in items:
+            state = str((item or {}).get("lifecycle_state") or "blueprint_ready")
+            if state not in counts:
+                state = "blueprint_ready"
+            counts[state] += 1
+            group_counts[state] += 1
+            if priority[state] > priority[group_state]:
+                group_state = state
+            if priority[state] > priority[overall_state]:
+                overall_state = state
+        groups.append(
+            {
+                "key": group.get("key", ""),
+                "label": group.get("label", ""),
+                "count": len(items),
+                "state": group_state,
+                "counts": group_counts,
+            }
+        )
+
+    return {
+        "overall_state": overall_state,
+        "counts": counts,
+        "total_assets": sum(counts.values()),
+        "groups": groups,
+    }
+
+
+def _build_manual_finish_checklist(
+    *,
+    task_tid: str,
+    table_ids: dict,
+    form_blueprints: list[dict],
+    automation_templates: list[dict],
+    workflow_blueprints: list[dict],
+    dashboard_blueprints: list[dict],
+    role_blueprints: list[dict],
+) -> list[dict[str, object]]:
+    intake_form = form_blueprints[0] if form_blueprints else {}
+    return [
+        {
+            "name": "开放任务收集表单",
+            "surface": "表单",
+            "state": str(intake_form.get("lifecycle_state") or "manual_finish_required"),
+            "done": bool(intake_form.get("shared_url")),
+            "owner": "Base 管理员",
+            "target_table": task_tid,
+            "step": "在 `分析任务 -> 📥 需求收集表` 开启共享，拿到可直接投递的新任务入口。",
+        },
+        {
+            "name": "配置主表自动化模板",
+            "surface": "自动化",
+            "state": "blueprint_ready",
+            "done": False,
+            "owner": "交付运营",
+            "target_table": task_tid,
+            "step": f"按蓝图把 {len(automation_templates)} 条自动化配置到 `分析任务` 主表，打通消息、任务、复核提醒。",
+        },
+        {
+            "name": "创建路由工作流",
+            "surface": "工作流",
+            "state": "blueprint_ready",
+            "done": False,
+            "owner": "流程管理员",
+            "target_table": task_tid,
+            "step": f"按蓝图把 {len(workflow_blueprints)} 条路由工作流落到飞书工作流中心，承接拍板、执行、复核分支。",
+        },
+        {
+            "name": "搭建管理仪表盘",
+            "surface": "仪表盘",
+            "state": "blueprint_ready",
+            "done": False,
+            "owner": "汇报负责人",
+            "target_table": table_ids.get("report", ""),
+            "step": f"用 {len(dashboard_blueprints)} 份仪表盘蓝图把管理总览、证据评审、异常雷达做成飞书原生看板。",
+        },
+        {
+            "name": "按角色配置高级权限",
+            "surface": "角色权限",
+            "state": "blueprint_ready",
+            "done": False,
+            "owner": "系统管理员",
+            "target_table": task_tid,
+            "step": f"根据 {len(role_blueprints)} 份角色蓝图配置高管、执行、复核工作面，收敛非必要视图暴露。",
+        },
+    ]
 
 
 # ===== v8.6.19 Phase A.2 — Formula 字段 deferred creation =====
