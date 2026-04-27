@@ -420,6 +420,29 @@ def test_native_manifest_command_pack_status_tracks_native_assets():
     assert by_key["advperm"] == "created"
 
 
+def test_native_manifest_advperm_status_is_independent_from_role_status():
+    from app.bitable_workflow.native_manifest import build_native_manifest
+
+    manifest = build_native_manifest(
+        app_token="app_token",
+        base_url="https://feishu.cn/base/app_token",
+        table_ids={"task": "tbl_task"},
+        base_meta={"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
+        native_assets={
+            "advperm_state": "created",
+            "form_blueprints": [],
+            "automation_templates": [],
+            "workflow_blueprints": [],
+            "dashboard_blueprints": [],
+            "role_blueprints": [{"lifecycle_state": "manual_finish_required"}],
+        },
+    )
+
+    by_key = {pack["key"]: pack["status"] for pack in manifest["command_packs"]}
+    assert by_key["advperm"] == "created"
+    assert by_key["role"] == "manual_finish_required"
+
+
 @pytest.mark.asyncio
 async def test_apply_native_manifest_refreshes_checklist_states_and_done(monkeypatch):
     from app.bitable_workflow.native_installer import apply_native_manifest
@@ -576,6 +599,7 @@ async def test_apply_native_manifest_requires_success_true_for_advperm_and_role(
 
     assert result["report"][0]["name"] == "启用高级权限"
     assert result["report"][0]["status"] == "manual_finish_required"
+    assert result["native_assets"]["advperm_state"] == "manual_finish_required"
     assert result["native_assets"]["role_blueprints"][0]["lifecycle_state"] == "manual_finish_required"
     assert "success=true" in result["native_assets"]["role_blueprints"][0]["blocking_reason"]
 

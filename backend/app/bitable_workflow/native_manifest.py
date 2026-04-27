@@ -72,7 +72,7 @@ def build_native_manifest(
             "key": "advperm",
             "label": "高级权限",
             "surface": "role",
-            "status": _surface_state(native_assets, "role"),
+            "status": _advperm_state(native_assets),
             "commands": [
                 f"lark-cli base +advperm-enable --base-token {app_token}",
             ],
@@ -313,3 +313,10 @@ def _surface_state(native_assets: dict[str, Any], surface: str) -> str:
         if priority[current] > priority[state]:
             state = current
     return state
+
+
+def _advperm_state(native_assets: dict[str, Any]) -> str:
+    state = str(native_assets.get("advperm_state") or "").strip()
+    if state:
+        return state
+    return _surface_state(native_assets, "role")

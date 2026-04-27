@@ -44,7 +44,7 @@ async def apply_native_manifest(
     applied_at = int(time.time())
 
     if "role" in targets:
-        await _apply_advperm(app_token, report)
+        await _apply_advperm(app_token, assets, report)
 
     if "form" in targets:
         await _apply_form(app_token, table_ids, assets, report, force=force, applied_at=applied_at)
@@ -83,14 +83,15 @@ async def apply_native_manifest(
     }
 
 
-async def _apply_advperm(app_token: str, report: list[dict[str, Any]]) -> None:
+async def _apply_advperm(app_token: str, assets: dict[str, Any], report: list[dict[str, Any]]) -> None:
     try:
         resp = await cli_base("+advperm-enable", "--base-token", app_token)
         data = _resp_data(resp)
         success = _resp_success(data)
+        assets["advperm_state"] = "created" if success else "manual_finish_required"
         report.append(
             {
-                "surface": "role",
+                "surface": "advperm",
                 "name": "启用高级权限",
                 "status": "created" if success else "manual_finish_required",
                 "response": resp,
@@ -99,7 +100,8 @@ async def _apply_advperm(app_token: str, report: list[dict[str, Any]]) -> None:
         )
     except Exception as exc:
         logger.warning("advperm enable failed: %s", exc)
-        report.append({"surface": "role", "name": "启用高级权限", "status": _error_state(exc), "error": str(exc)})
+        assets["advperm_state"] = _error_state(exc)
+        report.append({"surface": "advperm", "name": "启用高级权限", "status": assets["advperm_state"], "error": str(exc)})
 
 
 async def _apply_form(

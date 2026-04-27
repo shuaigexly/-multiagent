@@ -803,6 +803,7 @@ def _build_native_assets(
     ]
     status_summary = _summarize_native_asset_states(asset_groups)
     return {
+        "advperm_state": "blueprint_ready",
         "status": status_summary["overall_state"],
         "overall_state": status_summary["overall_state"],
         "state_descriptions": NATIVE_ASSET_STATES,
