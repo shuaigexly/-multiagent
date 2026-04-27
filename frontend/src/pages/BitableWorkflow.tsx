@@ -967,6 +967,7 @@ export default function BitableWorkflow() {
         .slice(0, 4),
     [templateOverview],
   );
+  const nativeAdvpermBlueprints = objectList(setup?.native_assets?.advperm_blueprints);
   const nativeFormBlueprints = objectList(setup?.native_assets?.form_blueprints);
   const nativeAutomationTemplates = objectList(setup?.native_assets?.automation_templates);
   const nativeWorkflowBlueprints = objectList(setup?.native_assets?.workflow_blueprints);
@@ -1497,11 +1498,12 @@ export default function BitableWorkflow() {
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-4 xl:grid-cols-5">
+              <div className="mt-6 grid gap-4 xl:grid-cols-6">
                 {[
                   { label: '已创建', value: nativeAssetCounts.created || 0, note: '已经在 Base 中真正落下来的原生资产', icon: CheckCircle2, surface: 'from-emerald-100 via-white to-cyan-50', accent: 'text-emerald-700' },
                   { label: '待人工补完', value: nativeAssetCounts.manual_finish_required || 0, note: '还差共享、启用或最后一步配置', icon: ShieldAlert, surface: 'from-amber-100 via-white to-orange-50', accent: 'text-amber-700' },
                   { label: '蓝图就绪', value: nativeAssetCounts.blueprint_ready || 0, note: '字段契约和落地说明已准备好', icon: Layers3, surface: 'from-violet-100 via-white to-indigo-50', accent: 'text-violet-700' },
+                  { label: '高级权限', value: nativeAdvpermBlueprints.length, note: textValue(setup?.native_assets?.advperm_state) === 'created' ? '角色前置条件已启用' : '仍需先启用 Base 高级权限', icon: Lock, surface: 'from-slate-100 via-white to-zinc-50', accent: 'text-slate-700' },
                   { label: '表单入口', value: nativeFormBlueprints.length, note: nativeFormBlueprints[0]?.shared_url ? '已形成收集入口' : '仍需补共享链接', icon: Database, surface: 'from-cyan-100 via-white to-sky-50', accent: 'text-cyan-700' },
                   { label: '自动化 / 工作流', value: nativeAutomationTemplates.length + nativeWorkflowBlueprints.length, note: '围绕主表字段和路由条件组织', icon: Sparkles, surface: 'from-rose-100 via-white to-orange-50', accent: 'text-rose-700' },
                 ].map((metric) => {
