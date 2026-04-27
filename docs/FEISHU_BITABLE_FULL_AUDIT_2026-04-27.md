@@ -115,6 +115,15 @@
   - `src/components/ui/**/*` 加了定向 ESLint 例外
   - `npm run lint` 已清零
 
+### F12. `vite:react-swc` 工具链 deprecation 告警
+
+- 位置：
+  - `frontend/package.json`
+  - `frontend/vite.config.ts`
+- 问题：构建阶段持续出现 `react-swc` / `esbuild` deprecation warning
+- 风险：工具链继续演进后升级成本更高，也会污染全量审计结果
+- 结果：已切换到 `@vitejs/plugin-react`，构建告警消失
+
 ---
 
 ## 3. 全量验证结果
@@ -139,7 +148,7 @@ npm run build
 
 - 构建通过
 - 500k chunk 告警已消失
-- 仍有 `vite:react-swc` 的 `esbuild` deprecation warning，属于工具链升级项，不是业务代码错误
+- 无构建级 warning
 
 ### 前端静态检查
 
@@ -170,9 +179,7 @@ npm run lint
 
 这些不是本轮已确认的线上 bug，但仍建议后续继续治理：
 
-1. `vite:react-swc` 仍提示 `esbuild` deprecation
-   - 属于工具链升级项，可后续评估迁移到推荐的 `oxc` 配置
-2. 真实飞书租户写入权限仍受外部环境限制
+1. 真实飞书租户写入权限仍受外部环境限制
    - 当前仓库只能证明代码链路和 mock/测试链路正确
    - 不能在没有真实租户权限的情况下声称“线上飞书原生写入全部实测通过”
 
