@@ -840,6 +840,14 @@ export default function BitableWorkflow() {
     });
     return { completed, skipped, failed, total: automationLogRecords.length };
   }, [automationLogRecords]);
+  const nativeInstallLogs = useMemo(
+    () =>
+      automationLogRecords
+        .filter((record) => textValue(record.fields?.触发来源) === 'native_manifest.apply')
+        .sort((left, right) => recordTimestamp(right, ['生成时间']) - recordTimestamp(left, ['生成时间']))
+        .slice(0, 8),
+    [automationLogRecords],
+  );
 
   const managementOverview = useMemo(() => {
     let pendingApproval = 0;
@@ -1649,6 +1657,53 @@ export default function BitableWorkflow() {
                             {textValue(item.reason) && <div>跳过原因：{textValue(item.reason)}</div>}
                             {textValue(item.error) && <div className="text-rose-700">错误：{textValue(item.error)}</div>}
                           </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-[24px] border border-slate-200 bg-white/92 p-5">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Native Install History</div>
+                    <div className="mt-2 text-xl font-semibold text-slate-950">多维表格原生安装日志</div>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                      这部分数据直接来自 `自动化日志` 表里的 `native_manifest.apply` 记录。也就是说，原生安装执行本身已经开始沉淀回飞书，而不是只存在前端状态里。
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
+                    最近 {nativeInstallLogs.length} 条
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                  {nativeInstallLogs.length === 0 ? (
+                    <div className="xl:col-span-2">
+                      <EmptyState text="当前 `自动化日志` 表里还没有原生安装记录。执行一次原生化后，这里会显示飞书内沉淀的安装日志。" />
+                    </div>
+                  ) : (
+                    nativeInstallLogs.map((record) => {
+                      const status = textValue(record.fields?.执行状态);
+                      return (
+                        <div key={record.record_id} className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold text-slate-950">{textValue(record.fields?.节点名称) || textValue(record.fields?.日志标题) || '未命名日志'}</div>
+                              <div className="mt-1 text-xs text-slate-500">{formatDateValue(record.fields?.生成时间)} · {textValue(record.fields?.触发来源) || 'native_manifest.apply'}</div>
+                            </div>
+                            <div className={`rounded-full border px-3 py-1 text-xs font-medium ${ACTION_STATUS_STYLE[status] || 'border-slate-200 bg-white text-slate-600'}`}>
+                              {status || '未知状态'}
+                            </div>
+                          </div>
+                          <div className="mt-3 text-sm leading-6 text-slate-700">
+                            {textValue(record.fields?.日志摘要) || '无摘要'}
+                          </div>
+                          {textValue(record.fields?.详细结果) && (
+                            <div className="mt-3 whitespace-pre-line rounded-[18px] border border-slate-200 bg-white/90 p-4 text-xs leading-6 text-slate-600">
+                              {textValue(record.fields?.详细结果)}
+                            </div>
+                          )}
                         </div>
                       );
                     })

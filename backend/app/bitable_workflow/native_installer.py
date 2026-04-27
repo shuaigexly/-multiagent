@@ -7,7 +7,9 @@ import logging
 import time
 from typing import Any
 
+from app.bitable_workflow import bitable_ops
 from app.bitable_workflow.native_manifest import build_native_manifest
+from app.core.text_utils import truncate_with_marker
 from app.feishu.cli_bridge import cli_base, is_cli_available
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,14 @@ async def apply_native_manifest(
         await _apply_dashboards(app_token, table_ids, assets, report, force=force, applied_at=applied_at)
     if "role" in targets:
         await _apply_roles(app_token, assets, report, force=force, applied_at=applied_at)
+
+    await _write_native_install_logs(
+        app_token=app_token,
+        automation_log_tid=table_ids.get("automation_log"),
+        report=report,
+        base_meta=base_meta,
+        applied_at=applied_at,
+    )
 
     _refresh_native_assets(assets)
     manifest = build_native_manifest(
@@ -410,3 +420,57 @@ def _refresh_native_assets(assets: dict[str, Any]) -> None:
         checklist[2]["done"] = workflow_created
         checklist[3]["done"] = dashboard_created
         checklist[4]["done"] = role_created
+
+
+async def _write_native_install_logs(
+    *,
+    app_token: str,
+    automation_log_tid: str | None,
+    report: list[dict[str, Any]],
+    base_meta: dict[str, Any],
+    applied_at: int,
+) -> None:
+    if not automation_log_tid:
+        return
+    for item in report:
+        status = str(item.get("status") or "manual_finish_required")
+        mapped_status = "已完成" if status == "created" else "已跳过" if status == "skipped" else "执行失败"
+        detail_parts = [
+            f"surface={item.get('surface', '')}",
+            f"status={status}",
+            f"base_type={base_meta.get('base_type', '')}",
+            f"mode={base_meta.get('mode', '')}",
+            f"applied_at={applied_at}",
+        ]
+        if item.get("object_id"):
+            detail_parts.append(f"object_id={item.get('object_id')}")
+        if item.get("block_count") is not None:
+            detail_parts.append(f"block_count={item.get('block_count')}")
+        if item.get("reason"):
+            detail_parts.append(f"reason={item.get('reason')}")
+        if item.get("error"):
+            detail_parts.append(f"error={item.get('error')}")
+        fields = {
+            "日志标题": f"原生安装 · {str(item.get('name') or item.get('surface') or '未命名步骤')}",
+            "任务标题": "飞书原生安装包",
+            "节点名称": str(item.get("name") or item.get("surface") or "native"),
+            "触发来源": "native_manifest.apply",
+            "执行状态": mapped_status,
+            "工作流路由": "直接执行",
+            "日志摘要": truncate_with_marker(
+                str(item.get("error") or item.get("reason") or item.get("object_id") or status),
+                500,
+                "...",
+            ),
+            "详细结果": truncate_with_marker("\n".join(detail_parts), 1800, "\n...[已截断]"),
+            "关联记录ID": str(item.get("object_id") or ""),
+        }
+        try:
+            await bitable_ops.create_record_optional_fields(
+                app_token,
+                automation_log_tid,
+                fields,
+                optional_keys=["工作流路由", "详细结果", "关联记录ID"],
+            )
+        except Exception as exc:
+            logger.warning("write native install automation log failed item=%s: %s", item.get("name"), exc)

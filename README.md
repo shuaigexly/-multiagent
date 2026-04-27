@@ -349,6 +349,7 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 - 创建 role scaffold
 
 并把执行结果回写到 `native_assets` 的生命周期状态里。
+同时会把逐项执行结果写进 `自动化日志` 表，触发来源为 `native_manifest.apply`。
 
 ### 注入真实数据源（让分析不再凭空估算）
 

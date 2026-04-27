@@ -42,6 +42,7 @@
 - 或 setup 时传 `apply_native=true`
 
 这会直接尝试把 `workflow / dashboard / role / form` 创建到飞书云侧，而不只是返回说明。
+执行结果还会同步写入 `自动化日志` 表，触发来源为 `native_manifest.apply`。
 
 ---
 

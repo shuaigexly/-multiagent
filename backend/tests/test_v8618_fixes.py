@@ -172,6 +172,8 @@ async def test_setup_workflow_returns_native_assets_and_base_meta(monkeypatch):
 async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     from app.bitable_workflow.native_installer import apply_native_manifest
 
+    created_logs: list[dict] = []
+
     async def fake_cli_base(shortcut: str, *args: str):
         if shortcut == "+advperm-enable":
             return {"ok": True, "data": {"success": True}}
@@ -191,8 +193,13 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
             return {"ok": True, "data": {"success": True}}
         raise AssertionError(f"unexpected shortcut {shortcut}")
 
+    async def fake_create_record_optional_fields(_app_token, _table_id, fields, optional_keys=None):
+        created_logs.append({"table_id": _table_id, "fields": fields, "optional_keys": optional_keys or []})
+        return "rec_native_log"
+
     monkeypatch.setattr("app.bitable_workflow.native_installer.is_cli_available", lambda: True)
     monkeypatch.setattr("app.bitable_workflow.native_installer.cli_base", fake_cli_base)
+    monkeypatch.setattr("app.bitable_workflow.native_installer.bitable_ops.create_record_optional_fields", fake_create_record_optional_fields)
 
     native_assets = {
         "form_blueprints": [{"name": "任务收集表单", "lifecycle_state": "manual_finish_required"}],
@@ -205,7 +212,7 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     result = await apply_native_manifest(
         app_token="app_token",
         base_url="https://feishu.cn/base/app_token",
-        table_ids={"task": "tbl_task", "evidence": "tbl_evidence", "report": "tbl_report"},
+        table_ids={"task": "tbl_task", "evidence": "tbl_evidence", "report": "tbl_report", "automation_log": "tbl_log"},
         base_meta={"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
         native_assets=native_assets,
         force=True,
@@ -218,3 +225,5 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     assert result["native_assets"]["overall_state"] == "created"
     assert result["native_assets"]["manual_finish_checklist"][2]["done"] is True
     assert result["native_manifest"]["manifest_version"] == "v1"
+    assert created_logs
+    assert created_logs[0]["fields"]["触发来源"] == "native_manifest.apply"
