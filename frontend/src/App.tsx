@@ -11,7 +11,7 @@ const Index = lazy(() => import("./pages/Index"));
 const ResultView = lazy(() => import("./pages/ResultView"));
 const History = lazy(() => import("./pages/History"));
 const FeishuWorkspace = lazy(() => import("./pages/FeishuWorkspace"));
-const BitableWorkflow = lazy(() => import("./pages/BitableWorkflow"));
+const BitableWorkflowGuide = lazy(() => import("./pages/BitableWorkflowGuide"));
 const Settings = lazy(() => import("./pages/Settings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
@@ -47,7 +47,7 @@ const App = () => (
               <Route path="/" element={<Index />} />
               <Route path="/results/:taskId" element={<ResultView />} />
               <Route path="/history" element={<History />} />
-              <Route path="/workflow" element={<BitableWorkflow />} />
+              <Route path="/workflow" element={<BitableWorkflowGuide />} />
               <Route path="/workspace" element={<FeishuWorkspace />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<NotFound />} />

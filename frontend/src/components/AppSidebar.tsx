@@ -16,7 +16,7 @@ import {
 const navItems = [
   { title: '工作台', url: '/', icon: LayoutDashboard },
   { title: '历史任务', url: '/history', icon: History },
-  { title: '七岗工作流', url: '/workflow', icon: Workflow },
+  { title: '多维表格接入', url: '/workflow', icon: Workflow },
   { title: '飞书工作区', url: '/workspace', icon: Building2 },
   { title: '设置', url: '/settings', icon: Settings },
 ];
