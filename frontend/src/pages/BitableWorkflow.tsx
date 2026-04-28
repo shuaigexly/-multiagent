@@ -39,6 +39,7 @@ import {
   type ProgressEvent,
   type RecordListResponse,
   type TaskRecord,
+  type WorkflowStepSnapshot,
   type WorkflowSetup,
 } from '@/services/workflow';
 
@@ -51,6 +52,7 @@ interface LiveEvent {
   tokenPreview?: string;
   activeAgent?: string;
   history: LiveStepEvent[];
+  workflowSteps?: WorkflowStepDetail[];
 }
 
 interface LiveStepEvent {
@@ -196,22 +198,27 @@ function progressStatusFromEventType(eventType: ProgressEvent['event_type']): Li
 
 function buildLiveStepEvent(event: ProgressEvent): LiveStepEvent | null {
   if (event.event_type === 'agent.token') return null;
-  const stage = String(event.payload.stage || event.event_type);
+  const stage = String(event.payload.stage || event.payload.step_title || event.event_type);
   const progress = typeof event.payload.progress === 'number' ? event.payload.progress : 0;
-  const status = progressStatusFromEventType(event.event_type);
-  let detail = stage;
+  const status =
+    event.payload.step_status && ['running', 'done', 'error'].includes(String(event.payload.step_status))
+      ? (event.payload.step_status as LiveStepEvent['status'])
+      : progressStatusFromEventType(event.event_type);
+  let detail = String(event.payload.step_description || stage);
   if (event.event_type === 'task.started') {
-    detail = '系统已领取任务并启动七岗协作分析。';
+    detail = String(event.payload.step_description || '系统已领取任务并启动七岗协作分析。');
   } else if (event.event_type === 'wave.completed') {
-    detail = stage;
+    detail = String(event.payload.step_description || stage);
   } else if (event.event_type === 'task.done') {
     const participantCount = Number(event.payload.participant_count || 0);
-    detail = participantCount > 0 ? `七岗协作完成，本轮共汇聚 ${participantCount} 个岗位结果。` : '任务已完成并写回主表。';
+    detail =
+      String(event.payload.step_description || '') ||
+      (participantCount > 0 ? `七岗协作完成，本轮共汇聚 ${participantCount} 个岗位结果。` : '任务已完成并写回主表。');
   } else if (event.event_type === 'task.error') {
     detail = String(event.payload.reason || '任务执行失败，等待下轮重试。');
   }
   return {
-    key: `${event.event_type}-${event.ts}-${stage}`,
+    key: `${String(event.payload.step_key || event.event_type)}-${event.ts}-${stage}`,
     eventType: event.event_type,
     stage,
     progress,
@@ -228,6 +235,21 @@ function liveStepTitle(step: LiveStepEvent, index: number): string {
   if (step.eventType === 'task.done') return `${prefix}，交付完成`;
   if (step.eventType === 'task.error') return `${prefix}，异常重试`;
   return `${prefix}，执行中`;
+}
+
+function normalizeWorkflowSteps(steps: WorkflowStepSnapshot[] | undefined): WorkflowStepDetail[] {
+  if (!Array.isArray(steps)) return [];
+  return steps.map((step) => ({
+    key: String(step.key || ''),
+    title: String(step.title || '未命名步骤'),
+    description: String(step.description || '等待后端补充步骤说明。'),
+    status:
+      step.status === 'done' || step.status === 'running' || step.status === 'pending' || step.status === 'error'
+        ? step.status
+        : 'pending',
+    items: Array.isArray(step.items) ? step.items.map((item) => String(item)).filter(Boolean) : [],
+    note: typeof step.note === 'string' && step.note.trim() ? step.note.trim() : undefined,
+  }));
 }
 
 const NATIVE_SURFACE_LABEL: Record<string, string> = {
@@ -658,10 +680,13 @@ export default function BitableWorkflow() {
                 : existing?.tokenPreview || '';
           const nextAgent =
             event.event_type === 'agent.token'
-              ? String(event.payload.agent_id || '').trim() || existing?.activeAgent || ''
+              ? String(event.payload.agent_name || event.payload.agent_id || '').trim() || existing?.activeAgent || ''
               : nextStep?.status === 'done' || nextStep?.status === 'error'
                 ? ''
                 : existing?.activeAgent || '';
+          const nextWorkflowSteps = event.payload.workflow_steps
+            ? normalizeWorkflowSteps(event.payload.workflow_steps)
+            : existing?.workflowSteps || [];
 
           return {
             ...prev,
@@ -674,6 +699,7 @@ export default function BitableWorkflow() {
               tokenPreview: nextTokenPreview,
               activeAgent: nextAgent,
               history: mergedHistory,
+              workflowSteps: nextWorkflowSteps,
             },
           };
         });
@@ -1118,7 +1144,7 @@ export default function BitableWorkflow() {
   }, [tasks]);
   const selectedTaskNumber = textValue(taskField(selectedTask, '任务编号'));
   const selectedProgress = selectedLive
-    ? Math.max(safeProgress(taskField(selectedTask, '进度')), selectedLive.progress * 100)
+    ? Math.max(safeProgress(taskField(selectedTask, '进度')), safeProgress(selectedLive.progress))
     : safeProgress(taskField(selectedTask, '进度'));
 
   const selectedSummaryText =
@@ -1144,6 +1170,16 @@ export default function BitableWorkflow() {
   ];
   const selectedWorkflowDetails = useMemo<WorkflowStepDetail[]>(() => {
     if (!selectedTask) return [];
+    if (selectedLive?.workflowSteps?.length) {
+      return selectedLive.workflowSteps.map((step) =>
+        step.key === 'analysis' && selectedLive.tokenPreview
+          ? {
+              ...step,
+              note: `${selectedLive.activeAgent ? `${selectedLive.activeAgent}：` : ''}${selectedLive.tokenPreview}`,
+            }
+          : step,
+      );
+    }
 
     const route = taskWorkflowRoute(selectedTask) || '待生成';
     const recommend = taskReviewAction(selectedTask, selectedReview) || '待评审';
@@ -3709,7 +3745,7 @@ export default function BitableWorkflow() {
                           <p className="mt-2 text-sm leading-6 text-slate-600">{event.stage}</p>
                           <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
                             <span>{formatRelativeTime(event.updatedAt)}</span>
-                            <span>{Math.round(event.progress * 100)}%</span>
+                            <span>{safeProgress(event.progress)}%</span>
                           </div>
                         </div>
                       ))
@@ -3763,7 +3799,7 @@ export default function BitableWorkflow() {
                               const live = liveEvents[task.record_id];
                               const reviewAction = taskReviewAction(task, latestReviewByTitle.get(taskTitle(task)) || null);
                               const readinessScore = taskReadinessScore(task, latestReviewByTitle.get(taskTitle(task)) || null);
-                              const progress = live ? Math.max(safeProgress(task.fields?.进度), live.progress * 100) : safeProgress(task.fields?.进度);
+                              const progress = live ? Math.max(safeProgress(task.fields?.进度), safeProgress(live.progress)) : safeProgress(task.fields?.进度);
                               const isSelected = task.record_id === selectedTask?.record_id;
                               return (
                                 <button

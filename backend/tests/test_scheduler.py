@@ -1237,7 +1237,7 @@ class TestRunCycleActionRouting:
             mock_recheck = stack.enter_context(
                 patch("app.bitable_workflow.scheduler._create_review_recheck_task", new=AsyncMock())
             )
-            stack.enter_context(
+            publish_mock = stack.enter_context(
                 patch("app.bitable_workflow.progress_broker.publish", new=AsyncMock())
             )
             stack.enter_context(
@@ -1261,6 +1261,20 @@ class TestRunCycleActionRouting:
         assert mock_recheck.await_args.kwargs["action_tid"] == "tbl_action"
         assert mock_recheck.await_args.kwargs["automation_log_tid"] == "tbl_automation_log"
         assert mock_recheck.await_args.kwargs["route"] == "补数复核"
+        started_payload = publish_mock.await_args_list[0].args[2]
+        done_payload = publish_mock.await_args_list[-1].args[2]
+        assert publish_mock.await_args_list[0].args[1] == "task.started"
+        assert started_payload["step_key"] == "analysis"
+        assert started_payload["workflow_steps"][0]["status"] == "done"
+        assert started_payload["workflow_steps"][1]["status"] == "running"
+        assert started_payload["workflow_steps"][2]["status"] == "pending"
+        assert publish_mock.await_args_list[-1].args[1] == "task.done"
+        assert done_payload["step_key"] == "delivery"
+        assert done_payload["route"] == "补数复核"
+        assert done_payload["workflow_steps"][1]["status"] == "done"
+        assert done_payload["workflow_steps"][2]["status"] == "done"
+        assert done_payload["workflow_steps"][3]["status"] == "done"
+        assert any("证据条数" in item for item in done_payload["workflow_steps"][3]["items"])
 
     @pytest.mark.asyncio
     async def test_run_cycle_resets_failed_pipeline_with_failure_status(self):
@@ -1348,3 +1362,8 @@ class TestRunCycleActionRouting:
         assert "执行失败，将重试" in reset_fields["当前阶段"]
         assert "自动化执行状态" in reset_call.kwargs["optional_keys"]
         assert publish_mock.await_args_list[-1].args[1] == "task.error"
+        error_payload = publish_mock.await_args_list[-1].args[2]
+        assert error_payload["step_key"] == "analysis"
+        assert error_payload["step_status"] == "error"
+        assert error_payload["workflow_steps"][1]["status"] == "error"
+        assert "LLM timeout while generating report" in error_payload["reason"]

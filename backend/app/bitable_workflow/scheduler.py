@@ -203,6 +203,170 @@ def _normalize_task_number(raw: str) -> str:
     return s  # 异常格式原样返回，由调用方判定为"未知"
 
 
+_WORKFLOW_STEP_META = {
+    "intake": {
+        "title": "第 1 步，任务接入",
+        "description": "明确需求入口、目标对象和上下文数据，让任务从主表排队真正进入执行语境。",
+    },
+    "analysis": {
+        "title": "第 2 步，七岗分析",
+        "description": "按 Wave 推进多岗分析，把阶段推进和实时结论持续写回右侧执行面板。",
+    },
+    "routing": {
+        "title": "第 3 步，评审与路由",
+        "description": "生成推荐动作、责任角色和流转路由，决定后续是汇报、拍板、执行还是复核。",
+    },
+    "delivery": {
+        "title": "第 4 步，动作沉淀",
+        "description": "将消息包、归档、复核历史和后续动作沉淀为可继续协作的交付状态。",
+    },
+}
+
+
+def _progress_percent(value: object) -> int:
+    raw = 0.0
+    try:
+        raw = float(value or 0)
+    except (TypeError, ValueError):
+        raw = 0.0
+    if raw <= 1:
+        raw *= 100
+    return max(0, min(100, int(round(raw))))
+
+
+def _compact_step_note(value: object, limit: int = 220) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return truncate_with_marker(text, limit, "...")
+
+
+def _dedupe_step_items(items: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = _compact_step_note(item, 180)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _build_workflow_progress_payload(
+    fields: dict,
+    *,
+    current_step_key: str,
+    progress: object,
+    analysis_status: str,
+    routing_status: str,
+    delivery_status: str,
+    current_stage: str = "",
+    analysis_history: list[str] | None = None,
+    route: str = "",
+    review_action: str = "",
+    responsibility_role: str = "",
+    native_action: str = "",
+    exception_status: str = "",
+    exception_type: str = "",
+    evidence_count: int = 0,
+    high_confidence_count: int = 0,
+    pending_data_count: int = 0,
+    archive_status: str = "",
+    report_version: str = "",
+    delivery_note: str = "",
+    error_reason: str = "",
+) -> dict:
+    analysis_history = [str(item).strip() for item in (analysis_history or []) if str(item).strip()]
+    progress_pct = _progress_percent(progress)
+    task_title = _compact_step_note(fields.get("任务标题"), 120) or "未命名任务"
+    intake_items = _dedupe_step_items(
+        [
+            f"任务：{task_title}",
+            f"任务来源：{fields.get('任务来源') or '未标注'}",
+            f"目标对象：{fields.get('目标对象') or fields.get('汇报对象') or '未指定'}",
+            f"引用数据集：{fields.get('引用数据集') or '未绑定'}",
+        ]
+    )
+    analysis_items = _dedupe_step_items(
+        ([f"当前进度：{progress_pct}%"] if progress_pct or current_stage or analysis_history else [])
+        + ([f"当前阶段：{current_stage}"] if current_stage else [])
+        + [f"阶段推进：{stage}" for stage in analysis_history[-3:]]
+    ) or ["等待调度进入分析流"]
+    routing_items = _dedupe_step_items(
+        [
+            f"推荐动作：{review_action or '待评审'}",
+            f"工作流路由：{route or '待生成'}",
+            f"责任角色：{responsibility_role or '系统调度'}",
+            f"下一动作：{native_action or '等待分析完成'}",
+        ]
+    )
+    if exception_status or exception_type:
+        routing_items.extend(
+            _dedupe_step_items(
+                [
+                    f"异常状态：{exception_status or '正常'}",
+                    f"异常类型：{exception_type or '无'}",
+                ]
+            )
+        )
+    delivery_items = _dedupe_step_items(
+        [
+            f"归档状态：{archive_status or '待沉淀'}",
+            f"汇报版本：{report_version or '待生成'}",
+            f"证据条数：{evidence_count}",
+            f"高置信证据：{high_confidence_count}",
+            f"需补数条数：{pending_data_count}",
+        ]
+    )
+
+    steps = [
+        {
+            "key": "intake",
+            "title": _WORKFLOW_STEP_META["intake"]["title"],
+            "description": _WORKFLOW_STEP_META["intake"]["description"],
+            "status": "done",
+            "items": intake_items,
+            "note": _compact_step_note(fields.get("背景说明")),
+        },
+        {
+            "key": "analysis",
+            "title": _WORKFLOW_STEP_META["analysis"]["title"],
+            "description": _WORKFLOW_STEP_META["analysis"]["description"],
+            "status": analysis_status,
+            "items": analysis_items,
+            "note": _compact_step_note(error_reason)
+            or ("当前持续汇聚各岗输出与增量结论。" if analysis_status == "running" else ""),
+        },
+        {
+            "key": "routing",
+            "title": _WORKFLOW_STEP_META["routing"]["title"],
+            "description": _WORKFLOW_STEP_META["routing"]["description"],
+            "status": routing_status,
+            "items": routing_items,
+            "note": "",
+        },
+        {
+            "key": "delivery",
+            "title": _WORKFLOW_STEP_META["delivery"]["title"],
+            "description": _WORKFLOW_STEP_META["delivery"]["description"],
+            "status": delivery_status,
+            "items": delivery_items,
+            "note": _compact_step_note(delivery_note),
+        },
+    ]
+    current_step = next((step for step in steps if step["key"] == current_step_key), steps[1])
+    return {
+        "step_key": current_step["key"],
+        "step_title": current_step["title"],
+        "step_description": current_step["description"],
+        "step_status": current_step["status"],
+        "step_items": current_step["items"],
+        "step_note": current_step.get("note") or "",
+        "workflow_steps": steps,
+    }
+
+
 async def _build_dep_index(app_token: str, task_tid: str) -> dict[str, str]:
     """构建 任务编号 → 状态 索引，供依赖检查使用。
 
@@ -2283,14 +2447,30 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             from app.bitable_workflow import progress_broker
             await progress_broker.publish(
                 rid, "task.started",
-                {"title": task_title, "stage": "Wave1 启动：五岗并行分析中…", "progress": 0.1},
+                {
+                    "title": task_title,
+                    "stage": "Wave1 启动：五岗并行分析中…",
+                    "progress": 0.1,
+                    **_build_workflow_progress_payload(
+                        fields,
+                        current_step_key="analysis",
+                        progress=0.1,
+                        analysis_status="running",
+                        routing_status="pending",
+                        delivery_status="pending",
+                        current_stage="Wave1 启动：五岗并行分析中…",
+                        analysis_history=["Wave1 启动：五岗并行分析中…"],
+                    ),
+                },
             )
 
             # 每个 Wave 完成后更新「当前阶段」+「进度」字段，让用户在多维表格实时看到进展
             _wave_progress = iter([0.45, 0.75, 0.95])
+            analysis_history = ["Wave1 启动：五岗并行分析中…"]
 
             async def _on_wave(stage: str) -> None:
                 progress = next(_wave_progress, 0.95)
+                analysis_history.append(stage)
                 try:
                     await bitable_ops.update_record(
                         app_token, task_tid, rid, {"当前阶段": stage, "进度": progress}
@@ -2298,7 +2478,22 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                 except Exception as stage_exc:
                     logger.debug("当前阶段 update skipped: %s", stage_exc)
                 await progress_broker.publish(
-                    rid, "wave.completed", {"stage": stage, "progress": progress},
+                    rid,
+                    "wave.completed",
+                    {
+                        "stage": stage,
+                        "progress": progress,
+                        **_build_workflow_progress_payload(
+                            fields,
+                            current_step_key="analysis",
+                            progress=progress,
+                            analysis_status="running",
+                            routing_status="pending",
+                            delivery_status="pending",
+                            current_stage=stage,
+                            analysis_history=analysis_history,
+                        ),
+                    },
                 )
 
             # 执行七岗 DAG 分析流水线（Wave1→Wave2→Wave3）
@@ -2531,8 +2726,38 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             except Exception as cache_exc:
                 logger.debug("cache invalidate failed: %s", cache_exc)
             await progress_broker.publish(
-                rid, "task.done",
-                {"title": task_title, "progress": 1.0, "participant_count": len(all_results) + 1},
+                rid,
+                "task.done",
+                {
+                    "title": task_title,
+                    "stage": "交付完成：综合结论、流转路由与后续动作已沉淀",
+                    "progress": 1.0,
+                    "participant_count": len(all_results) + 1,
+                    "route": workflow_route,
+                    "review_action": (review_payload or {}).get("fields", {}).get("推荐动作", ""),
+                    **_build_workflow_progress_payload(
+                        fields,
+                        current_step_key="delivery",
+                        progress=1.0,
+                        analysis_status="done",
+                        routing_status="done",
+                        delivery_status="done",
+                        current_stage="交付完成：综合结论、流转路由与后续动作已沉淀",
+                        analysis_history=analysis_history + ["Wave3 完成：CEO 助理综合报告生成完毕"],
+                        route=workflow_route,
+                        review_action=(review_payload or {}).get("fields", {}).get("推荐动作", ""),
+                        responsibility_role=str(delivery_snapshot.get("当前责任角色") or ""),
+                        native_action=str(delivery_snapshot.get("当前原生动作") or ""),
+                        exception_status=str(delivery_snapshot.get("异常状态") or ""),
+                        exception_type=str(delivery_snapshot.get("异常类型") or ""),
+                        evidence_count=int(delivery_snapshot.get("证据条数") or 0),
+                        high_confidence_count=int(delivery_snapshot.get("高置信证据数") or 0),
+                        pending_data_count=int(delivery_snapshot.get("需补数条数") or 0),
+                        archive_status=str((archive_payload or {}).get("archive_status") or ""),
+                        report_version=str((archive_payload or {}).get("version") or "v1"),
+                        delivery_note=str(delivery_snapshot.get("工作流消息包") or ""),
+                    ),
+                },
             )
 
             # 飞书消息通知（v8.6.19 升级：含跳转 url + 健康度颜色 + 机会/风险字段）
@@ -2610,7 +2835,24 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             try:
                 from app.bitable_workflow import progress_broker
                 await progress_broker.publish(
-                    rid, "task.error", {"reason": truncate_with_marker(exc, 200, "...[截断]")},
+                    rid,
+                    "task.error",
+                    {
+                        "reason": truncate_with_marker(exc, 200, "...[截断]"),
+                        "stage": "分析异常：已回滚为待分析并等待下轮重试",
+                        "progress": 0,
+                        **_build_workflow_progress_payload(
+                            fields,
+                            current_step_key="analysis",
+                            progress=0,
+                            analysis_status="error",
+                            routing_status="pending",
+                            delivery_status="pending",
+                            current_stage="分析异常：已回滚为待分析并等待下轮重试",
+                            analysis_history=analysis_history if 'analysis_history' in locals() else [],
+                            error_reason=truncate_with_marker(exc, 200, "...[截断]"),
+                        ),
+                    },
                 )
             except Exception:
                 pass

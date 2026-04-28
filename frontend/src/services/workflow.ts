@@ -205,8 +205,33 @@ export async function confirmTaskWorkflow(
 export interface ProgressEvent {
   task_id: string;
   event_type: 'task.started' | 'wave.completed' | 'task.done' | 'task.error' | 'agent.token';
-  payload: Record<string, unknown>;
+  payload: WorkflowProgressPayload;
   ts: string;
+}
+
+export interface WorkflowStepSnapshot {
+  key: string;
+  title: string;
+  description: string;
+  status: 'done' | 'running' | 'pending' | 'error';
+  items?: string[];
+  note?: string;
+}
+
+export interface WorkflowProgressPayload extends Record<string, unknown> {
+  stage?: string;
+  progress?: number;
+  reason?: string;
+  chunk?: string;
+  agent_id?: string;
+  agent_name?: string;
+  step_key?: string;
+  step_title?: string;
+  step_description?: string;
+  step_status?: WorkflowStepSnapshot['status'];
+  step_items?: string[];
+  step_note?: string;
+  workflow_steps?: WorkflowStepSnapshot[];
 }
 
 export function subscribeTaskProgress(

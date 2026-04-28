@@ -553,7 +553,12 @@ class BaseAgent(ABC):
                         buf.clear()
                         await progress_broker.publish(
                             sse_task_id, "agent.token",
-                            {"agent_id": self.agent_id, "chunk": text},
+                            {
+                                "agent_id": self.agent_id,
+                                "agent_name": self.agent_name,
+                                "step_key": "analysis",
+                                "chunk": text,
+                            },
                         )
 
                 stream_cb = _push_tools
@@ -572,7 +577,12 @@ class BaseAgent(ABC):
 
                 await progress_broker.publish(
                     sse_task_id, "agent.token",
-                    {"agent_id": self.agent_id, "chunk": "".join(buf)},
+                    {
+                        "agent_id": self.agent_id,
+                        "agent_name": self.agent_name,
+                        "step_key": "analysis",
+                        "chunk": "".join(buf),
+                    },
                 )
             return result
 
@@ -596,7 +606,12 @@ class BaseAgent(ABC):
                     buffer.clear()
                     await progress_broker.publish(
                         task_id, "agent.token",
-                        {"agent_id": agent_id, "chunk": text},
+                        {
+                            "agent_id": agent_id,
+                            "agent_name": self.agent_name,
+                            "step_key": "analysis",
+                            "chunk": text,
+                        },
                     )
 
             result = await call_llm_streaming(
@@ -611,7 +626,12 @@ class BaseAgent(ABC):
             if buffer:
                 await progress_broker.publish(
                     task_id, "agent.token",
-                    {"agent_id": agent_id, "chunk": "".join(buffer)},
+                    {
+                        "agent_id": agent_id,
+                        "agent_name": self.agent_name,
+                        "step_key": "analysis",
+                        "chunk": "".join(buffer),
+                    },
                 )
             return result
 
