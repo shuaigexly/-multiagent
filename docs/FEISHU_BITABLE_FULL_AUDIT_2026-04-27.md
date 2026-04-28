@@ -287,6 +287,22 @@
   - `workflow_native_manifest` 现在会实时刷新旧 state，再返回最新 manifest
   - 补回归测试锁定“旧 state 也会自动补齐到当前 A/W 蓝图库”
 
+### F25. 前端首次打开仍会看到旧版 native 资产，因为 `/status` 和 `/native-assets` 没有刷新旧 state
+
+- 位置：
+  - `backend/app/api/workflow.py`
+  - `frontend/src/pages/BitableWorkflow.tsx`
+- 问题：
+  - 驾驶舱初始化时先调用的是 `/api/v1/workflow/status`
+  - 之前只有 `/native-manifest` 会触发 native state 刷新，`/status` 和 `/native-assets` 直接回缓存 `_state`
+- 风险：
+  - 页面首次渲染会显示旧的自动化/工作流数量、旧的 `overall_state`、旧的 checklist
+  - 用户刷新 manifest 后看到的是一套数据，驾驶舱首页摘要又是另一套数据，形成“同页双真相”
+- 结果：
+  - 已抽出统一的 `_refresh_native_state_artifacts()`
+  - `workflow_status / workflow_native_assets / workflow_native_manifest` 现在都会先刷新旧 state，再返回结果
+  - 补回归测试锁定“首次打开页面拿到的 native assets 也必须是当前蓝图”
+
 ---
 
 ## 3. 全量验证结果

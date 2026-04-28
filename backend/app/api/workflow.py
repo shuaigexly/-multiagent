@@ -39,6 +39,24 @@ _ARCHIVE_VERSION_RE = re.compile(r"^v(\d+)$", re.IGNORECASE)
 _state: dict = {}
 
 
+def _refresh_native_state_artifacts() -> None:
+    app_token = str(_state.get("app_token") or "").strip()
+    table_ids = _state.get("table_ids") or {}
+    native_assets = _state.get("native_assets") or {}
+    if not app_token or not table_ids or not native_assets:
+        return
+    sync_native_asset_blueprints(native_assets)
+    _refresh_native_assets(native_assets)
+    _state["native_assets"] = native_assets
+    _state["native_manifest"] = build_native_manifest(
+        app_token=app_token,
+        base_url=str(_state.get("url") or ""),
+        table_ids=table_ids,
+        base_meta=_state.get("base_meta") or {},
+        native_assets=native_assets,
+    )
+
+
 class SetupRequest(BaseModel):
     name: str = "内容运营虚拟组织"
     mode: str = "seed_demo"
@@ -420,12 +438,14 @@ async def workflow_stop():
 @router.get("/status", dependencies=[Depends(require_api_key)])
 async def workflow_status():
     """返回当前运行状态和多维表格信息。"""
+    _refresh_native_state_artifacts()
     return {"running": runner.is_running(), "state": _state}
 
 
 @router.get("/native-assets", dependencies=[Depends(require_api_key)])
 async def workflow_native_assets():
     """返回当前 Base 的原生表单/自动化/工作流/仪表盘/角色蓝图。"""
+    _refresh_native_state_artifacts()
     return {
         "app_token": _state.get("app_token", ""),
         "url": _state.get("url", ""),
@@ -437,20 +457,8 @@ async def workflow_native_assets():
 @router.get("/native-manifest", dependencies=[Depends(require_api_key)])
 async def workflow_native_manifest():
     """返回当前 Base 的飞书原生安装包、命令模板和安装顺序。"""
+    _refresh_native_state_artifacts()
     app_token = str(_state.get("app_token") or "").strip()
-    table_ids = _state.get("table_ids") or {}
-    native_assets = _state.get("native_assets") or {}
-    if app_token and table_ids and native_assets:
-        sync_native_asset_blueprints(native_assets)
-        _refresh_native_assets(native_assets)
-        _state["native_assets"] = native_assets
-        _state["native_manifest"] = build_native_manifest(
-            app_token=app_token,
-            base_url=str(_state.get("url") or ""),
-            table_ids=table_ids,
-            base_meta=_state.get("base_meta") or {},
-            native_assets=native_assets,
-        )
     return {
         "app_token": app_token,
         "url": _state.get("url", ""),

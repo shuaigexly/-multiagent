@@ -823,6 +823,82 @@ async def test_workflow_native_manifest_refreshes_stale_blueprint_lists(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_workflow_status_refreshes_stale_native_assets(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+
+    from app.api import workflow
+    from app.bitable_workflow.native_specs import build_automation_specs, build_workflow_specs
+
+    monkeypatch.setattr("app.api.workflow.runner.is_running", lambda: False)
+    workflow._state.clear()
+    workflow._state.update(
+        {
+            "app_token": "app_token",
+            "url": "https://feishu.cn/base/app_token",
+            "base_meta": {"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
+            "table_ids": {"task": "tbl_task", "evidence": "tbl_evidence"},
+            "native_assets": {
+                "automation_templates": [{"name": "A1 新任务入场提醒", "lifecycle_state": "blueprint_ready"}],
+                "workflow_blueprints": [{"name": "W1 路由总分发工作流", "lifecycle_state": "blueprint_ready"}],
+                "dashboard_blueprints": [],
+                "role_blueprints": [],
+                "form_blueprints": [],
+                "manual_finish_checklist": [],
+            },
+            "native_manifest": {},
+        }
+    )
+
+    result = await workflow.workflow_status()
+
+    assert result["running"] is False
+    assert len(result["state"]["native_assets"]["automation_templates"]) == len(build_automation_specs())
+    assert len(result["state"]["native_assets"]["workflow_blueprints"]) == len(build_workflow_specs())
+    assert result["state"]["native_manifest"]["manifest_version"] == "v2"
+
+
+@pytest.mark.asyncio
+async def test_workflow_native_assets_refreshes_stale_native_assets(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+
+    from app.api import workflow
+    from app.bitable_workflow.native_specs import build_automation_specs, build_workflow_specs
+
+    workflow._state.clear()
+    workflow._state.update(
+        {
+            "app_token": "app_token",
+            "url": "https://feishu.cn/base/app_token",
+            "base_meta": {"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
+            "table_ids": {"task": "tbl_task", "evidence": "tbl_evidence"},
+            "native_assets": {
+                "automation_templates": [{"name": "A1 新任务入场提醒", "lifecycle_state": "blueprint_ready"}],
+                "workflow_blueprints": [{"name": "W1 路由总分发工作流", "lifecycle_state": "blueprint_ready"}],
+                "dashboard_blueprints": [],
+                "role_blueprints": [],
+                "form_blueprints": [],
+                "manual_finish_checklist": [],
+            },
+            "native_manifest": {},
+        }
+    )
+
+    result = await workflow.workflow_native_assets()
+
+    assert len(result["native_assets"]["automation_templates"]) == len(build_automation_specs())
+    assert len(result["native_assets"]["workflow_blueprints"]) == len(build_workflow_specs())
+    assert workflow._state["native_manifest"]["manifest_version"] == "v2"
+
+
+@pytest.mark.asyncio
 async def test_write_native_install_logs_maps_manual_finish_to_pending_completion(monkeypatch):
     from app.bitable_workflow import native_installer
 
