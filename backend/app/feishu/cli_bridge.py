@@ -100,9 +100,16 @@ async def _run_cli(args: list[str]) -> dict:
         await proc.wait()
         raise RuntimeError("lark-cli timed out after 120s") from exc
     if proc.returncode != 0:
+        # v8.6.20-r12（审计 #4 安全）：lark-cli 节点侧诊断助手（debug、--trace-warnings）
+        # 触发时会把 process.env 完整序列化到 stderr，FEISHU_APP_SECRET / APP_ID 可能
+        # 直接被回显。在抛出前先剥离已知 secret 的 raw 值，避免泄漏到 Sentry / audit。
+        stderr_text = stderr.decode(errors="replace")
+        for secret_val in (env.get("FEISHU_APP_SECRET"), env.get("FEISHU_APP_ID")):
+            if secret_val and len(secret_val) >= 6:
+                stderr_text = stderr_text.replace(secret_val, "[REDACTED]")
         raise RuntimeError(
             f"lark-cli failed (rc={proc.returncode}): "
-            f"{truncate_with_marker(stderr.decode(), 500)}"
+            f"{truncate_with_marker(stderr_text, 500)}"
         )
     try:
         return json.loads(stdout.decode())

@@ -169,6 +169,8 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
             logger.info("Bot event 重复，已忽略: %s", event_id)
             return JSONResponse({"ok": True})
 
+    # v8.6.20-r12（审计 #1）：snapshot tenant/correlation 显式传给后台任务
+    from app.core.observability import get_tenant_id as _get_tenant, get_correlation_id as _get_corr
     background_tasks.add_task(
         _handle_bot_task,
         event_id=event_id,
@@ -177,11 +179,31 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
         chat_id=bot_event.chat_id,
         open_id=bot_event.open_id,
         redis_client=getattr(request.app.state, "redis_client", None),
+        tenant_id=_get_tenant(),
+        correlation_id=_get_corr(),
     )
     return JSONResponse({"ok": True})
 
 
 async def _handle_bot_task(
+    event_id: str,
+    text: str,
+    source_message_id: str,
+    chat_id: Optional[str],
+    open_id: Optional[str],
+    redis_client=None,
+    tenant_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+):
+    """v8.6.20-r12（审计 #1）：在后台任务里重建 ContextVar 作用域。"""
+    from app.core.observability import correlation_scope, set_task_context
+    async with correlation_scope(correlation_id):
+        if tenant_id:
+            set_task_context(tenant_id=tenant_id)
+        await _handle_bot_task_impl(event_id, text, source_message_id, chat_id, open_id, redis_client)
+
+
+async def _handle_bot_task_impl(
     event_id: str,
     text: str,
     source_message_id: str,

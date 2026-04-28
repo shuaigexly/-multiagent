@@ -31,18 +31,23 @@ def parse_csv(content: str) -> DataSummary:
             content_type="csv",
             full_text=truncate_with_marker(content, 8000),
         )
-    df = pd.read_csv(io.StringIO(content))
+    # v8.6.20-r12（审计 #5）：上传层只限文件 5MB，但 CSV 在 pandas 里可膨胀 10–20×。
+    # 一份 5MB × 数万列的恶意 CSV 用 dtype 推断 + describe 能让单进程 RSS 飙到 1GB+。
+    # 加 nrows=10000 + 列数硬截断，并在列数 > 50 时跳过 describe。
+    df = pd.read_csv(io.StringIO(content), nrows=10000, low_memory=False)
+    if df.shape[1] > 200:
+        df = df.iloc[:, :200]
     preview = df.head(10).to_string(index=False)
     stats = {}
-    try:
-        stats = df.describe().to_dict()
-        # 只保留简单可序列化的数字
-        stats = {
-            col: {k: round(v, 4) for k, v in col_stats.items()}
-            for col, col_stats in stats.items()
-        }
-    except Exception:
-        pass
+    if df.shape[1] <= 50:
+        try:
+            stats = df.describe().to_dict()
+            stats = {
+                col: {k: round(v, 4) for k, v in col_stats.items()}
+                for col, col_stats in stats.items()
+            }
+        except Exception:
+            pass
     return DataSummary(
         raw_preview=preview,
         columns=list(df.columns),

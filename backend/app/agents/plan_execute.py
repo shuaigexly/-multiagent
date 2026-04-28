@@ -64,49 +64,35 @@ _EXECUTE_PROMPT = (
 def _extract_first_json_array(text: str):
     """从 LLM 输出中提取第一个完整 JSON 数组（容错 markdown 围栏 / 前置废话 / 尾部废话）。
 
-    返回 list[dict] 或 None；失败永不抛异常。
+    返回 list 或 None；失败永不抛异常。
+
+    v8.6.20-r12（审计 #10）：用 stdlib 的 json.JSONDecoder.raw_decode 替代手写
+    state machine —— 旧实现的 escape 标志在 `\\"` 后未正确退出 in_str 状态，
+    LLM 输出 `\"x\"` 类转义引号会让 depth 永远不归零，整个 Plan-Execute 模式
+    在 CEO 助理的常见输出上静默退化为单 prompt。raw_decode 用经过验证的解析器，
+    且能处理"先废话后 JSON 后废话"格式。
     """
     if not text:
         return None
-    # 第一步：去 markdown 围栏
     s = text.strip()
+    # 去 markdown 围栏
     if s.startswith("```"):
         s = s.split("```", 2)[1] if s.count("```") >= 2 else s.lstrip("`")
-        if s.lstrip().startswith("json"):
+        if s.lstrip().lower().startswith("json"):
             s = s.split("\n", 1)[1] if "\n" in s else s[4:]
-    # 第二步：扫描第一个 [ 与匹配的 ]，跟踪转义和字符串内的方括号
+    # 找第一个 [，调用 stdlib raw_decode 解析直至 valid JSON 边界，剩余文本忽略
+    decoder = json.JSONDecoder()
     start = s.find("[")
-    if start < 0:
-        return None
-    depth = 0
-    in_str = False
-    escape = False
-    for i in range(start, len(s)):
-        ch = s[i]
-        if in_str:
-            # 转义只在字符串内有意义；放在外面会让非字符串中的 \] 跳过 ] → 计数错乱
-            if escape:
-                escape = False
-                continue
-            if ch == "\\":
-                escape = True
-                continue
-            if ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-            continue
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                candidate = s[start : i + 1]
-                try:
-                    return json.loads(candidate)
-                except json.JSONDecodeError:
-                    return None
+    while start >= 0:
+        try:
+            obj, _consumed = decoder.raw_decode(s[start:])
+            return obj if isinstance(obj, list) else None
+        except json.JSONDecodeError:
+            # 当前 [ 不能解析为完整 JSON 数组，跳过这个 [ 找下一个
+            next_start = s.find("[", start + 1)
+            if next_start < 0:
+                return None
+            start = next_start
     return None
 
 

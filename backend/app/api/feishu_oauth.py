@@ -131,12 +131,12 @@ def _consume_oauth_state(state: str, *, actor_hash: str = "") -> tuple[str, str]
     pending = _pending_states.pop(token, None)
     if pending is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-    # 兼容旧 3-tuple
-    if len(pending) == 4:
-        expected_origin, tenant_id, created_at, expected_actor = pending
-    else:
-        expected_origin, tenant_id, created_at = pending
-        expected_actor = ""
+    # v8.6.20-r12（审计 #8 安全）：之前同时接受 3-tuple/4-tuple 两种 shape，3-tuple
+    # 分支默认 expected_actor="" 让 actor_hash 校验静默跳过 — 与 CSRF 防护初衷
+    # 矛盾。统一只接受 4-tuple，写入侧已全部升级。
+    if not isinstance(pending, tuple) or len(pending) != 4:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    expected_origin, tenant_id, created_at, expected_actor = pending
     if time.time() - created_at > STATE_TTL_SECONDS or frontend_origin != expected_origin:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
     # v8.6.20-r11（审计 #4）：actor_hash 绑定校验。callback 端目前没有 require_api_key
@@ -213,6 +213,10 @@ async def get_oauth_url(
 
     callback = f"{safe_backend_origin}{CALLBACK_PATH}"
     base = _feishu_base()
+    # v8.6.20-r12（审计 #2 安全）：移除 v8.6.20-r11 留下的 actor_hash 死代码 —
+    # 完整 OAuth login-CSRF 防护需要 session cookie 绑定，server-wide settings.api_key
+    # 的 hash 对所有调用方都是相同值，达不到 per-actor 绑定效果。这里诚实地
+    # 不绑 actor，未来加 session 中间件后再补回。
     state = _create_oauth_state(frontend_origin)
     url = (
         f"{base}/open-apis/authen/v1/index"

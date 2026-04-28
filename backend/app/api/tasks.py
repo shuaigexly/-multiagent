@@ -240,12 +240,19 @@ async def confirm_task(
             raise HTTPException(404, "任务不存在")
         raise HTTPException(400, f"任务状态 {current_status} 不允许重新确认")
 
+    # v8.6.20-r12（审计 #1）：FastAPI BackgroundTasks 在 middleware 的
+    # correlation_scope.finally 之后执行，ContextVar 已 reset → _execute_task 内
+    # get_tenant_id() 全部返 None → 数据落到 "default" 桶。这里把 tenant/correlation
+    # snapshot 显式传给后台任务并在内部重建作用域。
+    from app.core.observability import get_tenant_id as _get_tenant, get_correlation_id as _get_corr
     background_tasks.add_task(
         _execute_task,
         task_id,
         body.selected_modules,
         request.app.state.redis_client,
         user_instructions,
+        _get_tenant(),
+        _get_corr(),
     )
     return {"task_id": task_id, "status": "pending", "message": "任务已加入执行队列"}
 
@@ -358,184 +365,196 @@ async def _execute_task(
     selected_modules: list[str],
     redis_client=None,
     user_instructions: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
 ):
-    """后台执行任务（单机 MVP，无自动重试/恢复）"""
+    """后台执行任务（单机 MVP，无自动重试/恢复）。
+
+    v8.6.20-r12（审计 #1）：tenant_id / correlation_id 由调用方从主请求上下文 snapshot
+    显式传入，并在此重建 ContextVar 作用域，避免 BackgroundTasks 在 middleware
+    finally 之后跑、ContextVar 已 reset → 数据写到 "default" 桶。"""
+    from app.core.observability import correlation_scope, set_task_context
     from app.models.database import AsyncSessionLocal
-    async with AsyncSessionLocal() as db:
-        emitter = None
-        input_file_path = None
-        try:
-            result = await db.execute(select(Task).where(Task.id == task_id))
-            task = result.scalar_one_or_none()
-            if not task:
-                return
-            if task.status == "cancelled":
-                return
+    async with correlation_scope(correlation_id):
+        if tenant_id:
+            set_task_context(tenant_id=tenant_id, task_id=task_id)
+        else:
+            set_task_context(task_id=task_id)
+        async with AsyncSessionLocal() as db:
+            emitter = None
+            input_file_path = None
+            try:
+                result = await db.execute(select(Task).where(Task.id == task_id))
+                task = result.scalar_one_or_none()
+                if not task:
+                    return
+                if task.status == "cancelled":
+                    return
 
-            claim_error_message = None
-            async with _get_claim_lock():
-                MAX_CONCURRENT = get_int_env("MAX_CONCURRENT_TASKS", 3, minimum=1)
-                running_count = await db.scalar(
-                    select(func.count()).select_from(Task).where(Task.status == "running")
-                )
-                if (running_count or 0) >= MAX_CONCURRENT:
-                    claim_error_message = f"当前运行中的任务已达上限（{MAX_CONCURRENT}），请稍后重试"
-                    logger.error(
-                        "Task failed",
-                        extra={"task_id": task_id, "error": claim_error_message},
+                claim_error_message = None
+                async with _get_claim_lock():
+                    MAX_CONCURRENT = get_int_env("MAX_CONCURRENT_TASKS", 3, minimum=1)
+                    running_count = await db.scalar(
+                        select(func.count()).select_from(Task).where(Task.status == "running")
                     )
-                    fail_result = await db.execute(
-                        update(Task)
-                        .where(Task.id == task_id, Task.status != "cancelled")
-                        .values(status="failed", error_message=claim_error_message)
-                    )
-                    await db.commit()
-                    if fail_result.rowcount == 0:
-                        return
-                else:
-                    run_result = await db.execute(
-                        update(Task)
-                        .where(Task.id == task_id, Task.status == "pending")
-                        .values(status="running")
-                    )
-                    await db.commit()
-                    if run_result.rowcount == 0:
-                        return
+                    if (running_count or 0) >= MAX_CONCURRENT:
+                        claim_error_message = f"当前运行中的任务已达上限（{MAX_CONCURRENT}），请稍后重试"
+                        logger.error(
+                            "Task failed",
+                            extra={"task_id": task_id, "error": claim_error_message},
+                        )
+                        fail_result = await db.execute(
+                            update(Task)
+                            .where(Task.id == task_id, Task.status != "cancelled")
+                            .values(status="failed", error_message=claim_error_message)
+                        )
+                        await db.commit()
+                        if fail_result.rowcount == 0:
+                            return
+                    else:
+                        run_result = await db.execute(
+                            update(Task)
+                            .where(Task.id == task_id, Task.status == "pending")
+                            .values(status="running")
+                        )
+                        await db.commit()
+                        if run_result.rowcount == 0:
+                            return
 
-            if claim_error_message:
+                if claim_error_message:
+                    emitter = EventEmitter(task_id=task_id, db=db, redis_client=redis_client)
+                    await emitter.emit_task_error(claim_error_message)
+                    return
+
+                if await _is_task_cancelled(db, task_id):
+                    return
+
+                await db.execute(delete(TaskResult).where(TaskResult.task_id == task_id))
+                await db.execute(delete(TaskEvent).where(TaskEvent.task_id == task_id))
+                await db.commit()
+
+                # 初始化 EventEmitter（Redis 可选）
                 emitter = EventEmitter(task_id=task_id, db=db, redis_client=redis_client)
-                await emitter.emit_task_error(claim_error_message)
-                return
 
-            if await _is_task_cancelled(db, task_id):
-                return
+                # 发布"任务开始"事件
+                await emitter.emit_task_recognized(
+                    task.task_type or "general",
+                    task.task_type_label or "综合分析",
+                    selected_modules,
+                )
 
-            await db.execute(delete(TaskResult).where(TaskResult.task_id == task_id))
-            await db.execute(delete(TaskEvent).where(TaskEvent.task_id == task_id))
-            await db.commit()
+                # 解析数据：优先用上传文件，其次读取飞书上下文中的文档内容
+                data_summary = None
+                input_file_path = task.input_file
+                upload_path = _resolve_upload_file_path(input_file_path)
+                if upload_path and upload_path.exists():
+                    async with aiofiles.open(upload_path, "r", encoding="utf-8") as f:
+                        file_content = await f.read()
+                    data_summary = parse_content(file_content, upload_path.name)
 
-            # 初始化 EventEmitter（Redis 可选）
-            emitter = EventEmitter(task_id=task_id, db=db, redis_client=redis_client)
+                # 若无上传文件，则尝试从飞书上下文中读取真实文档内容
+                if not data_summary and task.feishu_context:
+                    try:
+                        data_summary = await asyncio.wait_for(
+                            _enrich_from_feishu_context(task.feishu_context, emitter, task_id),
+                            timeout=30.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("飞书上下文读取超时（30s），跳过上下文增强")
+                        data_summary = None
+                    except Exception as e:
+                        logger.warning("飞书上下文读取失败: %s", e)
+                        data_summary = None
 
-            # 发布"任务开始"事件
-            await emitter.emit_task_recognized(
-                task.task_type or "general",
-                task.task_type_label or "综合分析",
-                selected_modules,
-            )
-
-            # 解析数据：优先用上传文件，其次读取飞书上下文中的文档内容
-            data_summary = None
-            input_file_path = task.input_file
-            upload_path = _resolve_upload_file_path(input_file_path)
-            if upload_path and upload_path.exists():
-                async with aiofiles.open(upload_path, "r", encoding="utf-8") as f:
-                    file_content = await f.read()
-                data_summary = parse_content(file_content, upload_path.name)
-
-            # 若无上传文件，则尝试从飞书上下文中读取真实文档内容
-            if not data_summary and task.feishu_context:
+                # 执行 Agent 模块
+                TASK_TIMEOUT = get_int_env("TASK_TIMEOUT_SECONDS", 300, minimum=1)
                 try:
-                    data_summary = await asyncio.wait_for(
-                        _enrich_from_feishu_context(task.feishu_context, emitter, task_id),
-                        timeout=30.0,
+                    agent_results = await asyncio.wait_for(
+                        orchestrate(
+                            task_description=task.input_text or "",
+                            selected_modules=selected_modules,
+                            data_summary=data_summary,
+                            feishu_context=task.feishu_context,
+                            user_instructions=user_instructions or task.user_instructions,
+                            emitter=emitter,
+                        ),
+                        timeout=TASK_TIMEOUT,
                     )
                 except asyncio.TimeoutError:
-                    logger.warning("飞书上下文读取超时（30s），跳过上下文增强")
-                    data_summary = None
-                except Exception as e:
-                    logger.warning("飞书上下文读取失败: %s", e)
-                    data_summary = None
+                    error_message = f"任务执行超时（超过 {TASK_TIMEOUT} 秒）"
+                    logger.error(
+                        "Task failed",
+                        extra={"task_id": task_id, "error": error_message},
+                    )
+                    if emitter is not None and not await _is_task_cancelled(db, task_id):
+                        await emitter.emit_task_error(error_message)
+                    await _update_task_unless_cancelled(
+                        db,
+                        task_id,
+                        status="failed",
+                        error_message=error_message,
+                    )
+                    return
 
-            # 执行 Agent 模块
-            TASK_TIMEOUT = get_int_env("TASK_TIMEOUT_SECONDS", 300, minimum=1)
-            try:
-                agent_results = await asyncio.wait_for(
-                    orchestrate(
-                        task_description=task.input_text or "",
-                        selected_modules=selected_modules,
-                        data_summary=data_summary,
-                        feishu_context=task.feishu_context,
-                        user_instructions=user_instructions or task.user_instructions,
-                        emitter=emitter,
-                    ),
-                    timeout=TASK_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                error_message = f"任务执行超时（超过 {TASK_TIMEOUT} 秒）"
-                logger.error(
-                    "Task failed",
-                    extra={"task_id": task_id, "error": error_message},
-                )
-                if emitter is not None and not await _is_task_cancelled(db, task_id):
-                    await emitter.emit_task_error(error_message)
-                await _update_task_unless_cancelled(
+                if await _is_task_cancelled(db, task_id):
+                    return
+
+                # 保存结果
+                for ar in agent_results:
+                    tr = TaskResult(
+                        task_id=task_id,
+                        agent_id=ar.agent_id,
+                        agent_name=ar.agent_name,
+                        sections=[s.model_dump() for s in ar.sections],
+                        action_items=ar.action_items,
+                        chart_data=ar.chart_data,
+                        raw_output=ar.raw_output,
+                    )
+                    db.add(tr)
+
+                # 生成总结
+                summary = ""
+                for ar in agent_results:
+                    if ar.agent_id == "ceo_assistant" and ar.sections:
+                        summary = truncate_with_marker(ar.sections[0].content or "", 500)
+                        break
+                if not summary and agent_results:
+                    summary = (
+                        truncate_with_marker(agent_results[-1].sections[0].content or "", 300)
+                        if agent_results[-1].sections
+                        else "分析完成"
+                    )
+
+                if not await _update_task_unless_cancelled(
                     db,
                     task_id,
-                    status="failed",
-                    error_message=error_message,
-                )
-                return
-
-            if await _is_task_cancelled(db, task_id):
-                return
-
-            # 保存结果
-            for ar in agent_results:
-                tr = TaskResult(
-                    task_id=task_id,
-                    agent_id=ar.agent_id,
-                    agent_name=ar.agent_name,
-                    sections=[s.model_dump() for s in ar.sections],
-                    action_items=ar.action_items,
-                    chart_data=ar.chart_data,
-                    raw_output=ar.raw_output,
-                )
-                db.add(tr)
-
-            # 生成总结
-            summary = ""
-            for ar in agent_results:
-                if ar.agent_id == "ceo_assistant" and ar.sections:
-                    summary = truncate_with_marker(ar.sections[0].content or "", 500)
-                    break
-            if not summary and agent_results:
-                summary = (
-                    truncate_with_marker(agent_results[-1].sections[0].content or "", 300)
-                    if agent_results[-1].sections
-                    else "分析完成"
-                )
-
-            if not await _update_task_unless_cancelled(
-                db,
-                task_id,
-                status="done",
-                result_summary=summary,
-            ):
-                return
-            try:
-                await emitter.emit_task_done(summary)
-            except Exception as emit_exc:
-                logger.warning("task.done event emission failed: %s", emit_exc)
-            await _remove_upload_file(input_file_path)
-
-        except Exception as e:
-            logger.error(
-                f"Task {task_id} failed: {e}",
-                exc_info=True,
-                extra={"task_id": task_id, "error": str(e)},
-            )
-            try:
-                if await _update_task_unless_cancelled(
-                    db,
-                    task_id,
-                    status="failed",
-                    error_message=str(e),
+                    status="done",
+                    result_summary=summary,
                 ):
-                    emitter2 = EventEmitter(task_id=task_id, db=db)
-                    await emitter2.emit_task_error(str(e))
-            except Exception as exc:
-                logger.warning("任务失败状态更新或错误事件发送失败: %s", exc)
+                    return
+                try:
+                    await emitter.emit_task_done(summary)
+                except Exception as emit_exc:
+                    logger.warning("task.done event emission failed: %s", emit_exc)
+                await _remove_upload_file(input_file_path)
+
+            except Exception as e:
+                logger.error(
+                    f"Task {task_id} failed: {e}",
+                    exc_info=True,
+                    extra={"task_id": task_id, "error": str(e)},
+                )
+                try:
+                    if await _update_task_unless_cancelled(
+                        db,
+                        task_id,
+                        status="failed",
+                        error_message=str(e),
+                    ):
+                        emitter2 = EventEmitter(task_id=task_id, db=db)
+                        await emitter2.emit_task_error(str(e))
+                except Exception as exc:
+                    logger.warning("任务失败状态更新或错误事件发送失败: %s", exc)
 
 
 async def _enrich_from_feishu_context(
