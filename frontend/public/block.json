@@ -1,5 +1,5 @@
 {
-  "blockTypeID": "blk_69ea340a3900cbc59c8b7854",
+  "blockTypeID": "blk_69dfa6237f9a4bc6da11f357",
   "version": "0.0.1",
   "name": "Puff C21 多 Agent 协同决策工作台",
   "description": "把当前选中的分析任务实时回溯成「步骤详情 / 七岗执行轨道 / 关联评审/动作/归档」侧边栏面板。",
