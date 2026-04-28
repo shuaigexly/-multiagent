@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildTraceChainItems,
   buildRelationSections,
   buildSourceContextItems,
   buildResolutionDebug,
@@ -131,5 +132,51 @@ describe("bitable workflow plugin utils", () => {
     expect(sections[1].items[0].title).toBe("发送汇报");
     expect(sections[1].items[0].chips).toContain("交付经理");
     expect(sections[2].items[0].summary).toBe("等待复盘材料");
+  });
+
+  it("builds trace chain nodes for resolved and unresolved paths", () => {
+    const resolved = buildTraceChainItems(
+      "action",
+      { recordId: "rec_action", fields: { 任务标题: "经营诊断", 动作类型: "发送汇报" } },
+      { recordId: "rec_task", fields: { 任务标题: "经营诊断" } },
+      { recordId: "rec_review", fields: { 推荐动作: "补数后复核", 工作流路由: "复核流" } },
+      [{ recordId: "rec_action_1", fields: { 动作类型: "发送汇报", 动作状态: "待执行" } }],
+      [{ recordId: "rec_archive_1", fields: { 归档状态: "待复盘", 最新评审动作: "补数后复核" } }],
+      {
+        sourceKind: "action",
+        sourceLabel: "交付动作",
+        selectedRecordId: "rec_action",
+        selectedTaskTitle: "经营诊断",
+        taskRecordIdCandidate: "rec_task",
+        taskTitleCandidate: "经营诊断",
+        resolutionMode: "related-record-id",
+        resolutionLabel: "通过关联记录ID回溯",
+        issues: [],
+      },
+    );
+    expect(resolved.map((item) => item.key)).toEqual(["source", "task", "review", "action", "archive"]);
+    expect(resolved[1].caption).toContain("关联记录ID");
+
+    const unresolved = buildTraceChainItems(
+      "review",
+      { recordId: "rec_review", fields: { 任务标题: "" } },
+      null,
+      null,
+      [],
+      [],
+      {
+        sourceKind: "review",
+        sourceLabel: "产出评审",
+        selectedRecordId: "rec_review",
+        selectedTaskTitle: "",
+        taskRecordIdCandidate: "",
+        taskTitleCandidate: "",
+        resolutionMode: "unresolved",
+        resolutionLabel: "未命中主任务",
+        issues: ["缺少「关联记录ID」"],
+      },
+    );
+    expect(unresolved[1].label).toBe("主任务未命中");
+    expect(unresolved[1].caption).toContain("关联记录ID");
   });
 });

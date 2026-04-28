@@ -61,6 +61,14 @@ export interface WorkflowRelationSection {
   items: WorkflowRelationItem[];
 }
 
+export interface WorkflowTraceNode {
+  key: string;
+  label: string;
+  title: string;
+  caption: string;
+  tone: "neutral" | "active" | "success" | "warning";
+}
+
 function textValue(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
@@ -327,4 +335,80 @@ export function buildRelationSections(
       items: archiveItems,
     },
   ];
+}
+
+export function buildTraceChainItems(
+  sourceKind: WorkflowSourceKind,
+  selectionRecord: WorkflowSnapshotLike | null,
+  task: WorkflowSnapshotLike | null,
+  review: WorkflowSnapshotLike | null,
+  actions: WorkflowSnapshotLike[],
+  archives: WorkflowSnapshotLike[],
+  resolutionDebug: WorkflowResolutionDebug | null,
+): WorkflowTraceNode[] {
+  const nodes: WorkflowTraceNode[] = [];
+  const sourceLabel = workflowSourceLabel(sourceKind);
+  const sourceTitle = textValue(selectionRecord?.fields["任务标题"]) || textValue(selectionRecord?.fields["动作类型"]) || "当前入口记录";
+  const selectedRecordId = selectionRecord?.recordId || "缺失";
+
+  nodes.push({
+    key: "source",
+    label: sourceLabel,
+    title: sourceTitle,
+    caption: `入口记录 · ${selectedRecordId}`,
+    tone: "active",
+  });
+
+  if (!task) {
+    nodes.push({
+      key: "unresolved",
+      label: "主任务未命中",
+      title: resolutionDebug?.resolutionLabel || "未找到对应分析任务",
+      caption: resolutionDebug?.issues.join("；") || "请补齐关联记录ID或任务标题。",
+      tone: "warning",
+    });
+    return nodes;
+  }
+
+  nodes.push({
+    key: "task",
+    label: "分析任务",
+    title: textValue(task.fields["任务标题"]) || task.recordId,
+    caption: resolutionDebug?.resolutionLabel || `主任务 · ${task.recordId}`,
+    tone: "success",
+  });
+
+  if (review) {
+    nodes.push({
+      key: "review",
+      label: "产出评审",
+      title: textValue(review.fields["推荐动作"]) || textValue(review.fields["任务标题"]) || review.recordId,
+      caption: textValue(review.fields["工作流路由"]) || "已命中评审记录",
+      tone: "neutral",
+    });
+  }
+
+  if (actions.length) {
+    const firstAction = actions[0];
+    nodes.push({
+      key: "action",
+      label: `交付动作 × ${actions.length}`,
+      title: textValue(firstAction.fields["动作类型"]) || textValue(firstAction.fields["任务标题"]) || firstAction.recordId,
+      caption: textValue(firstAction.fields["动作状态"]) || "已命中动作记录",
+      tone: "neutral",
+    });
+  }
+
+  if (archives.length) {
+    const firstArchive = archives[0];
+    nodes.push({
+      key: "archive",
+      label: `结果归档 × ${archives.length}`,
+      title: textValue(firstArchive.fields["归档状态"]) || textValue(firstArchive.fields["任务标题"]) || firstArchive.recordId,
+      caption: textValue(firstArchive.fields["最新评审动作"]) || "已命中归档记录",
+      tone: "neutral",
+    });
+  }
+
+  return nodes;
 }
