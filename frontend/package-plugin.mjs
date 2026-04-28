@@ -26,12 +26,12 @@ if (!existsSync(DIST)) {
   console.error(`✗ ${DIST} 不存在 — 先跑 npm run build`);
   process.exit(1);
 }
-if (!existsSync(path.join(DIST, "block.json"))) {
-  console.error(`✗ ${DIST}/block.json 不存在 — 确认 public/block.json 存在并重新 build`);
+if (!existsSync(path.join(DIST, "index.json"))) {
+  console.error(`✗ ${DIST}/index.json 不存在 — 确认 public/index.json 存在并重新 build`);
   process.exit(1);
 }
-if (!existsSync(path.join(DIST, "app.json"))) {
-  console.error(`✗ ${DIST}/app.json 不存在 — 确认 public/app.json 存在并重新 build`);
+if (!existsSync(path.join(DIST, "project.config.json"))) {
+  console.error(`✗ ${DIST}/project.config.json 不存在 — 确认 public/project.config.json 存在并重新 build`);
   process.exit(1);
 }
 // v8.6.20-r17：飞书要 dist/index.html 入口，我们 vite 输出的 bitable.html 复制为 index.html
