@@ -303,6 +303,19 @@
   - `workflow_status / workflow_native_assets / workflow_native_manifest` 现在都会先刷新旧 state，再返回结果
   - 补回归测试锁定“首次打开页面拿到的 native assets 也必须是当前蓝图”
 
+### F26. 新建 Base 时没有清空旧 `_state`，会把上一套 `native_apply_report` 错挂到新的 Base 上
+
+- 位置：`backend/app/api/workflow.py`
+- 问题：
+  - `workflow_setup()` 之前在 setup 完成后直接 `_state.update(result)`
+  - 如果上一套 Base 做过 `apply_native`，而这次新建 Base 没有执行 apply，旧的 `native_apply_report` / 其他残留键仍会保留
+- 风险：
+  - 前端会把上一套 Base 的原生安装报告、安装结果甚至局部缓存状态错误展示到新 Base 上
+  - 用户会误以为新 Base 已经执行过原生安装或已经存在失败项，直接污染验收判断
+- 结果：
+  - setup 现在先 `_state.clear()` 再写入新结果
+  - 补回归测试锁定“新建 Base 后不能再看到上一套 Base 的 native_apply_report”
+
 ---
 
 ## 3. 全量验证结果

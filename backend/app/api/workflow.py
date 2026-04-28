@@ -397,6 +397,7 @@ async def workflow_setup(req: SetupRequest):
                     "error": str(exc),
                 }
             ]
+    _state.clear()
     _state.update(result)
     await record_audit(
         "workflow.setup",

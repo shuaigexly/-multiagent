@@ -784,6 +784,51 @@ async def test_workflow_setup_keeps_base_result_when_native_apply_fails(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_workflow_setup_clears_stale_native_apply_report_from_previous_base(monkeypatch):
+    from app.api import workflow
+
+    async def fake_setup_workflow(name: str, mode: str, base_type: str):
+        return {
+            "app_token": "new_app_token",
+            "url": "https://feishu.cn/base/new_app_token",
+            "table_ids": {"task": "tbl_task"},
+            "base_meta": {"base_type": base_type, "mode": mode, "schema_version": "v-test"},
+            "native_assets": {"status": "blueprint_ready"},
+            "native_manifest": {"manifest_version": "v2"},
+        }
+
+    audit_calls: list[dict] = []
+
+    async def fake_record_audit(name: str, target: str, payload: dict):
+        audit_calls.append({"name": name, "target": target, "payload": payload})
+
+    monkeypatch.setattr("app.api.workflow.runner.is_running", lambda: False)
+    monkeypatch.setattr("app.api.workflow.runner.setup_workflow", fake_setup_workflow)
+    monkeypatch.setattr("app.api.workflow.record_audit", fake_record_audit)
+
+    workflow._state.clear()
+    workflow._state.update(
+        {
+            "app_token": "old_app_token",
+            "native_apply_report": [{"surface": "workflow", "status": "created"}],
+            "native_manifest": {"manifest_version": "v2", "command_packs": [{"key": "workflow"}]},
+            "native_assets": {"status": "created"},
+        }
+    )
+
+    result = await workflow.workflow_setup(
+        workflow.SetupRequest(name="审计新 base", mode="prod_empty", base_type="production", apply_native=False)
+    )
+
+    assert result["app_token"] == "new_app_token"
+    assert "native_apply_report" not in result
+    assert workflow._state["app_token"] == "new_app_token"
+    assert "native_apply_report" not in workflow._state
+    assert workflow._state["native_assets"]["status"] == "blueprint_ready"
+    assert audit_calls[0]["name"] == "workflow.setup"
+
+
+@pytest.mark.asyncio
 async def test_workflow_native_manifest_refreshes_stale_blueprint_lists(monkeypatch):
     sse_pkg = ModuleType("sse_starlette")
     sse_mod = ModuleType("sse_starlette.sse")
