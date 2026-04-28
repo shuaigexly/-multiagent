@@ -330,10 +330,9 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
   - 执行任务自动创建
   - 复核提醒
   - 异常升级提醒
-- `workflow` pack 已拆成 3 条责任工作流
-  - 路由总分发
-  - 拍板分支
-  - 执行分支
+- `workflow` pack 已拆成 10 条责任工作流
+  - 路由总分发 / 汇报 / 拍板 / 执行 / 复核 / 重跑
+  - 失败补救 / 群消息驱动 / 仪表盘推送 / 数据资产校验
 - `dashboard` pack 已带管理汇报、证据评审、异常压盘的 block 级蓝图
 - `role` pack 已带 `dashboard_rule_map`、`view_rule`、字段级 `field_rule`、记录级 `record_rule`
 - 主表与模板中心新增了 `汇报对象OpenID / 拍板负责人OpenID / 执行负责人OpenID / 复核负责人OpenID / 复盘负责人OpenID` 占位字段

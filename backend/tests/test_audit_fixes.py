@@ -1147,6 +1147,101 @@ def test_native_exception_automation_does_not_hardcode_reanalysis_route():
     assert all(field["field_name"] != "工作流路由" for field in exception_log_fields)
 
 
+def test_native_automation_specs_cover_full_library_and_extension_routes():
+    """原生自动化蓝图不能再停留在 A1-A5，至少要覆盖库里声明的 A6-A8，并保留 A2b 待拍板扩展。"""
+    from app.bitable_workflow.native_specs import build_automation_specs
+
+    names = [spec["name"] for spec in build_automation_specs()]
+
+    assert names == [
+        "A1 新任务入场提醒",
+        "A2 直接汇报自动提醒",
+        "A2b 待拍板汇报提醒",
+        "A3 执行任务自动创建",
+        "A4 复核提醒",
+        "A5 异常升级提醒",
+        "A6 超时未复核提醒",
+        "A7 失败动作报警",
+        "A8 归档提醒",
+    ]
+
+
+def test_native_review_automations_filter_pending_review_and_avoid_false_route():
+    """A4/A6 都应只处理待安排复核记录，且 A4 不能把复核动作硬写成补数复核。"""
+    from app.bitable_workflow.native_specs import build_automation_specs
+
+    specs = {spec["name"]: spec for spec in build_automation_specs()}
+    review = specs["A4 复核提醒"]
+    overdue = specs["A6 超时未复核提醒"]
+
+    review_trigger = review["body"]["steps"][0]["data"]
+    overdue_trigger = overdue["body"]["steps"][0]["data"]
+    review_action_fields = review["body"]["steps"][2]["data"]["field_values"]
+
+    assert review["condition"] == "待安排复核 = 是 且 建议复核时间到达"
+    assert overdue["condition"] == "待安排复核 = 是 且 建议复核时间超时"
+    assert review_trigger["condition_list"] == [{"field_name": "待安排复核", "operator": "is", "value": [{"value_type": "boolean", "value": True}]}]
+    assert overdue_trigger["condition_list"] == [{"field_name": "待安排复核", "operator": "is", "value": [{"value_type": "boolean", "value": True}]}]
+    assert all(field["field_name"] != "工作流路由" for field in review_action_fields)
+
+
+def test_native_failure_alarm_automation_listens_to_action_table_failures():
+    """A7 必须真正监听交付动作表的失败状态，而不是继续挂在主表。"""
+    from app.bitable_workflow.native_specs import build_automation_specs
+
+    specs = {spec["name"]: spec for spec in build_automation_specs()}
+    failure = specs["A7 失败动作报警"]
+    trigger = failure["body"]["steps"][0]["data"]
+    log_fields = failure["body"]["steps"][2]["data"]["field_values"]
+
+    assert failure["condition"] == "交付动作.动作状态 = 执行失败"
+    assert trigger["table_name"] == "交付动作"
+    assert trigger["field_watch_info"][0]["field_name"] == "动作状态"
+    assert trigger["field_watch_info"][0]["value"][0]["value"]["name"] == "执行失败"
+    assert any(field["field_name"] == "触发来源" and field["value"][0]["value"] == "automation.action_failed" for field in log_fields)
+
+
+def test_native_workflow_specs_cover_w1_to_w10_library():
+    """原生工作流蓝图必须与模板库对齐，不能再只生成 W1-W3。"""
+    from app.bitable_workflow.native_specs import build_workflow_specs
+
+    names = [spec["name"] for spec in build_workflow_specs()]
+
+    assert names == [
+        "W1 路由总分发工作流",
+        "W2 汇报分支工作流",
+        "W3 拍板分支工作流",
+        "W4 执行分支工作流",
+        "W5 复核分支工作流",
+        "W6 重跑分支工作流",
+        "W7 动作失败补救工作流",
+        "W8 群消息驱动工作流",
+        "W9 仪表盘自动推送工作流",
+        "W10 数据资产校验工作流",
+    ]
+
+
+def test_native_workflow_specs_use_correct_branch_tables_and_routes():
+    """关键路由要么按 route 精确过滤，要么切到正确的原生表。"""
+    from app.bitable_workflow.native_specs import build_workflow_specs
+
+    specs = {spec["name"]: spec for spec in build_workflow_specs()}
+    report = specs["W2 汇报分支工作流"]["body"]["steps"][0]["data"]["field_watch_info"]
+    approval = specs["W3 拍板分支工作流"]["body"]["steps"][0]["data"]["field_watch_info"]
+    execution = specs["W4 执行分支工作流"]["body"]["steps"][0]["data"]["field_watch_info"]
+    rescue = specs["W7 动作失败补救工作流"]["body"]["steps"][0]["data"]
+    group_cmd = specs["W8 群消息驱动工作流"]["body"]["steps"][0]["data"]
+
+    assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "直接汇报" for item in report)
+    assert approval[0]["field_name"] == "待拍板确认"
+    assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "直接执行" for item in execution)
+    assert rescue["table_name"] == "交付动作"
+    assert rescue["field_watch_info"][0]["field_name"] == "动作状态"
+    assert group_cmd["table_name"] == "自动化日志"
+    assert group_cmd["field_watch_info"][0]["field_name"] == "触发来源"
+    assert group_cmd["field_watch_info"][0]["value"][0]["value"] == "im.command"
+
+
 def test_apply_native_request_accepts_advperm_surface():
     from app.api.workflow import ApplyNativeRequest
 
