@@ -48,6 +48,19 @@ interface LiveEvent {
   progress: number;
   status: 'running' | 'done' | 'error';
   updatedAt: string;
+  tokenPreview?: string;
+  activeAgent?: string;
+  history: LiveStepEvent[];
+}
+
+interface LiveStepEvent {
+  key: string;
+  eventType: ProgressEvent['event_type'];
+  stage: string;
+  progress: number;
+  status: 'running' | 'done' | 'error';
+  updatedAt: string;
+  detail: string;
 }
 
 const STATUS_STYLE: Record<string, { chip: string; lane: string; label: string; surface: string }> = {
@@ -152,6 +165,54 @@ const ACTION_TYPE_STYLE: Record<string, string> = {
   自动跟进任务: 'border-violet-200 bg-violet-50 text-violet-700',
   工作流记录: 'border-slate-200 bg-slate-100 text-slate-700',
 };
+
+const STEP_STATUS_STYLE: Record<LiveStepEvent['status'], string> = {
+  running: 'border-sky-200 bg-sky-50 text-sky-700',
+  done: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  error: 'border-rose-200 bg-rose-50 text-rose-700',
+};
+
+function progressStatusFromEventType(eventType: ProgressEvent['event_type']): LiveStepEvent['status'] {
+  if (eventType === 'task.done') return 'done';
+  if (eventType === 'task.error') return 'error';
+  return 'running';
+}
+
+function buildLiveStepEvent(event: ProgressEvent): LiveStepEvent | null {
+  if (event.event_type === 'agent.token') return null;
+  const stage = String(event.payload.stage || event.event_type);
+  const progress = typeof event.payload.progress === 'number' ? event.payload.progress : 0;
+  const status = progressStatusFromEventType(event.event_type);
+  let detail = stage;
+  if (event.event_type === 'task.started') {
+    detail = '系统已领取任务并启动七岗协作分析。';
+  } else if (event.event_type === 'wave.completed') {
+    detail = stage;
+  } else if (event.event_type === 'task.done') {
+    const participantCount = Number(event.payload.participant_count || 0);
+    detail = participantCount > 0 ? `七岗协作完成，本轮共汇聚 ${participantCount} 个岗位结果。` : '任务已完成并写回主表。';
+  } else if (event.event_type === 'task.error') {
+    detail = String(event.payload.reason || '任务执行失败，等待下轮重试。');
+  }
+  return {
+    key: `${event.event_type}-${event.ts}-${stage}`,
+    eventType: event.event_type,
+    stage,
+    progress,
+    status,
+    updatedAt: event.ts,
+    detail,
+  };
+}
+
+function liveStepTitle(step: LiveStepEvent, index: number): string {
+  const prefix = `第 ${index + 1} 步`;
+  if (step.eventType === 'task.started') return `${prefix}，任务启动`;
+  if (step.eventType === 'wave.completed') return `${prefix}，阶段推进`;
+  if (step.eventType === 'task.done') return `${prefix}，交付完成`;
+  if (step.eventType === 'task.error') return `${prefix}，异常重试`;
+  return `${prefix}，执行中`;
+}
 
 const NATIVE_SURFACE_LABEL: Record<string, string> = {
   advperm: '高级权限',
@@ -563,21 +624,37 @@ export default function BitableWorkflow() {
     analyzingIds.forEach((recordId) => {
       if (progressSubscriptionsRef.current.has(recordId)) return;
       const unsubscribe = subscribeTaskProgress(recordId, (event: ProgressEvent) => {
-        setLiveEvents((prev) => ({
-          ...prev,
-          [event.task_id]: {
-            taskId: event.task_id,
-            stage: String(event.payload.stage || event.event_type),
-            progress: typeof event.payload.progress === 'number' ? event.payload.progress : 0,
-            status:
-              event.event_type === 'task.done'
-                ? 'done'
-                : event.event_type === 'task.error'
-                  ? 'error'
-                  : 'running',
-            updatedAt: event.ts,
-          },
-        }));
+        setLiveEvents((prev) => {
+          const existing = prev[event.task_id];
+          const nextStep = buildLiveStepEvent(event);
+          const nextHistory = nextStep
+            ? [...(existing?.history || []), nextStep].filter(
+                (step, index, items) => items.findIndex((candidate) => candidate.key === step.key) === index,
+              )
+            : existing?.history || [];
+          const nextTokenPreview =
+            event.event_type === 'agent.token'
+              ? String(event.payload.chunk || '').trim() || existing?.tokenPreview || ''
+              : existing?.tokenPreview || '';
+          const nextAgent =
+            event.event_type === 'agent.token'
+              ? String(event.payload.agent_id || '').trim() || existing?.activeAgent || ''
+              : existing?.activeAgent || '';
+
+          return {
+            ...prev,
+            [event.task_id]: {
+              taskId: event.task_id,
+              stage: nextStep?.stage || existing?.stage || '等待调度',
+              progress: nextStep?.progress ?? existing?.progress ?? 0,
+              status: nextStep?.status || existing?.status || 'running',
+              updatedAt: event.ts,
+              tokenPreview: nextTokenPreview,
+              activeAgent: nextAgent,
+              history: nextHistory,
+            },
+          };
+        });
       });
       progressSubscriptionsRef.current.set(recordId, unsubscribe);
     });
@@ -757,6 +834,7 @@ export default function BitableWorkflow() {
   const selectedTask =
     tasks.find((task) => task.record_id === selectedTaskId) || highlightedTask || null;
   const selectedLive = selectedTask ? liveEvents[selectedTask.record_id] : undefined;
+  const selectedStepHistory = selectedLive?.history || [];
 
   const latestReportByTitle = useMemo(
     () => buildLatestRecordMap(reportRecords, '报告标题', ['生成时间']),
@@ -2371,6 +2449,72 @@ export default function BitableWorkflow() {
                                 <span>{selectedLive?.stage || textValue(selectedTask.fields?.当前阶段) || '等待调度'}</span>
                                 <span>{selectedProgress.toFixed(0)}%</span>
                               </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-6 rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(248,250,252,0.96))] p-5 shadow-sm">
+                            <div className="flex items-start justify-between gap-4">
+                              <div>
+                                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Step Detail</div>
+                                <div className="mt-2 text-xl font-semibold text-slate-950">步骤详情</div>
+                                <p className="mt-2 text-sm leading-6 text-slate-600">
+                                  这里展示当前任务的阶段推进轨迹，目标是承接类似右侧 agent workflow 面板的执行反馈。
+                                </p>
+                              </div>
+                              <div className={`rounded-full px-3 py-1 text-xs font-medium ${selectedLive?.status === 'done' ? 'bg-emerald-100 text-emerald-700' : selectedLive?.status === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-sky-100 text-sky-700'}`}>
+                                {selectedLive?.status === 'done' ? '已完成' : selectedLive?.status === 'error' ? '异常待重试' : '进行中'}
+                              </div>
+                            </div>
+
+                            {selectedLive?.tokenPreview && (
+                              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                                <div className="flex items-center gap-2 text-sm font-medium text-slate-950">
+                                  <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
+                                  <span>当前动态{selectedLive.activeAgent ? ` · ${selectedLive.activeAgent}` : ''}</span>
+                                </div>
+                                <div className="mt-2 text-sm leading-6 text-slate-600">
+                                  {selectedLive.tokenPreview}
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="mt-5 space-y-3">
+                              {selectedStepHistory.length === 0 ? (
+                                <EmptyState text="该任务还没有进入实时步骤流。开始分析后，这里会按阶段堆叠步骤详情。" />
+                              ) : (
+                                selectedStepHistory.map((step, index) => {
+                                  const isCurrent = index === selectedStepHistory.length - 1 && step.status === 'running';
+                                  return (
+                                    <div
+                                      key={step.key}
+                                      className={`rounded-2xl border p-4 transition ${
+                                        isCurrent
+                                          ? 'border-sky-200 bg-sky-50/70 shadow-[0_12px_32px_rgba(14,165,233,0.12)]'
+                                          : 'border-slate-200 bg-white/90'
+                                      }`}
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <div className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${STEP_STATUS_STYLE[step.status]}`}>
+                                              {step.status === 'done' ? '已完成' : step.status === 'error' ? '失败' : '执行中'}
+                                            </div>
+                                            <div className="text-sm font-semibold text-slate-950">{liveStepTitle(step, index)}</div>
+                                          </div>
+                                          <div className="mt-2 text-sm leading-6 text-slate-700">{step.detail}</div>
+                                        </div>
+                                        <div className="text-right text-xs text-slate-500">
+                                          <div>{Math.round(step.progress * 100)}%</div>
+                                          <div className="mt-1">{formatRelativeTime(step.updatedAt)}</div>
+                                        </div>
+                                      </div>
+                                      <div className="mt-3 rounded-xl border border-white/80 bg-white/80 px-3 py-2 text-sm text-slate-600">
+                                        {step.stage}
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
                             </div>
                           </div>
 
