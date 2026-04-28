@@ -944,6 +944,84 @@ async def test_workflow_native_assets_refreshes_stale_native_assets(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_workflow_start_clears_stale_native_state_when_switching_base(monkeypatch):
+    from app.api import workflow
+
+    scheduled: list[tuple] = []
+    audits: list[dict] = []
+
+    class FakeBackgroundTasks:
+        def add_task(self, fn, *args):
+            scheduled.append((fn, args))
+
+    async def fake_record_audit(name: str, target: str, payload: dict):
+        audits.append({"name": name, "target": target, "payload": payload})
+
+    monkeypatch.setattr("app.api.workflow.runner.mark_starting", lambda: True)
+    monkeypatch.setattr("app.api.workflow.runner.run_workflow_loop", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.api.workflow.record_audit", fake_record_audit)
+
+    workflow._state.clear()
+    workflow._state.update(
+        {
+            "app_token": "old_app_token",
+            "url": "https://feishu.cn/base/old_app_token",
+            "base_meta": {"base_type": "production"},
+            "table_ids": {"task": "tbl_old"},
+            "native_assets": {"status": "created"},
+            "native_manifest": {"manifest_version": "v2"},
+            "native_apply_report": [{"surface": "workflow", "status": "created"}],
+        }
+    )
+
+    req = workflow.StartRequest(app_token="new_app_token", table_ids={"task": "tbl_new", "report": "tbl_r", "performance": "tbl_p"})
+    result = await workflow.workflow_start(req, FakeBackgroundTasks())
+
+    assert result["status"] == "started"
+    assert workflow._state["app_token"] == "new_app_token"
+    assert workflow._state["table_ids"]["task"] == "tbl_new"
+    assert "native_assets" not in workflow._state
+    assert "native_manifest" not in workflow._state
+    assert "native_apply_report" not in workflow._state
+    assert scheduled and scheduled[0][1][0] == "new_app_token"
+    assert audits and audits[0]["name"] == "workflow.start"
+
+
+@pytest.mark.asyncio
+async def test_workflow_start_keeps_native_state_when_restarting_same_base(monkeypatch):
+    from app.api import workflow
+
+    class FakeBackgroundTasks:
+        def add_task(self, fn, *args):
+            return None
+
+    async def fake_record_audit(name: str, target: str, payload: dict):
+        return None
+
+    monkeypatch.setattr("app.api.workflow.runner.mark_starting", lambda: True)
+    monkeypatch.setattr("app.api.workflow.runner.run_workflow_loop", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.api.workflow.record_audit", fake_record_audit)
+
+    workflow._state.clear()
+    workflow._state.update(
+        {
+            "app_token": "same_app_token",
+            "url": "https://feishu.cn/base/same_app_token",
+            "base_meta": {"base_type": "production"},
+            "table_ids": {"task": "tbl_same"},
+            "native_assets": {"status": "created"},
+            "native_manifest": {"manifest_version": "v2"},
+        }
+    )
+
+    req = workflow.StartRequest(app_token="same_app_token", table_ids={"task": "tbl_same", "report": "tbl_r", "performance": "tbl_p"})
+    await workflow.workflow_start(req, FakeBackgroundTasks())
+
+    assert workflow._state["native_assets"]["status"] == "created"
+    assert workflow._state["native_manifest"]["manifest_version"] == "v2"
+
+
+@pytest.mark.asyncio
 async def test_write_native_install_logs_maps_manual_finish_to_pending_completion(monkeypatch):
     from app.bitable_workflow import native_installer
 

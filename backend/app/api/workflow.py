@@ -412,6 +412,13 @@ async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
     """启动七岗多智能体持续调度循环（后台运行）。"""
     if not runner.mark_starting():
         raise HTTPException(status_code=400, detail="Workflow already running")
+    previous_app_token = str(_state.get("app_token") or "").strip()
+    previous_task_table = str((_state.get("table_ids") or {}).get("task") or "").strip()
+    if previous_app_token and (
+        previous_app_token != req.app_token or previous_task_table != str(req.table_ids.get("task") or "").strip()
+    ):
+        for stale_key in ["url", "base_meta", "native_assets", "native_manifest", "native_apply_report"]:
+            _state.pop(stale_key, None)
     _state.update({"app_token": req.app_token, "table_ids": req.table_ids})
     background_tasks.add_task(
         runner.run_workflow_loop,

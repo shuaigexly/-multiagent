@@ -316,6 +316,20 @@
   - setup 现在先 `_state.clear()` 再写入新结果
   - 补回归测试锁定“新建 Base 后不能再看到上一套 Base 的 native_apply_report”
 
+### F27. 切换到另一套 Base 直接 `/start` 时，旧的原生安装状态还会继续挂在新的运行实例上
+
+- 位置：`backend/app/api/workflow.py`
+- 问题：
+  - `workflow_start()` 之前只会更新 `app_token / table_ids`
+  - 如果上一套 Base 已经 setup 过，新的 `/start` 使用不同 `app_token` 或不同主表时，旧的 `url / base_meta / native_assets / native_manifest / native_apply_report` 仍保留
+- 风险：
+  - 状态页会把上一套 Base 的原生安装信息展示给新的运行实例
+  - 用户会误以为新实例已经完成过原生安装，或者把错误的安装失败项带到新实例验收里
+- 结果：
+  - `/start` 现在在检测到 Base 已切换时，会清掉旧的原生安装相关 state
+  - 同 Base 重启不会误清现有 native state
+  - 补回归测试锁定“换 Base 要清，重启同 Base 不清”
+
 ---
 
 ## 3. 全量验证结果
