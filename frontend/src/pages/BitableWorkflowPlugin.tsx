@@ -12,6 +12,14 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { API_KEY_STORAGE_KEY, getRuntimeApiKey } from "@/services/http";
 import { subscribeTaskProgress, type ProgressEvent } from "@/services/workflow";
+import {
+  buildTaskLocator,
+  getWorkflowSourceKind,
+  matchesRelatedRecord,
+  matchesTaskRecord,
+  workflowSourceLabel,
+  type WorkflowSourceKind,
+} from "./bitableWorkflowPluginUtils";
 
 type StepStatus = "done" | "running" | "pending" | "error";
 
@@ -289,6 +297,7 @@ export default function BitableWorkflowPlugin() {
     recordId: null,
   });
   const [tableIds, setTableIds] = useState<Record<string, string>>({});
+  const [sourceKind, setSourceKind] = useState<WorkflowSourceKind>("unsupported");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [task, setTask] = useState<TaskSnapshot | null>(null);
@@ -331,6 +340,9 @@ export default function BitableWorkflowPlugin() {
   }, []);
 
   useEffect(() => {
+    const nextSourceKind = getWorkflowSourceKind(selection.tableId, tableIds);
+    setSourceKind(nextSourceKind);
+
     if (!tableIds.task || !selection.recordId) {
       setTask(null);
       setReview(null);
@@ -343,7 +355,7 @@ export default function BitableWorkflowPlugin() {
       return;
     }
 
-    if (selection.tableId !== tableIds.task) {
+    if (nextSourceKind === "unsupported") {
       setTask(null);
       setReview(null);
       setActions([]);
@@ -363,6 +375,11 @@ export default function BitableWorkflowPlugin() {
       setLoading(true);
       setError("");
       try {
+        const selectedTable = await bitable.base.getTableById(selection.tableId!);
+        const selectedFieldMap = await getTableFieldMap(selection.tableId!);
+        const selectedRecord = mapRecordFields(await selectedTable.getRecordById(selection.recordId!), selectedFieldMap);
+        const locator = buildTaskLocator(nextSourceKind, selectedRecord, selection.recordId);
+
         const [taskRows, reviewRows, actionRows, archiveRows] = await Promise.all([
           listMappedRecords(tableIds.task),
           listMappedRecords(tableIds.review),
@@ -371,11 +388,11 @@ export default function BitableWorkflowPlugin() {
         ]);
         if (!active) return;
 
-        const currentTask = taskRows.find((item) => item.recordId === selection.recordId) || null;
-        const title = textValue(currentTask?.fields["任务标题"]);
-        const currentReview = reviewRows.find((item) => textValue(item.fields["任务标题"]) === title) || null;
-        const currentActions = actionRows.filter((item) => textValue(item.fields["任务标题"]) === title).slice(0, 6);
-        const currentArchives = archiveRows.filter((item) => textValue(item.fields["任务标题"]) === title).slice(0, 3);
+        const currentTask = taskRows.find((item) => matchesTaskRecord(item, locator)) || null;
+        const stableLocator = buildTaskLocator(nextSourceKind, currentTask ?? selectedRecord, selection.recordId);
+        const currentReview = reviewRows.find((item) => matchesRelatedRecord(item, stableLocator)) || null;
+        const currentActions = actionRows.filter((item) => matchesRelatedRecord(item, stableLocator)).slice(0, 6);
+        const currentArchives = archiveRows.filter((item) => matchesRelatedRecord(item, stableLocator)).slice(0, 3);
 
         setTask(currentTask);
         setReview(currentReview);
@@ -443,6 +460,7 @@ export default function BitableWorkflowPlugin() {
   const status = textValue(task?.fields["状态"]) || "待分析";
   const progress = live ? Math.max(safeProgress(task?.fields["进度"]), live.progress) : safeProgress(task?.fields["进度"]);
   const reviewAction = textValue(task?.fields["最新评审动作"]) || textValue(review?.fields["推荐动作"]) || "待评审";
+  const sourceLabel = workflowSourceLabel(sourceKind);
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,250,252,0.94),rgba(255,255,255,0.98))] p-4 text-slate-900">
@@ -453,11 +471,11 @@ export default function BitableWorkflowPlugin() {
               <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Bitable Embedded Workflow</div>
               <div className="mt-2 text-2xl font-semibold text-slate-950">多维表格内嵌执行面板</div>
               <div className="mt-2 text-sm leading-6 text-slate-600">
-                这个版本不走独立 `/workflow` 页面，而是跟随你在「分析任务」表里选中的记录直接展示。
+                这个版本不走独立 `/workflow` 页面，而是跟随你在工作流相关表里选中的记录直接展示。
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-sm text-slate-600">
-              当前选中：{title || "请在「分析任务」表选中一条记录"}
+              当前入口：{sourceLabel} · {title || "请先选中一条工作流记录"}
             </div>
           </div>
 
@@ -477,13 +495,13 @@ export default function BitableWorkflowPlugin() {
             <div className="mt-6">
               <EmptyState text={error} />
             </div>
-          ) : !selection.recordId || selection.tableId !== tableIds.task ? (
+          ) : !selection.recordId || sourceKind === "unsupported" ? (
             <div className="mt-6">
-              <EmptyState text="请在「分析任务」表中选中一条任务记录。插件会随选中行切换，不依赖独立前端页面。" />
+              <EmptyState text="请在「分析任务 / 产出评审 / 交付动作 / 交付结果归档」任一工作流表中选中记录。插件会在右侧面板自动回溯并展示对应任务轨道。" />
             </div>
           ) : !task ? (
             <div className="mt-6">
-              <EmptyState text="当前选中记录尚未加载成功，请重新选中一次任务行。" />
+              <EmptyState text={`当前已从「${sourceLabel}」进入，但还没有成功回溯到对应分析任务。请检查该行的「关联记录ID」或「任务标题」是否完整。`} />
             </div>
           ) : (
             <div className="mt-6 grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
