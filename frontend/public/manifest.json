@@ -1,0 +1,20 @@
+{
+  "name": "Puff C21 多 Agent 协同决策工作台",
+  "name_en": "Puff C21 Multi-Agent Workflow",
+  "version": "1.0.0",
+  "description": "把当前选中的分析任务实时回溯成「步骤详情 / 七岗执行轨道 / 关联评审/动作/归档」侧边栏面板。",
+  "icon": "favicon.ico",
+  "entry": "bitable.html",
+  "min_sdk_version": "1.0.0",
+  "capability": "bitable_block_view",
+  "block_type": "table_view",
+  "permissions": [
+    "bitable:base:read",
+    "bitable:table:read",
+    "bitable:record:read",
+    "bitable:field:read",
+    "bitable:selection:read"
+  ],
+  "default_panel_size": "wide",
+  "supported_locale": ["zh-CN", "en-US"]
+}

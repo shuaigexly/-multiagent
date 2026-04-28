@@ -58,3 +58,19 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # v8.6.20-r16：另跑一次相对路径构建，打成飞书 Bitable 小组件 zip 供下载
+      - name: Build (relative paths for Feishu plugin zip)
+        env:
+          PUBLIC_BASE_PATH: ./
+        run: npm run build
+
+      - name: Package Feishu Bitable plugin zip
+        run: node package-plugin.mjs
+
+      - name: Upload plugin zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lark-multiagent-plugin
+          path: frontend/lark-multiagent-plugin.zip
+          retention-days: 30
