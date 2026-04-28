@@ -530,6 +530,7 @@ export default function BitableWorkflow() {
   const [automationLogRecords, setAutomationLogRecords] = useState<TaskRecord[]>([]);
   const [templateRecords, setTemplateRecords] = useState<TaskRecord[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState('');
+  const [selectedWorkflowFocusKey, setSelectedWorkflowFocusKey] = useState('');
   const [liveEvents, setLiveEvents] = useState<Record<string, LiveEvent>>({});
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskBackground, setNewTaskBackground] = useState('');
@@ -1392,6 +1393,24 @@ export default function BitableWorkflow() {
     ],
     [selectedTask],
   );
+
+  const selectedFocusedWorkflowStep = useMemo(() => {
+    if (!selectedWorkflowDetails.length) return null;
+    return (
+      selectedWorkflowDetails.find((step) => step.key === selectedWorkflowFocusKey) ||
+      selectedActiveWorkflowStep
+    );
+  }, [selectedActiveWorkflowStep, selectedWorkflowDetails, selectedWorkflowFocusKey]);
+
+  useEffect(() => {
+    setSelectedWorkflowFocusKey('');
+  }, [selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedWorkflowFocusKey) return;
+    if (selectedWorkflowDetails.some((step) => step.key === selectedWorkflowFocusKey)) return;
+    setSelectedWorkflowFocusKey('');
+  }, [selectedWorkflowDetails, selectedWorkflowFocusKey]);
 
   const taskSwitcher = prioritizedTasks.slice(0, 6);
 
@@ -2716,10 +2735,12 @@ export default function BitableWorkflow() {
                               </div>
                               <div className="mt-4 grid gap-3 sm:grid-cols-4">
                                 {selectedWorkflowDetails.map((step, index) => (
-                                  <div
+                                  <button
                                     key={step.key}
+                                    type="button"
+                                    onClick={() => setSelectedWorkflowFocusKey(step.key)}
                                     className={`rounded-2xl border px-3 py-3 ${
-                                      step.key === selectedActiveWorkflowStep?.key
+                                      step.key === selectedFocusedWorkflowStep?.key
                                         ? 'border-sky-200 bg-sky-50/80'
                                         : 'border-slate-200 bg-slate-50/70'
                                     }`}
@@ -2731,7 +2752,7 @@ export default function BitableWorkflow() {
                                       </div>
                                     </div>
                                     <div className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-950">{step.title}</div>
-                                  </div>
+                                  </button>
                                 ))}
                               </div>
                             </div>
@@ -2741,21 +2762,21 @@ export default function BitableWorkflow() {
                                 <div>
                                   <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Next Handoff</div>
                                   <div className="mt-2 text-lg font-semibold text-slate-950">
-                                    {selectedActiveWorkflowStep?.title || '等待步骤初始化'}
+                                    {selectedFocusedWorkflowStep?.title || '等待步骤初始化'}
                                   </div>
                                 </div>
-                                <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedActiveWorkflowStep?.status || 'pending']}`}>
-                                  {selectedActiveWorkflowStep?.status === 'done'
+                                <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedFocusedWorkflowStep?.status || 'pending']}`}>
+                                  {selectedFocusedWorkflowStep?.status === 'done'
                                     ? 'Closed'
-                                    : selectedActiveWorkflowStep?.status === 'error'
+                                    : selectedFocusedWorkflowStep?.status === 'error'
                                       ? 'Error'
-                                      : selectedActiveWorkflowStep?.status === 'running'
+                                      : selectedFocusedWorkflowStep?.status === 'running'
                                         ? 'Live'
                                         : 'Queued'}
                                 </div>
                               </div>
                               <div className="mt-3 text-sm leading-6 text-slate-600">
-                                {selectedActiveWorkflowStep?.description || '开始分析后，这里会出现当前节点的交接重点。'}
+                                {selectedFocusedWorkflowStep?.description || '开始分析后，这里会出现当前节点的交接重点。'}
                               </div>
                               <div className="mt-4 flex flex-wrap gap-2">
                                 {selectedWorkflowSignals.map((item) => (
@@ -2926,24 +2947,24 @@ export default function BitableWorkflow() {
                               <div>
                                 <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Current Step</div>
                                 <div className="mt-2 text-lg font-semibold text-slate-950">
-                                  {selectedActiveWorkflowStep?.title || '等待进入步骤详情'}
+                                  {selectedFocusedWorkflowStep?.title || '等待进入步骤详情'}
                                 </div>
                               </div>
-                              <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedActiveWorkflowStep?.status || 'pending']}`}>
-                                {selectedActiveWorkflowStep?.status === 'running' && (
+                              <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedFocusedWorkflowStep?.status || 'pending']}`}>
+                                {selectedFocusedWorkflowStep?.status === 'running' && (
                                   <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sky-500 align-middle animate-pulse" />
                                 )}
-                                {selectedActiveWorkflowStep?.status === 'done'
+                                {selectedFocusedWorkflowStep?.status === 'done'
                                   ? 'Closed'
-                                  : selectedActiveWorkflowStep?.status === 'error'
+                                  : selectedFocusedWorkflowStep?.status === 'error'
                                     ? 'Error'
-                                    : selectedActiveWorkflowStep?.status === 'running'
+                                    : selectedFocusedWorkflowStep?.status === 'running'
                                       ? 'Live'
                                       : 'Queued'}
                               </div>
                             </div>
                             <div className="mt-3 text-sm leading-6 text-slate-600">
-                              {selectedActiveWorkflowStep?.description || '任务开始分析后，这里会展示当前进入的 workflow 节点。'}
+                              {selectedFocusedWorkflowStep?.description || '任务开始分析后，这里会展示当前进入的 workflow 节点。'}
                             </div>
                             <div className="mt-4">
                               <Progress value={selectedProgress} className="h-2.5" />
@@ -2956,10 +2977,12 @@ export default function BitableWorkflow() {
 
                           <div className="mt-4 grid gap-2 sm:grid-cols-4">
                             {selectedWorkflowDetails.map((step, index) => {
-                              const isCurrent = step.key === selectedActiveWorkflowStep?.key;
+                              const isCurrent = step.key === selectedFocusedWorkflowStep?.key;
                               return (
-                                <div
+                                <button
                                   key={step.key}
+                                  type="button"
+                                  onClick={() => setSelectedWorkflowFocusKey(step.key)}
                                   className={`rounded-2xl border px-3 py-3 transition ${
                                     isCurrent
                                       ? 'border-sky-200 bg-sky-50/80 shadow-sm'
@@ -2973,7 +2996,7 @@ export default function BitableWorkflow() {
                                     </div>
                                   </div>
                                   <div className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-950">{step.title}</div>
-                                </div>
+                                </button>
                               );
                             })}
                           </div>
@@ -3041,27 +3064,27 @@ export default function BitableWorkflow() {
                             </div>
                           </div>
 
-                          {selectedActiveWorkflowStep && (
+                          {selectedFocusedWorkflowStep && (
                             <div className="mt-4 rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.86))] p-4">
                               <div className="flex items-center justify-between gap-3">
                                 <div>
                                   <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Current Focus</div>
-                                  <div className="mt-2 text-lg font-semibold text-slate-950">{selectedActiveWorkflowStep.title}</div>
+                                  <div className="mt-2 text-lg font-semibold text-slate-950">{selectedFocusedWorkflowStep.title}</div>
                                 </div>
-                                <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedActiveWorkflowStep.status]}`}>
-                                  {selectedActiveWorkflowStep.status === 'done'
+                                <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedFocusedWorkflowStep.status]}`}>
+                                  {selectedFocusedWorkflowStep.status === 'done'
                                     ? 'Closed'
-                                    : selectedActiveWorkflowStep.status === 'error'
+                                    : selectedFocusedWorkflowStep.status === 'error'
                                       ? 'Error'
-                                      : selectedActiveWorkflowStep.status === 'running'
+                                      : selectedFocusedWorkflowStep.status === 'running'
                                         ? 'Live'
                                         : 'Queued'}
                                 </div>
                               </div>
-                              <div className="mt-3 text-sm leading-6 text-slate-600">{selectedActiveWorkflowStep.description}</div>
+                              <div className="mt-3 text-sm leading-6 text-slate-600">{selectedFocusedWorkflowStep.description}</div>
                               <div className="mt-4 space-y-2">
-                                {(selectedActiveWorkflowStep.items.length > 0
-                                  ? selectedActiveWorkflowStep.items
+                                {(selectedFocusedWorkflowStep.items.length > 0
+                                  ? selectedFocusedWorkflowStep.items
                                   : ['等待该阶段补充执行信号']
                                 ).slice(0, 4).map((item) => (
                                   <div key={item} className="rounded-xl border border-white/80 bg-white/92 px-3 py-2 text-sm leading-6 text-slate-700">
@@ -3129,7 +3152,7 @@ export default function BitableWorkflow() {
                                       </div>
                                       <div className="mt-3 space-y-2">
                                         {(step.items.length > 0 ? step.items : ['等待进入该阶段'])
-                                          .slice(0, step.key === selectedActiveWorkflowStep?.key ? 4 : 2)
+                                          .slice(0, step.key === selectedFocusedWorkflowStep?.key ? 4 : 2)
                                           .map((item) => (
                                           <div key={item} className="rounded-xl border border-white/80 bg-white/88 px-3 py-2 text-sm leading-6 text-slate-600">
                                             {item}
