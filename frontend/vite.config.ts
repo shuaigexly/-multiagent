@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
-function resolveBitableChunk(id: string): string | undefined {
+function resolveVendorChunk(id: string): string | undefined {
   if (!id.includes("/node_modules/")) return undefined;
   if (id.includes("/node_modules/@lark-base-open/js-sdk/")) {
     if (id.includes("/dist/RenderMarkDown-")) return "vendor-lark-markdown";
@@ -41,10 +41,31 @@ function resolveBitableChunk(id: string): string | undefined {
     id.includes("/node_modules/cmdk/") ||
     id.includes("/node_modules/embla-carousel-react/") ||
     id.includes("/node_modules/input-otp/") ||
+    id.includes("/node_modules/next-themes/") ||
     id.includes("/node_modules/sonner/") ||
     id.includes("/node_modules/vaul/")
   ) {
     return "vendor-ui";
+  }
+  if (
+    id.includes("/node_modules/recharts/") ||
+    id.includes("/node_modules/d3-") ||
+    id.includes("/node_modules/victory-vendor/")
+  ) {
+    return "vendor-charts";
+  }
+  if (id.includes("/node_modules/react-router/") || id.includes("/node_modules/react-router-dom/")) {
+    return "vendor-router";
+  }
+  if (
+    id.includes("/node_modules/react-hook-form/") ||
+    id.includes("/node_modules/@hookform/") ||
+    id.includes("/node_modules/react-day-picker/")
+  ) {
+    return "vendor-forms";
+  }
+  if (id.includes("/node_modules/@sentry/")) {
+    return "vendor-monitoring";
   }
   if (
     id.includes("/node_modules/axios/") ||
@@ -70,7 +91,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react()],
     build: {
-      chunkSizeWarningLimit: bitableOnly ? 800 : 500,
+      chunkSizeWarningLimit: 800,
       rollupOptions: {
         input: bitableOnly
           ? {
@@ -80,13 +101,11 @@ export default defineConfig(({ mode }) => {
               main: path.resolve(__dirname, "index.html"),
               bitable: path.resolve(__dirname, "bitable.html"),
             },
-        output: bitableOnly
-          ? {
-              manualChunks(id) {
-                return resolveBitableChunk(id);
-              },
-            }
-          : undefined,
+        output: {
+          manualChunks(id) {
+            return resolveVendorChunk(id);
+          },
+        },
       },
     },
     resolve: {

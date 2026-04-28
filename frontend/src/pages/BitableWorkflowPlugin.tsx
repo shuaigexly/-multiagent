@@ -17,6 +17,7 @@ import {
   buildRelationSections,
   buildSourceContextItems,
   buildResolutionDebug,
+  buildResolvedRelationLocator,
   buildTaskLocator,
   getWorkflowSourceKind,
   matchesRelatedRecord,
@@ -493,33 +494,33 @@ export default function BitableWorkflowPlugin() {
         }
         if (!active) return;
 
-        const stableLocator = buildTaskLocator(nextSourceKind, currentTask ?? selectedRecord, selection.recordId);
-        const seededReview = nextSourceKind === "review" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
-        const seededActions = nextSourceKind === "action" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
-        const seededArchives = nextSourceKind === "archive" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
-        const recordIdFilter = stableLocator.taskRecordId
-          ? await buildExactTextFilter(tableIds.review, "关联记录ID", stableLocator.taskRecordId)
+        const relationLocator = buildResolvedRelationLocator(locator, currentTask);
+        const seededReview = nextSourceKind === "review" && matchesRelatedRecord(selectedRecord, relationLocator) ? [selectedRecord] : [];
+        const seededActions = nextSourceKind === "action" && matchesRelatedRecord(selectedRecord, relationLocator) ? [selectedRecord] : [];
+        const seededArchives = nextSourceKind === "archive" && matchesRelatedRecord(selectedRecord, relationLocator) ? [selectedRecord] : [];
+        const recordIdFilter = relationLocator.taskRecordId
+          ? await buildExactTextFilter(tableIds.review, "关联记录ID", relationLocator.taskRecordId)
           : null;
-        const actionRecordIdFilter = stableLocator.taskRecordId
-          ? await buildExactTextFilter(tableIds.action, "关联记录ID", stableLocator.taskRecordId)
+        const actionRecordIdFilter = relationLocator.taskRecordId
+          ? await buildExactTextFilter(tableIds.action, "关联记录ID", relationLocator.taskRecordId)
           : null;
-        const archiveRecordIdFilter = stableLocator.taskRecordId
-          ? await buildExactTextFilter(tableIds.archive, "关联记录ID", stableLocator.taskRecordId)
+        const archiveRecordIdFilter = relationLocator.taskRecordId
+          ? await buildExactTextFilter(tableIds.archive, "关联记录ID", relationLocator.taskRecordId)
           : null;
-        const reviewTitleFilter = !recordIdFilter && stableLocator.taskTitle
-          ? await buildExactTextFilter(tableIds.review, "任务标题", stableLocator.taskTitle)
+        const reviewTitleFilter = !recordIdFilter && relationLocator.taskTitle
+          ? await buildExactTextFilter(tableIds.review, "任务标题", relationLocator.taskTitle)
           : null;
-        const actionTitleFilter = !actionRecordIdFilter && stableLocator.taskTitle
-          ? await buildExactTextFilter(tableIds.action, "任务标题", stableLocator.taskTitle)
+        const actionTitleFilter = !actionRecordIdFilter && relationLocator.taskTitle
+          ? await buildExactTextFilter(tableIds.action, "任务标题", relationLocator.taskTitle)
           : null;
-        const archiveTitleFilter = !archiveRecordIdFilter && stableLocator.taskTitle
-          ? await buildExactTextFilter(tableIds.archive, "任务标题", stableLocator.taskTitle)
+        const archiveTitleFilter = !archiveRecordIdFilter && relationLocator.taskTitle
+          ? await buildExactTextFilter(tableIds.archive, "任务标题", relationLocator.taskTitle)
           : null;
 
         const [reviewMatches, actionMatches, archiveMatches] = await Promise.all([
-          collectMappedRecords(tableIds.review, (item) => matchesRelatedRecord(item, stableLocator), 1, seededReview, recordIdFilter || reviewTitleFilter || undefined),
-          collectMappedRecords(tableIds.action, (item) => matchesRelatedRecord(item, stableLocator), 6, seededActions, actionRecordIdFilter || actionTitleFilter || undefined),
-          collectMappedRecords(tableIds.archive, (item) => matchesRelatedRecord(item, stableLocator), 3, seededArchives, archiveRecordIdFilter || archiveTitleFilter || undefined),
+          collectMappedRecords(tableIds.review, (item) => matchesRelatedRecord(item, relationLocator), 1, seededReview, recordIdFilter || reviewTitleFilter || undefined),
+          collectMappedRecords(tableIds.action, (item) => matchesRelatedRecord(item, relationLocator), 6, seededActions, actionRecordIdFilter || actionTitleFilter || undefined),
+          collectMappedRecords(tableIds.archive, (item) => matchesRelatedRecord(item, relationLocator), 3, seededArchives, archiveRecordIdFilter || archiveTitleFilter || undefined),
         ]);
         if (!active) return;
 
@@ -531,7 +532,7 @@ export default function BitableWorkflowPlugin() {
         setReview(currentReview);
         setActions(currentActions);
         setArchives(currentArchives);
-        setResolutionDebug(buildResolutionDebug(nextSourceKind, selectedRecord, stableLocator, currentTask));
+        setResolutionDebug(buildResolutionDebug(nextSourceKind, selectedRecord, locator, currentTask));
 
         if (currentTask?.recordId && getRuntimeApiKey()) {
           unsubscribeRef.current = subscribeTaskProgress(currentTask.recordId, (event: ProgressEvent) => {

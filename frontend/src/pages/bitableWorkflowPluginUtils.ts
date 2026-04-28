@@ -141,6 +141,18 @@ export function buildTaskLocator(
   };
 }
 
+export function buildResolvedRelationLocator(
+  locator: WorkflowTaskLocator,
+  matchedTask: WorkflowSelectionRecord | null,
+): WorkflowTaskLocator {
+  if (!matchedTask) return locator;
+  return {
+    ...locator,
+    taskRecordId: matchedTask.recordId || locator.taskRecordId,
+    taskTitle: textValue(matchedTask.fields["任务标题"]) || locator.taskTitle,
+  };
+}
+
 export function matchesTaskRecord(record: WorkflowSelectionRecord, locator: WorkflowTaskLocator): boolean {
   if (locator.taskRecordId && record.recordId === locator.taskRecordId) return true;
   if (locator.taskTitle && textValue(record.fields["任务标题"]) === locator.taskTitle) return true;

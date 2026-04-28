@@ -4,6 +4,7 @@ import {
   buildRelationSections,
   buildSourceContextItems,
   buildResolutionDebug,
+  buildResolvedRelationLocator,
   buildTaskLocator,
   getWorkflowSourceKind,
   matchesRelatedRecord,
@@ -49,6 +50,22 @@ describe("bitable workflow plugin utils", () => {
     );
     expect(matchesTaskRecord({ recordId: "rec_task_x", fields: { 任务标题: "复盘任务" } }, titleOnlyLocator)).toBe(true);
     expect(matchesRelatedRecord({ recordId: "rec_action_x", fields: { 任务标题: "复盘任务" } }, titleOnlyLocator)).toBe(true);
+  });
+
+  it("preserves resolved task record id for related table lookups", () => {
+    const locator = buildTaskLocator(
+      "action",
+      { recordId: "rec_action", fields: { 任务标题: "经营诊断", 关联记录ID: "rec_task_2" } },
+      "rec_action",
+    );
+    const relationLocator = buildResolvedRelationLocator(locator, {
+      recordId: "rec_task_2",
+      fields: { 任务标题: "经营诊断主任务" },
+    });
+
+    expect(relationLocator.taskRecordId).toBe("rec_task_2");
+    expect(relationLocator.taskTitle).toBe("经营诊断主任务");
+    expect(matchesRelatedRecord({ recordId: "rec_review", fields: { 关联记录ID: "rec_task_2" } }, relationLocator)).toBe(true);
   });
 
   it("describes resolution path and unresolved issues", () => {
