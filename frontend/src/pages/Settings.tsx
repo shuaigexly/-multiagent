@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/ui/use-toast';
+import { getSafeExternalUrl } from '@/lib/safeUrl';
 
 type SaveSection = 'llm' | 'feishu' | null;
 
@@ -115,8 +116,9 @@ export default function Settings() {
         params: { backend_origin: backendOrigin, frontend_origin: frontendOrigin },
       });
       const data = r.data;
-      if (data.ok && data.url) {
-        window.location.href = data.url;
+      const safeUrl = getSafeExternalUrl(data.url);
+      if (data.ok && safeUrl) {
+        window.location.href = safeUrl;
       } else {
         setError(data.message || '获取授权链接失败');
       }

@@ -9,6 +9,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from app.core.data_parser import DataSummary
+from app.core.env import get_int_env
 from app.core.settings import settings
 from app.core.text_utils import truncate_with_marker
 
@@ -178,7 +179,7 @@ class BaseAgent(ABC):
                     agent=self,
                     task_description=task_description,
                     upstream_block=upstream_block,
-                    max_steps=int(os.getenv("LLM_PLAN_MAX_STEPS", "5")),
+                    max_steps=get_int_env("LLM_PLAN_MAX_STEPS", 5, minimum=1),
                     memory_block=memory_block,
                 )
             except Exception as exc:
@@ -224,7 +225,7 @@ class BaseAgent(ABC):
         result = self._parse_output(raw)
 
         # 自动质量重试 — confidence < 3 用 DEEP 档重跑一次（最多 1 次）
-        retry_threshold = int(os.getenv("LLM_QUALITY_RETRY_THRESHOLD", "3"))
+        retry_threshold = get_int_env("LLM_QUALITY_RETRY_THRESHOLD", 3, minimum=1)
         if (
             os.getenv("LLM_QUALITY_RETRY", "1") != "0"
             and 0 < result.confidence_hint < retry_threshold

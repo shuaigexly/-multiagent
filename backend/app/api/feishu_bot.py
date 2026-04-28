@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.tasks import _execute_task
+from app.core.env import get_int_env
 from app.core.settings import (
     get_feishu_bot_encrypt_key,
     get_feishu_bot_verification_token,
@@ -28,8 +29,16 @@ from app.models.database import AsyncSessionLocal, FeishuBotEvent, Task, TaskRes
 
 router = APIRouter(prefix="/api/v1/feishu/bot", tags=["feishu-bot"])
 logger = logging.getLogger(__name__)
-_MAX_EVENT_BODY_BYTES = int(os.getenv("FEISHU_BOT_MAX_BODY_BYTES", str(256 * 1024)))
-_SIGNATURE_SKEW_SECONDS = int(os.getenv("FEISHU_BOT_SIGNATURE_SKEW_SECONDS", "300"))
+_MAX_EVENT_BODY_BYTES = get_int_env(
+    "FEISHU_BOT_MAX_BODY_BYTES",
+    256 * 1024,
+    minimum=1024,
+)
+_SIGNATURE_SKEW_SECONDS = get_int_env(
+    "FEISHU_BOT_SIGNATURE_SKEW_SECONDS",
+    300,
+    minimum=1,
+)
 
 
 def _get_bot_settings() -> dict[str, str]:

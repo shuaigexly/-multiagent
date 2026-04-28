@@ -14,6 +14,7 @@ import logging
 import os
 from typing import Any
 
+from app.core.env import get_int_env
 from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -45,9 +46,9 @@ async def enqueue_workflow_cycle(app_token: str, table_ids: dict) -> str | None:
 class WorkerSettings:
     """Arq worker 配置 — 通过 `python -m arq app.core.arq_queue.WorkerSettings` 启动。"""
     functions = [workflow_cycle_job]
-    max_jobs = int(os.getenv("ARQ_MAX_JOBS", "4"))
-    job_timeout = int(os.getenv("ARQ_JOB_TIMEOUT", "1200"))
-    keep_result = int(os.getenv("ARQ_KEEP_RESULT", "3600"))
+    max_jobs = get_int_env("ARQ_MAX_JOBS", 4, minimum=1)
+    job_timeout = get_int_env("ARQ_JOB_TIMEOUT", 1200, minimum=1)
+    keep_result = get_int_env("ARQ_KEEP_RESULT", 3600, minimum=0)
 
     @staticmethod
     async def startup(ctx: dict[str, Any]) -> None:

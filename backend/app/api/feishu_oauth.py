@@ -12,6 +12,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.env import get_int_env
 from app.core.settings import (
     get_feishu_app_id,
     get_feishu_app_secret,
@@ -39,7 +40,7 @@ router = APIRouter(prefix="/api/v1/feishu", tags=["feishu-oauth"])
 logger = logging.getLogger(__name__)
 
 CALLBACK_PATH = "/api/v1/feishu/oauth/callback"
-STATE_TTL_SECONDS = int(os.getenv("OAUTH_STATE_TTL_SECONDS", "600"))
+STATE_TTL_SECONDS = get_int_env("OAUTH_STATE_TTL_SECONDS", 600, minimum=1)
 _pending_states: dict[str, tuple[str, str, float]] = {}
 _USER_TOKEN_ERROR_CODES = {
     "99991663",

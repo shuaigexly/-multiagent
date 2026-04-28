@@ -31,6 +31,7 @@ from app.bitable_workflow.workflow_agents import (
     _derive_evidence_grade,
 )
 from app.agents.base_agent import AgentResult
+from app.core.env import get_int_env
 from app.core.observability import clear_task_context, set_task_context
 from app.core.text_utils import truncate_with_marker
 
@@ -89,8 +90,10 @@ def _get_local_cycle_lock(app_token: str, task_tid: str) -> asyncio.Lock:
                 lock = asyncio.Lock()
                 _LOCAL_CYCLE_LOCKS[key] = lock
     return lock
-_LOCK_TTL_SECONDS = int(os.getenv("WORKFLOW_CYCLE_LOCK_TTL_SECONDS", "900"))
-_RECOVER_STALE_MINUTES = int(os.getenv("WORKFLOW_RECOVER_STALE_MINUTES", "30"))
+
+
+_LOCK_TTL_SECONDS = get_int_env("WORKFLOW_CYCLE_LOCK_TTL_SECONDS", 900, minimum=1)
+_RECOVER_STALE_MINUTES = get_int_env("WORKFLOW_RECOVER_STALE_MINUTES", 30, minimum=1)
 _ALLOW_LOCAL_WORKFLOW_LOCK = os.getenv("WORKFLOW_ALLOW_LOCAL_LOCK", "").lower() in {
     "1",
     "true",
@@ -2337,7 +2340,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
     await _sync_native_workflow_contracts(app_token, task_tid)
 
     # Phase 1: 领取待分析任务（v8.6.19：search + 综合评分 server sort，三层降级）
-    pending_pool_size = int(os.getenv("WORKFLOW_PENDING_POOL_SIZE", "200"))
+    pending_pool_size = get_int_env("WORKFLOW_PENDING_POOL_SIZE", 200, minimum=1)
 
     def _prio_key(record: dict) -> int:
         raw = (record.get("fields") or {}).get("优先级", "") or ""

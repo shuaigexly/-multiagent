@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { getSafeExternalUrl } from '@/lib/safeUrl';
 import {
   getCalendarEvents,
   getChats,
@@ -267,19 +268,20 @@ export default function FeishuWorkspace() {
           ) : (
             <div className="space-y-2.5">
               {driveFiles.map((file) => {
-                const clickable = Boolean(file.url);
+                const safeUrl = getSafeExternalUrl(file.url);
+                const clickable = Boolean(safeUrl);
                 return (
                   <div
                     key={file.token}
                     className={`flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-sm transition-all ${clickable ? 'cursor-pointer hover:bg-secondary/30 hover:shadow-md' : ''}`}
-                    onClick={() => clickable && window.open(file.url!, '_blank', 'noopener,noreferrer')}
+                    onClick={() => clickable && window.open(safeUrl, '_blank', 'noopener,noreferrer')}
                     role={clickable ? 'button' : undefined}
                     tabIndex={clickable ? 0 : -1}
                     onKeyDown={(event) => {
                       if (!clickable) return;
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        window.open(file.url!, '_blank', 'noopener,noreferrer');
+                        window.open(safeUrl, '_blank', 'noopener,noreferrer');
                       }
                     }}
                   >
