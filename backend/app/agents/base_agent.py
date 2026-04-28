@@ -671,9 +671,19 @@ class BaseAgent(ABC):
 
     def _parse_output(self, raw: str) -> AgentResult:
         """将 LLM 输出解析成结构化结果。子类可覆盖。"""
-        think_match = re.search(r'<think(?:ing)?>(.*?)</think(?:ing)?>', raw, flags=re.DOTALL)
+        # v8.6.20-r14（审计 #4）：旧版只匹配闭合的 `<think>...</think>`。DeepSeek-R1
+        # / 豆包等 reasoning 模型若 max_tokens 截断在 </think> 之前，未闭合的
+        # `<think>` 文本会原样保留，被后续 `## ` header 解析当成正常段落写到
+        # 报告里 → 客户看到的"分析结果"是模型的 chain-of-thought。修：未闭合时
+        # 把 `<think>` 之后到下一个 `## ` header 或末尾的内容当 thinking 剥离。
+        original_raw = raw
+        think_pattern = r'<\s*think(?:ing)?\s*>(.*?)(?:<\s*/\s*think(?:ing)?\s*>|(?=\n##\s)|\Z)'
+        think_match = re.search(think_pattern, raw, flags=re.DOTALL | re.IGNORECASE)
         thinking_process = think_match.group(1).strip() if think_match else ""
-        raw = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', raw, flags=re.DOTALL).strip()
+        raw = re.sub(think_pattern, '', raw, flags=re.DOTALL | re.IGNORECASE).strip()
+        # 兜底：若剥离 think 后正文为空但原始非空，恢复原始（避免 raise 空报告）
+        if not raw and original_raw.strip():
+            raw = original_raw.strip()
         if not raw:
             raise ValueError(f"{self.agent_id} returned empty output")
 

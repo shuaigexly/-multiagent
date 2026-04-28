@@ -190,6 +190,7 @@ async def call_llm_streaming(
     chunks: list[str] = []
     prompt_tokens = 0
     completion_tokens = 0
+    reasoning_tokens = 0  # v8.6.20-r14（审计 #1）：streaming 路径也要记 reasoning
 
     try:
         async with _get_llm_semaphore():
@@ -209,6 +210,12 @@ async def call_llm_streaming(
                     if getattr(event, "usage", None):
                         prompt_tokens = int(getattr(event.usage, "prompt_tokens", 0) or 0)
                         completion_tokens = int(getattr(event.usage, "completion_tokens", 0) or 0)
+                        # v8.6.20-r14（审计 #1）：豆包/o1/DeepSeek-R1 在
+                        # completion_tokens_details.reasoning_tokens 返回；之前流式
+                        # 与 tools 路径都未提取，导致 reasoning 计费桶永远 0。
+                        details = getattr(event.usage, "completion_tokens_details", None)
+                        if details is not None:
+                            reasoning_tokens = int(getattr(details, "reasoning_tokens", 0) or 0)
                     if not event.choices:
                         continue
                     delta = event.choices[0].delta
@@ -233,9 +240,13 @@ async def call_llm_streaming(
                 if not partial:
                     raise
 
-        if prompt_tokens or completion_tokens:
+        if prompt_tokens or completion_tokens or reasoning_tokens:
             try:
-                await record_usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+                await record_usage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    reasoning_tokens=reasoning_tokens,
+                )
             except Exception as exc:
                 logger.debug("record_usage failed: %s", exc)
 
@@ -306,6 +317,7 @@ async def call_llm_with_tools(
                         chunks: list[str] = []
                         final_prompt_tokens = 0
                         final_completion_tokens = 0
+                        final_reasoning_tokens = 0  # v8.6.20-r14（审计 #1）
                         stream = await client.chat.completions.create(
                             model=cfg.model,
                             messages=messages,
@@ -323,6 +335,9 @@ async def call_llm_with_tools(
                                     final_completion_tokens = int(
                                         getattr(event.usage, "completion_tokens", 0) or 0
                                     )
+                                    details = getattr(event.usage, "completion_tokens_details", None)
+                                    if details is not None:
+                                        final_reasoning_tokens = int(getattr(details, "reasoning_tokens", 0) or 0)
                                 if not event.choices:
                                     continue
                                 delta = event.choices[0].delta
@@ -346,11 +361,13 @@ async def call_llm_with_tools(
                             )
                             if not partial:
                                 raise
-                        if final_prompt_tokens or final_completion_tokens:
+                        # v8.6.20-r14（审计 #1）：streaming tools final 路径也提取 reasoning
+                        if final_prompt_tokens or final_completion_tokens or final_reasoning_tokens:
                             try:
                                 await record_usage(
                                     prompt_tokens=final_prompt_tokens,
                                     completion_tokens=final_completion_tokens,
+                                    reasoning_tokens=final_reasoning_tokens,
                                 )
                             except Exception as exc:
                                 logger.debug("record_usage failed: %s", exc)
@@ -373,9 +390,13 @@ async def call_llm_with_tools(
             usage = getattr(resp, "usage", None)
             if usage is not None:
                 try:
+                    # v8.6.20-r14（审计 #1）：tools 非流式路径也补 reasoning_tokens
+                    details = getattr(usage, "completion_tokens_details", None)
+                    reasoning = int(getattr(details, "reasoning_tokens", 0) or 0) if details is not None else 0
                     await record_usage(
                         prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
                         completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                        reasoning_tokens=reasoning,
                     )
                 except Exception as exc:
                     logger.debug("record_usage failed: %s", exc)

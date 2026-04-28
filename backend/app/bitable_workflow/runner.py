@@ -1117,39 +1117,49 @@ async def run_workflow_loop(
     table_ids: dict,
     interval: int = 30,
     analysis_every: int = 5,  # kept for API compatibility; analysis is now per-task in pipeline
+    tenant_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
 ) -> None:
     """
     持续运行七岗多智能体调度循环。
 
     每轮调用 run_one_cycle()，对所有「待分析」任务执行完整的七岗 DAG 流水线：
     Wave1（5个并行Agent）→ Wave2（财务顾问）→ Wave3（CEO助理综合）
+
+    v8.6.20-r14（审计 #2）：tenant_id / correlation_id 由调用方 snapshot 传入，
+    在 loop 内重建 ContextVar 作用域；否则 record_usage / record_audit / cache
+    都跑到 tenant="default" 桶，多租户隔离破坏。
     """
+    from app.core.observability import correlation_scope, set_task_context
     global _running, _stop_event
     with _state_lock:
         _running = True  # belt-and-suspenders; mark_starting() already set this
     _stop_event = asyncio.Event()
     cycle = 0
-    logger.info("Workflow loop started (interval=%ds)", interval)
+    logger.info("Workflow loop started (interval=%ds tenant=%s)", interval, tenant_id or "-")
 
-    try:
-        while _running:
-            cycle += 1
-            try:
-                processed = await run_one_cycle(app_token, table_ids)
-                logger.info("Cycle %d: processed %d tasks", cycle, processed)
-            except Exception as exc:
-                logger.error("Workflow cycle %d error: %s", cycle, exc)
+    async with correlation_scope(correlation_id):
+        if tenant_id:
+            set_task_context(tenant_id=tenant_id)
+        try:
+            while _running:
+                cycle += 1
+                try:
+                    processed = await run_one_cycle(app_token, table_ids)
+                    logger.info("Cycle %d: processed %d tasks", cycle, processed)
+                except Exception as exc:
+                    logger.error("Workflow cycle %d error: %s", cycle, exc)
 
-            # Interruptible sleep: wakes immediately if stop_workflow() is called
-            try:
-                await asyncio.wait_for(_stop_event.wait(), timeout=float(interval))
-                break  # stop_event was set — exit loop without waiting full interval
-            except asyncio.TimeoutError:
-                pass  # normal interval elapsed, continue
-    finally:
-        with _state_lock:
-            _running = False
-            _stop_event = None
+                # Interruptible sleep: wakes immediately if stop_workflow() is called
+                try:
+                    await asyncio.wait_for(_stop_event.wait(), timeout=float(interval))
+                    break  # stop_event was set — exit loop without waiting full interval
+                except asyncio.TimeoutError:
+                    pass  # normal interval elapsed, continue
+        finally:
+            with _state_lock:
+                _running = False
+                _stop_event = None
 
     logger.info("Workflow loop stopped after %d cycles", cycle)
 

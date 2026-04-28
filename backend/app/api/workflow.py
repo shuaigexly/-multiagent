@@ -665,12 +665,18 @@ async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
         for stale_key in ["url", "base_meta", "native_assets", "native_manifest", "native_apply_report"]:
             _state.pop(stale_key, None)
     _state.update({"app_token": req.app_token, "table_ids": req.table_ids})
+    # v8.6.20-r14（审计 #2）：snapshot tenant/correlation 显式传给后台 loop —
+    # 与 tasks.py / feishu_bot.py 同样模式，否则 cycle 期间 record_usage /
+    # record_audit / cache 全部 fallback 到 tenant="default"。
+    from app.core.observability import get_tenant_id as _get_tenant, get_correlation_id as _get_corr
     background_tasks.add_task(
         runner.run_workflow_loop,
         req.app_token,
         req.table_ids,
         req.interval,
         req.analysis_every,
+        _get_tenant(),
+        _get_corr(),
     )
     await record_audit(
         "workflow.start",

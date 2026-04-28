@@ -197,13 +197,17 @@ async def upload_chart_to_bitable(
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             with open(tmp_path, "rb") as fh:
+                # v8.6.20-r14（审计 #6）：之前用 f-string 拼 JSON，table_id 含 "/\\
+                # 会让 extra 字段不合法 JSON → Feishu 400；理论上还是 JSON 注入面。
+                # 改用 json.dumps 序列化保证转义。
+                import json as _json
                 files = {"file": (file_name, fh, "image/png")}
                 data = {
                     "file_name": file_name,
                     "parent_type": "bitable_image",
                     "parent_node": app_token,
                     "size": str(len(png_bytes)),
-                    "extra": f'{{"bitablePerm":{{"tableId":"{table_id}","attachmentFieldId":""}}}}',
+                    "extra": _json.dumps({"bitablePerm": {"tableId": table_id, "attachmentFieldId": ""}}),
                 }
                 resp = await client.post(
                     url,
