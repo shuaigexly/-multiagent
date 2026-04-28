@@ -627,19 +627,25 @@ export default function BitableWorkflow() {
         setLiveEvents((prev) => {
           const existing = prev[event.task_id];
           const nextStep = buildLiveStepEvent(event);
-          const nextHistory = nextStep
-            ? [...(existing?.history || []), nextStep].filter(
+          const shouldResetHistory =
+            nextStep?.eventType === 'task.started' && Boolean(existing?.history.length);
+          const mergedHistory = nextStep
+            ? [...(shouldResetHistory ? [] : existing?.history || []), nextStep].filter(
                 (step, index, items) => items.findIndex((candidate) => candidate.key === step.key) === index,
               )
             : existing?.history || [];
           const nextTokenPreview =
             event.event_type === 'agent.token'
               ? String(event.payload.chunk || '').trim() || existing?.tokenPreview || ''
-              : existing?.tokenPreview || '';
+              : nextStep?.status === 'done' || nextStep?.status === 'error'
+                ? ''
+                : existing?.tokenPreview || '';
           const nextAgent =
             event.event_type === 'agent.token'
               ? String(event.payload.agent_id || '').trim() || existing?.activeAgent || ''
-              : existing?.activeAgent || '';
+              : nextStep?.status === 'done' || nextStep?.status === 'error'
+                ? ''
+                : existing?.activeAgent || '';
 
           return {
             ...prev,
@@ -651,7 +657,7 @@ export default function BitableWorkflow() {
               updatedAt: event.ts,
               tokenPreview: nextTokenPreview,
               activeAgent: nextAgent,
-              history: nextHistory,
+              history: mergedHistory,
             },
           };
         });
