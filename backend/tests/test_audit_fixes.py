@@ -1276,6 +1276,40 @@ async def test_workflow_confirm_rejects_execute_on_rerun_route(monkeypatch):
     update_mock.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_workflow_confirm_fails_closed_when_task_context_lookup_errors(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from fastapi import HTTPException
+    from app.api import workflow
+
+    update_mock = AsyncMock()
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        raise RuntimeError("bitable unavailable")
+
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", update_mock)
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_lookup_error",
+        action="approve",
+        actor="CEO",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await workflow.workflow_confirm(req)
+
+    assert exc_info.value.status_code == 502
+    assert "获取任务上下文失败" in exc_info.value.detail
+    update_mock.assert_not_awaited()
+
+
 def test_native_role_specs_include_retrospective_workspace():
     """原生角色包必须包含复盘负责人工作面，承接最后一段闭环。"""
     from app.bitable_workflow.native_specs import build_role_specs

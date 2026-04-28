@@ -872,19 +872,16 @@ async def workflow_confirm(req: ConfirmRequest):
     """回写主表管理确认字段：拍板、执行落地、进入复盘。"""
     now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     actor = req.actor.strip() or "驾驶舱操作"
-    route = ""
-    task_title = ""
-    task_fields: dict[str, object] = {}
     try:
         # v8.6.20-r9（审计 #2）：飞书 get_record 把 Text/SingleSelect 字段返成富文本
         # 数组或 dict，必须先统一拍平，再做路由/状态判断。
         task_title, route, task_fields = await _load_confirm_task_context(req.app_token, req.table_id, req.record_id)
     except Exception as exc:
         logger.warning("confirm fetch task record failed record=%s: %s", req.record_id, exc)
-    if task_fields:
-        allowed, reason = _confirm_action_allowed(req.action, task_fields)
-        if not allowed:
-            raise HTTPException(status_code=409, detail=reason)
+        raise HTTPException(status_code=502, detail="获取任务上下文失败，无法执行确认，请稍后重试") from exc
+    allowed, reason = _confirm_action_allowed(req.action, task_fields)
+    if not allowed:
+        raise HTTPException(status_code=409, detail=reason)
     fields: dict[str, object] = {}
     optional_keys: list[str] = []
     action_name = ""
