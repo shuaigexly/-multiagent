@@ -1,7 +1,9 @@
 """工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析任务 + SSE 进度流"""
 import json
 import logging
+import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -27,6 +29,7 @@ _VALID_STATUSES: set[str] = set(ALL_STATUSES)
 _VALID_CONFIRM_ACTIONS: set[str] = {"approve", "execute", "retrospective"}
 _VALID_SETUP_MODES: set[str] = {"seed_demo", "prod_empty", "template_only"}
 _VALID_BASE_TYPES: set[str] = {"template", "production", "validation"}
+MAX_WORKFLOW_SSE_SECONDS = int(os.getenv("MAX_WORKFLOW_SSE_SECONDS", "600"))
 
 router = APIRouter(
     prefix="/api/v1/workflow",
@@ -995,6 +998,16 @@ async def workflow_stream_token(task_record_id: str):
     }
 
 
+async def _workflow_stream_generator(task_record_id: str, request: Request):
+    start_time = time.monotonic()
+    async for msg in progress_broker.subscribe(task_record_id):
+        if await request.is_disconnected():
+            break
+        if time.monotonic() - start_time > MAX_WORKFLOW_SSE_SECONDS:
+            break
+        yield {"event": msg["event_type"], "data": json.dumps(msg, ensure_ascii=False)}
+
+
 @router.get("/stream/{task_record_id}")
 async def workflow_stream(
     task_record_id: str,
@@ -1007,14 +1020,10 @@ async def workflow_stream(
     前端使用 EventSource 即可订阅；连接保持到 task.done/task.error 或客户端断开。
     """
     verify_stream_token(token, subject=task_record_id, purpose="workflow-stream")
-
-    async def _gen():
-        async for msg in progress_broker.subscribe(task_record_id):
-            if await request.is_disconnected():
-                break
-            yield {"event": msg["event_type"], "data": json.dumps(msg, ensure_ascii=False)}
-
-    return EventSourceResponse(_gen(), media_type="text/event-stream")
+    return EventSourceResponse(
+        _workflow_stream_generator(task_record_id, request),
+        media_type="text/event-stream",
+    )
 
 
 @router.get("/records", dependencies=[Depends(require_api_key)])

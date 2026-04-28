@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -51,19 +52,32 @@ def issue_stream_token(subject: str, purpose: str, ttl_seconds: int = 60) -> str
 
 
 def verify_stream_token(token: str, subject: str, purpose: str) -> None:
-    if not token or "." not in token:
+    if not token or "." not in token or len(token) > 4096:
         raise HTTPException(401, "Invalid stream token")
     body, supplied_sig = token.rsplit(".", 1)
+    if not body or not supplied_sig:
+        raise HTTPException(401, "Invalid stream token")
+    try:
+        body_bytes = body.encode("ascii")
+        supplied_sig_bytes = supplied_sig.encode("ascii")
+    except UnicodeEncodeError:
+        raise HTTPException(401, "Invalid stream token")
     expected_sig = _b64encode(
-        hmac.new(_stream_secret(), body.encode("ascii"), hashlib.sha256).digest()
-    )
-    if not compare_digest(supplied_sig, expected_sig):
+        hmac.new(_stream_secret(), body_bytes, hashlib.sha256).digest()
+    ).encode("ascii")
+    if not compare_digest(supplied_sig_bytes, expected_sig):
         raise HTTPException(401, "Invalid stream token")
     try:
         payload = json.loads(_b64decode(body))
-    except (ValueError, json.JSONDecodeError):
+    except (binascii.Error, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        raise HTTPException(401, "Invalid stream token")
+    if not isinstance(payload, dict):
         raise HTTPException(401, "Invalid stream token")
     if payload.get("sub") != subject or payload.get("purpose") != purpose:
         raise HTTPException(401, "Invalid stream token")
-    if int(payload.get("exp") or 0) < int(time.time()):
+    try:
+        exp = int(payload.get("exp") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(401, "Invalid stream token")
+    if exp < int(time.time()):
         raise HTTPException(401, "Expired stream token")

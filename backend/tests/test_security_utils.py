@@ -1,5 +1,10 @@
 import asyncio
+import base64
+import hashlib
+import hmac
+import json
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -97,6 +102,146 @@ def test_stream_token_requires_secret_in_production(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         issue_stream_token("task-1", "task-events")
     assert exc.value.status_code == 503
+
+
+def _signed_stream_token(payload: object, secret: str = "test-secret") -> str:
+    body = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    sig = base64.urlsafe_b64encode(
+        hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    ).decode("ascii").rstrip("=")
+    return f"{body}.{sig}"
+
+
+def test_stream_token_rejects_malformed_signed_payloads(monkeypatch):
+    from app.core.auth import verify_stream_token
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "api_key", "test-secret")
+    non_ascii_sig_body = _signed_stream_token(
+        {"sub": "task-1", "purpose": "task-events"}
+    ).rsplit(".", 1)[0]
+
+    bad_tokens = [
+        _signed_stream_token(["not", "an", "object"]),
+        _signed_stream_token(
+            {"sub": "task-1", "purpose": "task-events", "exp": "not-a-number"}
+        ),
+        _signed_stream_token({"sub": "task-1", "purpose": "task-events"}),
+        "x" * 5000,
+        ".missing-body",
+        "missing-sig.",
+        "非ascii.signature",
+        f"{non_ascii_sig_body}.签名",
+    ]
+
+    for token in bad_tokens:
+        with pytest.raises(HTTPException) as exc:
+            verify_stream_token(token, "task-1", "task-events")
+        assert exc.value.status_code == 401
+
+
+def test_upload_path_resolution_is_scoped_to_upload_dir(tmp_path, monkeypatch):
+    from app.api.tasks import _resolve_upload_file_path
+    from app.core.settings import settings
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    inside_file = upload_dir / "inside.txt"
+    outside_file = tmp_path / "outside.txt"
+    monkeypatch.setattr(settings, "upload_dir", str(upload_dir))
+
+    assert _resolve_upload_file_path(str(inside_file)) == inside_file.resolve()
+    assert _resolve_upload_file_path(str(outside_file)) is None
+    assert _resolve_upload_file_path(str(upload_dir)) is None
+
+
+@pytest.mark.asyncio
+async def test_uploaded_file_is_removed_when_feishu_context_json_is_invalid(tmp_path, monkeypatch):
+    from app.api import tasks
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path))
+
+    class FakeUpload:
+        filename = "data.csv"
+
+        def __init__(self):
+            self._chunks = [b"a,b\n1,2\n", b""]
+
+        async def read(self, _size: int):
+            return self._chunks.pop(0)
+
+    request = SimpleNamespace(client=SimpleNamespace(host="upload-cleanup-test"))
+
+    with pytest.raises(HTTPException) as exc:
+        await tasks.create_task(
+            request=request,
+            input_text="analyze this",
+            feishu_context="{bad json",
+            file=FakeUpload(),
+            db=SimpleNamespace(),
+        )
+
+    assert exc.value.status_code == 422
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_upload_cleanup_refuses_paths_outside_upload_dir(tmp_path, monkeypatch):
+    from app.api.tasks import _remove_upload_file
+    from app.core.settings import settings
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    outside_file = tmp_path / "outside.txt"
+    inside_file = upload_dir / "inside.txt"
+    outside_file.write_text("keep", encoding="utf-8")
+    inside_file.write_text("remove", encoding="utf-8")
+    monkeypatch.setattr(settings, "upload_dir", str(upload_dir))
+
+    await _remove_upload_file(str(outside_file))
+    await _remove_upload_file(str(inside_file))
+
+    assert outside_file.exists()
+    assert not inside_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_workflow_stream_generator_stops_after_max_duration(monkeypatch):
+    from app.api import workflow
+
+    class FakeSubscription:
+        def __init__(self):
+            self._items = iter([
+                {"event_type": "task.started", "payload": {"stage": "start"}},
+                {"event_type": "wave.completed", "payload": {"stage": "next"}},
+            ])
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._items)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    def fake_subscribe(_task_record_id: str):
+        return FakeSubscription()
+
+    request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+
+    monkeypatch.setattr(workflow.progress_broker, "subscribe", fake_subscribe)
+    monkeypatch.setattr(workflow, "MAX_WORKFLOW_SSE_SECONDS", -1)
+
+    events = [
+        item async for item in workflow._workflow_stream_generator("rec_1", request)
+    ]
+
+    assert events == []
+    request.is_disconnected.assert_awaited_once()
 
 
 @pytest.mark.asyncio

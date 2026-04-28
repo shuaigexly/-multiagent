@@ -72,11 +72,28 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-async def _remove_upload_file(path: str | None) -> None:
+def _resolve_upload_file_path(path: str | None) -> Path | None:
     if not path:
+        return None
+    upload_root = Path(settings.upload_dir).resolve()
+    target = Path(path).resolve(strict=False)
+    try:
+        target.relative_to(upload_root)
+    except ValueError:
+        logger.warning("refusing upload file path outside upload_dir: %s", path)
+        return None
+    if target == upload_root:
+        logger.warning("refusing upload file path pointing at upload_dir: %s", path)
+        return None
+    return target
+
+
+async def _remove_upload_file(path: str | None) -> None:
+    target = _resolve_upload_file_path(path)
+    if target is None:
         return
     try:
-        await asyncio.to_thread(Path(path).unlink, missing_ok=True)
+        await asyncio.to_thread(target.unlink, missing_ok=True)
     except OSError as exc:
         logger.warning("uploaded file cleanup failed for path=%s: %s", path, exc)
 
@@ -152,6 +169,7 @@ async def create_task(
         try:
             ctx = _json.loads(feishu_context)
         except _json.JSONDecodeError as exc:
+            await _remove_upload_file(input_file_path)
             raise HTTPException(422, f"feishu_context JSON 格式错误: {exc}")
     try:
         plan = await plan_task(planning_text, ctx)
@@ -408,10 +426,11 @@ async def _execute_task(
             # 解析数据：优先用上传文件，其次读取飞书上下文中的文档内容
             data_summary = None
             input_file_path = task.input_file
-            if input_file_path and os.path.exists(input_file_path):
-                async with aiofiles.open(input_file_path, "r", encoding="utf-8") as f:
+            upload_path = _resolve_upload_file_path(input_file_path)
+            if upload_path and upload_path.exists():
+                async with aiofiles.open(upload_path, "r", encoding="utf-8") as f:
                     file_content = await f.read()
-                data_summary = parse_content(file_content, os.path.basename(input_file_path))
+                data_summary = parse_content(file_content, upload_path.name)
 
             # 若无上传文件，则尝试从飞书上下文中读取真实文档内容
             if not data_summary and task.feishu_context:
