@@ -19,6 +19,20 @@ export interface WorkflowTaskLocator {
   taskTitle: string;
 }
 
+export type WorkflowResolutionMode = "selected-task-record" | "related-record-id" | "task-title-fallback" | "unresolved";
+
+export interface WorkflowResolutionDebug {
+  sourceKind: WorkflowSourceKind;
+  sourceLabel: string;
+  selectedRecordId: string;
+  selectedTaskTitle: string;
+  taskRecordIdCandidate: string;
+  taskTitleCandidate: string;
+  resolutionMode: WorkflowResolutionMode;
+  resolutionLabel: string;
+  issues: string[];
+}
+
 function textValue(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
@@ -104,3 +118,49 @@ export function matchesRelatedRecord(record: WorkflowSelectionRecord, locator: W
   return false;
 }
 
+export function buildResolutionDebug(
+  sourceKind: WorkflowSourceKind,
+  selectionRecord: WorkflowSelectionRecord | null,
+  locator: WorkflowTaskLocator,
+  matchedTask: WorkflowSelectionRecord | null,
+): WorkflowResolutionDebug {
+  const selectedTaskTitle = textValue(selectionRecord?.fields["任务标题"]);
+  const issues: string[] = [];
+
+  if (sourceKind !== "task" && !locator.taskRecordId) {
+    issues.push("缺少「关联记录ID」");
+  }
+  if (!locator.taskTitle) {
+    issues.push("缺少「任务标题」");
+  }
+
+  let resolutionMode: WorkflowResolutionMode = "unresolved";
+  let resolutionLabel = "未命中主任务";
+
+  if (matchedTask) {
+    if (sourceKind === "task") {
+      resolutionMode = "selected-task-record";
+      resolutionLabel = "当前主表记录";
+    } else if (locator.taskRecordId && matchedTask.recordId === locator.taskRecordId) {
+      resolutionMode = "related-record-id";
+      resolutionLabel = "通过关联记录ID回溯";
+    } else if (locator.taskTitle) {
+      resolutionMode = "task-title-fallback";
+      resolutionLabel = "通过任务标题兜底";
+    }
+  } else {
+    issues.push("未找到对应分析任务");
+  }
+
+  return {
+    sourceKind,
+    sourceLabel: locator.sourceLabel,
+    selectedRecordId: selectionRecord?.recordId || "",
+    selectedTaskTitle,
+    taskRecordIdCandidate: locator.taskRecordId,
+    taskTitleCandidate: locator.taskTitle,
+    resolutionMode,
+    resolutionLabel,
+    issues,
+  };
+}

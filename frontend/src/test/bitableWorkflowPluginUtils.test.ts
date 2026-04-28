@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildResolutionDebug,
   buildTaskLocator,
   getWorkflowSourceKind,
   matchesRelatedRecord,
@@ -45,5 +46,29 @@ describe("bitable workflow plugin utils", () => {
     );
     expect(matchesTaskRecord({ recordId: "rec_task_x", fields: { 任务标题: "复盘任务" } }, titleOnlyLocator)).toBe(true);
     expect(matchesRelatedRecord({ recordId: "rec_action_x", fields: { 任务标题: "复盘任务" } }, titleOnlyLocator)).toBe(true);
+  });
+
+  it("describes resolution path and unresolved issues", () => {
+    const selectionRecord = { recordId: "rec_review", fields: { 任务标题: "经营诊断", 关联记录ID: "rec_task_2" } };
+    const locator = buildTaskLocator("review", selectionRecord, "rec_review");
+
+    const matchedById = buildResolutionDebug(
+      "review",
+      selectionRecord,
+      locator,
+      { recordId: "rec_task_2", fields: { 任务标题: "别的标题" } },
+    );
+    expect(matchedById.resolutionMode).toBe("related-record-id");
+    expect(matchedById.resolutionLabel).toContain("关联记录ID");
+
+    const unresolved = buildResolutionDebug(
+      "archive",
+      { recordId: "rec_archive", fields: { 任务标题: "", 关联记录ID: "" } },
+      buildTaskLocator("archive", { recordId: "rec_archive", fields: { 任务标题: "", 关联记录ID: "" } }, "rec_archive"),
+      null,
+    );
+    expect(unresolved.resolutionMode).toBe("unresolved");
+    expect(unresolved.issues).toContain("缺少「关联记录ID」");
+    expect(unresolved.issues).toContain("缺少「任务标题」");
   });
 });

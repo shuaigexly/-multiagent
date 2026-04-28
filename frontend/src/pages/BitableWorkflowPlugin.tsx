@@ -13,11 +13,13 @@ import { Button } from "@/components/ui/button";
 import { API_KEY_STORAGE_KEY, getRuntimeApiKey } from "@/services/http";
 import { subscribeTaskProgress, type ProgressEvent } from "@/services/workflow";
 import {
+  buildResolutionDebug,
   buildTaskLocator,
   getWorkflowSourceKind,
   matchesRelatedRecord,
   matchesTaskRecord,
   workflowSourceLabel,
+  type WorkflowResolutionDebug,
   type WorkflowSourceKind,
 } from "./bitableWorkflowPluginUtils";
 
@@ -78,6 +80,13 @@ const STEP_STATUS_STYLE: Record<LiveStepEvent["status"], string> = {
   running: "border-sky-200 bg-sky-50 text-sky-700",
   done: "border-emerald-200 bg-emerald-50 text-emerald-700",
   error: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+const RESOLUTION_STYLE: Record<WorkflowResolutionDebug["resolutionMode"], string> = {
+  "selected-task-record": "border-emerald-200 bg-emerald-50 text-emerald-700",
+  "related-record-id": "border-sky-200 bg-sky-50 text-sky-700",
+  "task-title-fallback": "border-amber-200 bg-amber-50 text-amber-700",
+  unresolved: "border-rose-200 bg-rose-50 text-rose-700",
 };
 
 function textValue(value: unknown): string {
@@ -303,6 +312,7 @@ export default function BitableWorkflowPlugin() {
   const [actions, setActions] = useState<TaskSnapshot[]>([]);
   const [archives, setArchives] = useState<TaskSnapshot[]>([]);
   const [live, setLive] = useState<LiveState | null>(null);
+  const [resolutionDebug, setResolutionDebug] = useState<WorkflowResolutionDebug | null>(null);
   const unsubscribeRef = useRef<null | (() => void)>(null);
   const tableCacheRef = useRef(new Map<string, Promise<{ getRecordById(recordId: string): Promise<BitableRecordValue>; getRecordsByPage(params: { pageSize?: number; pageToken?: number }): Promise<{ records: BitableRecordValue[]; hasMore: boolean; pageToken?: number }>; }>>());
   const fieldMapCacheRef = useRef(new Map<string, Promise<Map<string, string>>>());
@@ -426,6 +436,7 @@ export default function BitableWorkflowPlugin() {
       setActions([]);
       setArchives([]);
       setLive(null);
+      setResolutionDebug(null);
       setLoading(false);
       unsubscribeRef.current?.();
       unsubscribeRef.current = null;
@@ -438,6 +449,7 @@ export default function BitableWorkflowPlugin() {
       setActions([]);
       setArchives([]);
       setLive(null);
+      setResolutionDebug(null);
       setLoading(false);
       unsubscribeRef.current?.();
       unsubscribeRef.current = null;
@@ -507,6 +519,7 @@ export default function BitableWorkflowPlugin() {
         setReview(currentReview);
         setActions(currentActions);
         setArchives(currentArchives);
+        setResolutionDebug(buildResolutionDebug(nextSourceKind, selectedRecord, stableLocator, currentTask));
 
         if (currentTask?.recordId && getRuntimeApiKey()) {
           unsubscribeRef.current = subscribeTaskProgress(currentTask.recordId, (event: ProgressEvent) => {
@@ -544,6 +557,7 @@ export default function BitableWorkflowPlugin() {
       } catch (err) {
         if (!active) return;
         setError(`加载多维表格记录失败：${String(err)}`);
+        setResolutionDebug(null);
       } finally {
         if (active) setLoading(false);
       }
@@ -651,6 +665,37 @@ export default function BitableWorkflowPlugin() {
                     </div>
                   </div>
                 </div>
+
+                {resolutionDebug && (
+                  <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Traceability</div>
+                        <div className="mt-2 text-lg font-semibold text-slate-950">回溯诊断</div>
+                      </div>
+                      <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${RESOLUTION_STYLE[resolutionDebug.resolutionMode]}`}>
+                        {resolutionDebug.resolutionLabel}
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      {[
+                        `来源表：${resolutionDebug.sourceLabel}`,
+                        `当前记录ID：${resolutionDebug.selectedRecordId || "缺失"}`,
+                        `关联记录ID：${resolutionDebug.taskRecordIdCandidate || "缺失"}`,
+                        `任务标题：${resolutionDebug.taskTitleCandidate || "缺失"}`,
+                      ].map((item) => (
+                        <div key={item} className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm leading-6 text-slate-600">
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                    {!!resolutionDebug.issues.length && (
+                      <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-3 text-sm leading-6 text-rose-700">
+                        {resolutionDebug.issues.join("；")}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   {[
