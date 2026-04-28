@@ -1137,6 +1137,16 @@ def test_native_automation_specs_split_report_route_by_workflow_branch():
     assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "等待拍板" for item in approval_action_fields)
 
 
+def test_native_exception_automation_does_not_hardcode_reanalysis_route():
+    """异常升级适用于所有路由，不能把自动化日志一律写成重新分析。"""
+    from app.bitable_workflow.native_specs import build_automation_specs
+
+    specs = {spec["name"]: spec for spec in build_automation_specs()}
+    exception_log_fields = specs["A5 异常升级提醒"]["body"]["steps"][3]["data"]["field_values"]
+
+    assert all(field["field_name"] != "工作流路由" for field in exception_log_fields)
+
+
 def test_apply_native_request_accepts_advperm_surface():
     from app.api.workflow import ApplyNativeRequest
 

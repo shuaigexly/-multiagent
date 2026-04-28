@@ -391,7 +391,6 @@ def build_automation_specs() -> list[dict[str, Any]]:
                             _text_field("节点名称", "A5 异常升级提醒"),
                             _text_field("触发来源", "automation.exception"),
                             _action_status_field("执行状态", "执行失败"),
-                            _route_field("工作流路由", "重新分析"),
                             _text_field("日志摘要", "任务已被标记为异常，并进入人工接管路径。"),
                             _text_field("详细结果", "请在主表继续补数、重跑或进入复盘闭环。"),
                             _ref_field("关联记录ID", "$.step_trigger.recordId"),
