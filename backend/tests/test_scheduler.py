@@ -360,6 +360,43 @@ class TestReviewRecheckTasks:
         assert fields["复核SLA小时"] == 24
 
     @pytest.mark.asyncio
+    async def test_review_recheck_task_initializes_native_contract_fields(self):
+        review_fields = {
+            "推荐动作": "建议重跑",
+            "需补数事项": "",
+        }
+        with patch(
+            "app.bitable_workflow.scheduler.bitable_ops.list_records",
+            new=AsyncMock(return_value=[]),
+        ):
+            with patch(
+                "app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields",
+                new=AsyncMock(return_value="rec_recheck"),
+            ) as mock_create:
+                from app.bitable_workflow.scheduler import _create_review_recheck_task
+
+                await _create_review_recheck_task(
+                    "app_token",
+                    "tbl_task",
+                    "增长复盘任务",
+                    review_fields,
+                )
+
+        fields = mock_create.await_args.args[2]
+        optional_keys = mock_create.await_args.kwargs.get("optional_keys") or []
+        assert fields["当前责任角色"] == "系统调度"
+        assert fields["当前责任人"] == "系统"
+        assert fields["当前原生动作"] == "等待分析完成"
+        assert fields["异常状态"] == "正常"
+        assert fields["异常类型"] == "无"
+        assert "当前责任角色" in optional_keys
+        assert "当前责任人" in optional_keys
+        assert "当前原生动作" in optional_keys
+        assert "异常状态" in optional_keys
+        assert "异常类型" in optional_keys
+        assert "异常说明" in optional_keys
+
+    @pytest.mark.asyncio
     async def test_review_recheck_task_skips_duplicate_open_record(self):
         review_fields = {
             "推荐动作": "建议重跑",

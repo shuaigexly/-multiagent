@@ -1820,6 +1820,7 @@ async def _create_review_recheck_task(
         fields["复核SLA小时"] = _safe_int_field(template_defaults.get("review_sla_hours"))
     if parent_task_number:
         fields["依赖任务编号"] = str(parent_task_number)
+    fields.update(_derive_native_bitable_contract(fields))
     try:
         new_record_id = await bitable_ops.create_record_optional_fields(
             app_token,
@@ -1845,6 +1846,12 @@ async def _create_review_recheck_task(
                 "复盘负责人",
                 "复盘负责人OpenID",
                 "复核SLA小时",
+                "当前责任角色",
+                "当前责任人",
+                "当前原生动作",
+                "异常状态",
+                "异常类型",
+                "异常说明",
             ],
         )
         await _write_action_record(
