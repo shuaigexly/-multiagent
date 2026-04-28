@@ -193,6 +193,7 @@ ARCHIVE_STATUS_OPTIONS = [
     {"name": "待汇报", "color": 5},
     {"name": "待拍板", "color": 1},
     {"name": "待执行", "color": 6},
+    {"name": "待复盘", "color": 7},
     {"name": "待复核", "color": 3},
     {"name": "已归档", "color": 0},
 ]

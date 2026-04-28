@@ -639,6 +639,7 @@ async def _create_extra_views(
         # 交付归档
         (archive_tid, "📬 待汇报归档", "grid", "归档状态", "待汇报"),
         (archive_tid, "🧾 待执行归档", "grid", "归档状态", "待执行"),
+        (archive_tid, "🔁 待复盘归档", "grid", "归档状态", "待复盘"),
         (archive_tid, "🗓 待复核归档", "grid", "归档状态", "待复核"),
         (archive_tid, "⏳ 待拍板归档", "grid", "归档状态", "待拍板"),
         (archive_tid, "📦 归档看板", "kanban", None, None),

@@ -779,6 +779,12 @@ async def workflow_confirm(req: ConfirmRequest):
             "关联记录ID": req.record_id,
         }
         archive_sync_optional_keys = ["工作流路由", "归档状态", "关联记录ID"]
+    elif req.action == "execute":
+        archive_sync_fields = {
+            "归档状态": "待复盘",
+            "关联记录ID": req.record_id,
+        }
+        archive_sync_optional_keys = ["归档状态", "关联记录ID"]
     elif req.action == "retrospective":
         archive_sync_fields = {
             "归档状态": "已归档",

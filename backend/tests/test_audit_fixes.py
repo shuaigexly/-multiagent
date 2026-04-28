@@ -666,7 +666,7 @@ async def test_workflow_confirm_approve_without_execution_clears_pending_report(
 
 @pytest.mark.asyncio
 async def test_workflow_confirm_execute_advances_archive_state(monkeypatch):
-    """v8.6.20-r6 审计 #4：execute → 归档状态='待复盘'。"""
+    """execute 应把主表和归档表同步推进到合法的「待复盘」状态。"""
     sse_pkg = ModuleType("sse_starlette")
     sse_mod = ModuleType("sse_starlette.sse")
     sse_mod.EventSourceResponse = lambda *args, **kwargs: None
@@ -674,31 +674,58 @@ async def test_workflow_confirm_execute_advances_archive_state(monkeypatch):
     monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
     from app.api import workflow
 
-    captured = {}
-    async def fake_update(_a, _t, _r, fields, optional_keys=None):
-        captured["fields"] = fields
-        captured["optional_keys"] = optional_keys or []
+    update_calls = []
+
+    async def fake_update(_a, table_id, record_id, fields, optional_keys=None):
+        update_calls.append(
+            {
+                "table_id": table_id,
+                "record_id": record_id,
+                "fields": dict(fields),
+                "optional_keys": list(optional_keys or []),
+            }
+        )
+
     async def fake_get(_a, _t, _r):
-        return {"fields": {
-            "任务标题": "执行任务",
-            "工作流路由": "直接执行",
-            "待执行确认": True,
-            "归档状态": "待执行",
-        }}
+        return {
+            "fields": {
+                "任务标题": "执行任务",
+                "工作流路由": "直接执行",
+                "待执行确认": True,
+                "归档状态": "待执行",
+            }
+        }
+
+    async def fake_list_records(_app_token, table_id, filter_expr=None, max_records=20):
+        assert table_id == "tbl_archive"
+        assert "关联记录ID" in (filter_expr or "")
+        assert max_records == 20
+        return [
+            {"record_id": "rec_archive_v2", "fields": {"汇报版本号": "v2", "任务标题": "执行任务"}},
+        ]
 
     monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update)
     monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get)
-    monkeypatch.setattr(workflow.bitable_ops, "list_records", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", fake_list_records)
     monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
     monkeypatch.setattr(workflow, "record_audit", AsyncMock())
     workflow._state.clear()
-    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log"}})
+    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log", "archive": "tbl_archive"}})
 
     await workflow.workflow_confirm(workflow.ConfirmRequest(
         app_token="app", table_id="tbl", record_id="rec_1", action="execute", actor="ops",
     ))
-    assert captured["fields"]["归档状态"] == "待复盘"
-    assert "归档状态" in captured["optional_keys"]
+    assert len(update_calls) == 2
+    main_call = next(call for call in update_calls if call["table_id"] == "tbl")
+    archive_call = next(call for call in update_calls if call["table_id"] == "tbl_archive")
+    assert main_call["fields"]["归档状态"] == "待复盘"
+    assert "归档状态" in main_call["optional_keys"]
+    assert archive_call["record_id"] == "rec_archive_v2"
+    assert archive_call["fields"] == {
+        "归档状态": "待复盘",
+        "关联记录ID": "rec_1",
+    }
+    assert archive_call["optional_keys"] == ["归档状态", "关联记录ID"]
 
 
 @pytest.mark.asyncio

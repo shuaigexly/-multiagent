@@ -199,6 +199,17 @@ class TestStatusMachine:
         assert Status.COMPLETED in options
         assert Status.ARCHIVED in options
 
+    def test_archive_status_field_includes_retrospective_stage(self):
+        archive_field = next(f for f in TASK_FIELDS if f["field_name"] == "归档状态")
+        raw_options = archive_field.get("options") or archive_field.get("property", {}).get("options", [])
+        options = [item["name"] if isinstance(item, dict) else item for item in raw_options]
+        assert "待汇报" in options
+        assert "待拍板" in options
+        assert "待执行" in options
+        assert "待复盘" in options
+        assert "待复核" in options
+        assert "已归档" in options
+
 
 class TestSeedData:
     def test_seed_tasks_count(self):

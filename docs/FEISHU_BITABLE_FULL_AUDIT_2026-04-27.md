@@ -165,6 +165,24 @@
   - 已归档任务仍可能再次 `retrospective`
 - 结果：已把动作校验改为“阶段匹配 + 未重复确认”，并补三条回归测试锁定重复拍板、重复执行、重复复盘
 
+### F17. `execute` 会写入非法归档状态 `待复盘`，但 schema 没有这个单选项
+
+- 位置：
+  - `backend/app/api/workflow.py`
+  - `backend/app/bitable_workflow/schema.py`
+  - `backend/app/bitable_workflow/native_specs.py`
+  - `backend/app/bitable_workflow/runner.py`
+- 问题：
+  - `workflow_confirm.execute` 会把主表 `归档状态` 改成 `待复盘`
+  - 但 `ARCHIVE_STATUS_OPTIONS` 没有 `待复盘`，原生归档视图/看板也缺这一阶段
+- 风险：
+  - 真飞书多维表格里更新单选字段时会因非法选项失败，导致 `execute` 回写在真实环境不稳定
+  - 即使主表侥幸落库，`交付结果归档`、原生看板、角色视图仍缺少“待复盘”这一合法阶段
+- 结果：
+  - 已把 `待复盘` 纳入归档状态枚举
+  - `execute` 现在会同步最新归档记录到 `待复盘`
+  - 原生安装视图、异常看板和执行角色可见视图已补上 `待复盘` 阶段
+
 ---
 
 ## 3. 全量验证结果

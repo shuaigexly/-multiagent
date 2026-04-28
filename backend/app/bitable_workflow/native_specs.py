@@ -559,8 +559,8 @@ def build_dashboard_specs() -> list[dict[str, Any]]:
         {
             "name": "交付异常看板",
             "source_table_name": "分析任务",
-            "focus_metrics": ["异常任务数", "异常类型分布", "待复盘确认", "待拍板归档", "待执行归档", "待复核归档"],
-            "recommended_views": ["🟥 已异常任务", "🟥 拍板滞留", "🟥 执行超期", "🟧 复核超时", "🟪 复盘滞留", "📦 归档看板"],
+            "focus_metrics": ["异常任务数", "异常类型分布", "待复盘确认", "待拍板归档", "待执行归档", "待复盘归档", "待复核归档"],
+            "recommended_views": ["🟥 已异常任务", "🟥 拍板滞留", "🟥 执行超期", "🟧 复核超时", "🟪 复盘滞留", "🔁 待复盘归档", "📦 归档看板"],
             "narrative": "适合做异常周报和闭环压盘，直接盯最影响交付的阻塞项。 ",
             "block_specs": [
                 ("exception_total", "异常任务数", "statistics", _count_filter("分析任务", "异常状态", "is", "已异常")),
@@ -568,6 +568,7 @@ def build_dashboard_specs() -> list[dict[str, Any]]:
                 ("pending_retrospective", "待复盘确认", "statistics", _count_filter("分析任务", "待复盘确认", "is", True)),
                 ("archive_pending_approval", "待拍板归档", "statistics", _count_filter("交付结果归档", "归档状态", "is", "待拍板")),
                 ("archive_pending_execution", "待执行归档", "statistics", _count_filter("交付结果归档", "归档状态", "is", "待执行")),
+                ("archive_pending_retrospective", "待复盘归档", "statistics", _count_filter("交付结果归档", "归档状态", "is", "待复盘")),
                 ("archive_pending_review", "待复核归档", "statistics", _count_filter("交付结果归档", "归档状态", "is", "待复核")),
                 ("archive_status", "归档状态分布", "column", _count_group("交付结果归档", "归档状态")),
                 (
@@ -847,7 +848,7 @@ def _executive_role_config() -> dict[str, Any]:
             "分析任务": _read_only_table_rule(["🧭 工作流路由", "👔 拍板人任务", "⏳ 待拍板确认", "🟥 已异常任务"]),
             "综合报告": _read_only_table_rule(["🟢 健康报告", "🟡 关注报告", "🔴 预警报告", "🚦 健康度看板"]),
             "交付动作": _read_only_table_rule(["📣 汇报动作", "✅ 已完成动作", "❌ 失败动作"]),
-            "交付结果归档": _read_only_table_rule(["📬 待汇报归档", "⏳ 待拍板归档", "📦 归档看板"]),
+            "交付结果归档": _read_only_table_rule(["📬 待汇报归档", "⏳ 待拍板归档", "🔁 待复盘归档", "📦 归档看板"]),
         },
     }
 
@@ -876,10 +877,10 @@ def _execution_role_config() -> dict[str, Any]:
                 filter_values=["直接执行"],
             ),
             "交付结果归档": _filtered_edit_table_rule(
-                ["🧾 待执行归档", "📦 归档看板"],
+                ["🧾 待执行归档", "🔁 待复盘归档", "📦 归档看板"],
                 _execution_archive_field_rule(),
                 filter_field="归档状态",
-                filter_values=["待执行"],
+                filter_values=["待执行", "待复盘"],
             ),
         },
     }
