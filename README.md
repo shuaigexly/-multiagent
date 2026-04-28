@@ -228,12 +228,16 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/api/v1/workflow/setup` | 一键创建多维表格结构（8 张表 + 多个附加视图）+ 种子任务 |
+| `POST` | `/api/v1/workflow/setup` | 一键创建 12 张表、多视图、模板中心与种子任务 |
 | `POST` | `/api/v1/workflow/start` | 启动后台调度循环 |
 | `POST` | `/api/v1/workflow/stop` | 停止调度循环（立即生效） |
-| `GET`  | `/api/v1/workflow/status` | 查看运行状态和表格信息 |
+| `GET`  | `/api/v1/workflow/status` | 查看运行状态、表格信息与当前 native state |
 | `POST` | `/api/v1/workflow/seed` | 向分析任务表写入一条新的待处理任务 |
+| `POST` | `/api/v1/workflow/confirm` | 回写拍板 / 执行完成 / 进入复盘等管理确认字段 |
 | `GET`  | `/api/v1/workflow/records` | 查询多维表格记录，支持 `?status=` 过滤 |
+| `GET`  | `/api/v1/workflow/native-assets` | 查看当前 Base 的原生蓝图状态 |
+| `GET`  | `/api/v1/workflow/native-manifest` | 查看原生安装顺序、命令包和 Markdown 安装说明 |
+| `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包，把蓝图落到飞书云侧 |
 | `GET`  | `/api/v1/workflow/stream/{record_id}` | **SSE 实时进度流**（task.started / wave.completed / task.done / task.error） |
 
 ### 当前验收边界
@@ -263,7 +267,7 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 **典型使用流程：**
 
 ```bash
-# 1. 初始化（创建三张表格 + 写入种子任务）
+# 1. 初始化（创建 12 张表、多视图、模板中心 + 写入种子任务）
 curl -X POST http://localhost:8000/api/v1/workflow/setup \
   -H "Content-Type: application/json" \
   -d '{"name": "内容运营虚拟组织", "mode": "seed_demo", "base_type": "validation"}'
@@ -294,16 +298,11 @@ curl -X POST http://localhost:8000/api/v1/workflow/seed \
     "template_name": "等待拍板默认模板"
   }'
 
-# 4. 手动触发分析
-curl -X POST http://localhost:8000/api/v1/workflow/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"app_token": "xxx", "content_table_id": "tbl_A", "report_table_id": "tbl_C"}'
-
-# 5. 停止循环
+# 4. 停止循环
 curl -X POST http://localhost:8000/api/v1/workflow/stop
 
-# 6. 查询已发布记录
-curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A&status=已发布"
+# 5. 查询待执行或已归档记录
+curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A&status=已归档"
 ```
 
 `setup` 现在支持：
@@ -324,12 +323,12 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 `native_manifest` 当前已经升级到 `v2`，不再只是“空骨架”：
 
 - `form` pack 已带独立表单描述和题目 JSON，不再只有空表单名
-- `automation` pack 已拆成 5 条业务 scaffold
+- `automation` pack 已拆成 9 条业务 scaffold
   - 新任务入场提醒
-  - 分析完成自动汇报
+  - 直接汇报自动提醒 / 待拍板汇报提醒
   - 执行任务自动创建
   - 复核提醒
-  - 异常升级提醒
+  - 异常升级提醒 / 超时未复核提醒 / 失败动作报警 / 归档提醒
 - `workflow` pack 已拆成 10 条责任工作流
   - 路由总分发 / 汇报 / 拍板 / 执行 / 复核 / 重跑
   - 失败补救 / 群消息驱动 / 仪表盘推送 / 数据资产校验
@@ -369,7 +368,7 @@ curl "http://localhost:8000/api/v1/workflow/records?app_token=xxx&table_id=tbl_A
 
 - 启用高级权限
 - 创建 / 补齐原生表单，并写入题目
-- 创建自动化 scaffold（带主表回写、交付动作 / 自动化日志沉淀）
+- 创建自动化 scaffold（带主表回写、自动化日志沉淀；汇报 / 执行 / 复核动作由工作流统一创建）
 - 创建并启用 workflow scaffold（带责任角色和原生动作切换）
 - 创建 dashboard 和更完整的管理 / 证据 / 异常 block
 - 创建 role scaffold（带 dashboard/view/edit-read 工作面差异）
@@ -641,10 +640,13 @@ docker run -p 80:80 puff-frontend
 | `POST` | `/api/v1/workflow/setup` | 创建多维表格结构 + 写入种子任务（循环运行中返回 409） |
 | `POST` | `/api/v1/workflow/start` | 启动后台调度循环（已运行返回 400） |
 | `POST` | `/api/v1/workflow/stop` | 停止循环（立即生效，不等待当前轮结束） |
-| `GET`  | `/api/v1/workflow/status` | 运行状态 + 表格 ID |
+| `GET`  | `/api/v1/workflow/status` | 运行状态 + 表格 ID + native state |
 | `POST` | `/api/v1/workflow/seed` | 追加待选题任务 |
-| `POST` | `/api/v1/workflow/analyze` | 手动触发周报（已在生成中返回 409） |
-| `GET`  | `/api/v1/workflow/records` | 查询记录，支持 `?status=已发布` 等过滤 |
+| `POST` | `/api/v1/workflow/confirm` | 回写拍板 / 执行 / 复盘确认 |
+| `GET`  | `/api/v1/workflow/records` | 查询记录，支持 `?status=待分析 / 已完成 / 已归档` 等过滤 |
+| `GET`  | `/api/v1/workflow/native-assets` | 查看当前 Base 的原生资产蓝图 |
+| `GET`  | `/api/v1/workflow/native-manifest` | 查看原生安装顺序和命令包 |
+| `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包 |
 
 ### 健康检查
 

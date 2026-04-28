@@ -23,6 +23,12 @@
 2. `npm run build`：通过
 3. `python -m py_compile`：通过
 
+2026-04-28 复验结果：
+
+1. `pytest -q`：`319 passed, 3 skipped`
+2. `npm run lint`：通过（无 error / warning）
+3. `npm run build`：通过
+
 这说明：
 
 1. 本地代码链路是连通的

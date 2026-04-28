@@ -678,6 +678,52 @@ def _derive_workflow_route(
     return "直接汇报", decision_buckets
 
 
+def _base_route_transition_fields() -> dict[str, object]:
+    return {
+        "待发送汇报": False,
+        "待创建执行任务": False,
+        "待安排复核": False,
+        "待拍板确认": False,
+        "待执行确认": False,
+        "待复盘确认": False,
+        "建议复核时间": None,
+        "执行截止时间": None,
+    }
+
+
+def _build_route_transition_fields(route: str, has_execution_items: bool, task_fields: dict | None = None) -> dict[str, object]:
+    """构造路由切换后的互斥待办标记和时限字段。
+
+    任何一次重新分析结果落回主流程时，都必须显式清理上一条路由遗留的
+    `待安排复核 / 建议复核时间 / 待执行确认 / 执行截止时间` 等互斥状态，
+    否则同一条任务会同时命中多个责任面视图。
+    """
+    task_fields = task_fields or {}
+    now = datetime.now(tz=timezone.utc)
+    review_at_ms: int | None = None
+    execution_due_at_ms: int | None = None
+    if route == "补数复核":
+        review_at_ms = int((now + timedelta(hours=24)).timestamp() * 1000)
+    elif route == "重新分析":
+        review_at_ms = int((now + timedelta(hours=4)).timestamp() * 1000)
+    elif route == "直接执行":
+        execution_due_at_ms = task_fields.get("执行截止时间") or int((now + timedelta(hours=72)).timestamp() * 1000)
+
+    transition = _base_route_transition_fields()
+    transition.update(
+        {
+            "待发送汇报": route in {"直接汇报", "等待拍板"},
+            "待创建执行任务": route == "直接执行" and has_execution_items,
+            "待安排复核": route in {"补数复核", "重新分析"},
+            "待拍板确认": route == "等待拍板",
+            "待执行确认": route == "直接执行",
+            "建议复核时间": review_at_ms,
+            "执行截止时间": execution_due_at_ms,
+        }
+    )
+    return transition
+
+
 def _build_workflow_payload(
     task_title: str,
     task_fields: dict | None,
@@ -716,31 +762,15 @@ def _build_workflow_payload(
     if top_need_data:
         execution_lines.append("补数项：\n" + "\n".join(f"- {item}" for item in top_need_data))
 
-    review_at_ms: int | None = None
-    now = datetime.now(tz=timezone.utc)
-    if route == "补数复核":
-        review_at_ms = int((now + timedelta(hours=24)).timestamp() * 1000)
-    elif route == "重新分析":
-        review_at_ms = int((now + timedelta(hours=4)).timestamp() * 1000)
-    execution_due_at_ms: int | None = None
-    if route == "直接执行":
-        execution_due_at_ms = int((now + timedelta(hours=72)).timestamp() * 1000)
-
+    route_fields = _build_route_transition_fields(route, bool(top_execute), task_fields)
     payload = {
         "工作流路由": route,
         "工作流消息包": truncate_with_marker("\n".join(message_lines), 1800, "\n...[已截断]"),
         "工作流执行包": truncate_with_marker("\n\n".join(execution_lines), 1800, "\n...[已截断]"),
-        "待发送汇报": route in {"直接汇报", "等待拍板"},
-        "待创建执行任务": route == "直接执行" and bool(top_execute),
-        "待安排复核": route in {"补数复核", "重新分析"},
-        "待拍板确认": route == "等待拍板",
-        "待执行确认": route == "直接执行",
-        "待复盘确认": False,
-        "建议复核时间": review_at_ms,
+        **route_fields,
         "汇报对象": str(task_fields.get("汇报对象") or task_fields.get("目标对象") or "").strip(),
         "拍板负责人": _derive_approval_owner(task_fields, route),
         "执行负责人": _derive_execution_owner(task_fields, route),
-        "执行截止时间": execution_due_at_ms or task_fields.get("执行截止时间"),
         "复核负责人": _derive_review_owner(task_fields, route),
         "复盘负责人": _derive_retrospective_owner(task_fields, route),
         "复核SLA小时": _derive_review_sla_hours(task_fields, route),

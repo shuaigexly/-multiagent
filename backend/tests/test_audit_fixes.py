@@ -664,6 +664,69 @@ async def test_workflow_confirm_approve_without_execution_clears_pending_report(
     assert captured["fields"].get("待执行确认") is not True
 
 
+def test_build_archive_sync_payload_only_promotes_approve_when_execution_exists():
+    from app.api.workflow import _build_archive_sync_payload
+
+    fields, keys = _build_archive_sync_payload("approve", record_id="rec_1", promote_to_execution=False)
+    assert fields == {}
+    assert keys == []
+
+    fields, keys = _build_archive_sync_payload("approve", record_id="rec_1", promote_to_execution=True)
+    assert fields == {
+        "工作流路由": "直接执行",
+        "归档状态": "待执行",
+        "关联记录ID": "rec_1",
+    }
+    assert keys == ["工作流路由", "归档状态", "关联记录ID"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_approve_clears_stale_exception_pending_flags(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_update(_a, _t, _r, fields, optional_keys=None):
+        captured["fields"] = fields
+        captured["optional_keys"] = optional_keys or []
+
+    async def fake_get(_a, _t, _r):
+        return {"fields": {
+            "任务标题": "异常回流任务",
+            "工作流路由": "等待拍板",
+            "待拍板确认": True,
+            "待发送汇报": True,
+            "待安排复核": True,
+            "待执行确认": True,
+            "待复盘确认": True,
+            "拍板负责人": "CEO",
+            "汇报对象": "CEO",
+        }}
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get)
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log"}})
+
+    await workflow.workflow_confirm(
+        workflow.ConfirmRequest(app_token="app", table_id="tbl", record_id="rec_1", action="approve", actor="CEO")
+    )
+
+    assert captured["fields"]["待安排复核"] is False
+    assert captured["fields"]["待执行确认"] is False
+    assert captured["fields"]["待复盘确认"] is False
+    assert captured["fields"]["当前责任角色"] == "汇报对象"
+    assert captured["fields"]["当前原生动作"] == "发送汇报"
+
+
 @pytest.mark.asyncio
 async def test_workflow_confirm_execute_advances_archive_state(monkeypatch):
     """execute 应把主表和归档表同步推进到合法的「待复盘」状态。"""
@@ -726,6 +789,53 @@ async def test_workflow_confirm_execute_advances_archive_state(monkeypatch):
         "关联记录ID": "rec_1",
     }
     assert archive_call["optional_keys"] == ["归档状态", "关联记录ID"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_execute_clears_stale_review_flags(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_update(_a, _t, _r, fields, optional_keys=None):
+        if _t == "tbl":
+            captured["fields"] = fields
+            captured["optional_keys"] = optional_keys or []
+
+    async def fake_get(_a, _t, _r):
+        return {
+            "fields": {
+                "任务标题": "执行任务",
+                "工作流路由": "直接执行",
+                "待执行确认": True,
+                "待安排复核": True,
+                "待发送汇报": True,
+                "归档状态": "待执行",
+            }
+        }
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fake_update)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get)
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", AsyncMock(return_value="rec_log"))
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log"}})
+
+    await workflow.workflow_confirm(
+        workflow.ConfirmRequest(app_token="app", table_id="tbl", record_id="rec_1", action="execute", actor="ops")
+    )
+
+    assert captured["fields"]["待安排复核"] is False
+    assert captured["fields"]["待发送汇报"] is False
+    assert captured["fields"]["待复盘确认"] is True
+    assert captured["fields"]["当前责任角色"] == "复盘负责人"
+    assert captured["fields"]["当前原生动作"] == "进入复盘"
 
 
 @pytest.mark.asyncio
@@ -1081,6 +1191,88 @@ async def test_workflow_confirm_rejects_duplicate_retrospective_after_archived(m
 
     assert exc_info.value.status_code == 409
     assert "待复盘确认" in exc_info.value.detail
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_rejects_approve_on_recheck_route(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from fastapi import HTTPException
+    from app.api import workflow
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "补数复核",
+                "待拍板确认": True,
+                "待安排复核": True,
+                "异常状态": "需关注",
+            }
+        }
+
+    update_mock = AsyncMock()
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", update_mock)
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_recheck",
+        action="approve",
+        actor="CEO",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await workflow.workflow_confirm(req)
+
+    assert exc_info.value.status_code == 409
+    assert "补数复核" in exc_info.value.detail
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_rejects_execute_on_rerun_route(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from fastapi import HTTPException
+    from app.api import workflow
+
+    async def fake_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "重新分析",
+                "待执行确认": True,
+                "待安排复核": True,
+                "异常状态": "已异常",
+            }
+        }
+
+    update_mock = AsyncMock()
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", fake_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", update_mock)
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_rerun",
+        action="execute",
+        actor="执行人",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await workflow.workflow_confirm(req)
+
+    assert exc_info.value.status_code == 409
+    assert "重新分析" in exc_info.value.detail
     update_mock.assert_not_awaited()
 
 

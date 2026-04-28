@@ -699,6 +699,90 @@ class TestWorkflowPayload:
         assert payload["待创建执行任务"] is False
         assert payload["待执行确认"] is False
 
+    def test_route_transition_back_to_waiting_approval_clears_recheck_deadline(self):
+        ceo = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[ResultSection(title="管理摘要", content="补数后已恢复可拍板状态。")],
+            action_items=[],
+            raw_output="summary",
+            decision_items=[{"summary": "确认渠道预算调整", "type": "ceo_decision"}],
+        )
+        from app.bitable_workflow.scheduler import _build_workflow_payload
+
+        payload = _build_workflow_payload(
+            "异常回流任务",
+            {
+                "工作流路由": "补数复核",
+                "待安排复核": True,
+                "建议复核时间": 1893456000000,
+                "执行截止时间": 1893542400000,
+            },
+            {"推荐动作": ""},
+            ceo,
+        )
+
+        assert payload["工作流路由"] == "等待拍板"
+        assert payload["待安排复核"] is False
+        assert payload["待拍板确认"] is True
+        assert payload["建议复核时间"] is None
+        assert payload["执行截止时间"] is None
+
+    def test_route_transition_to_direct_report_clears_stale_execution_and_review_flags(self):
+        ceo = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[ResultSection(title="管理摘要", content="当前无需拍板和执行，直接同步结论。")],
+            action_items=[],
+            raw_output="summary",
+            decision_items=[],
+        )
+        from app.bitable_workflow.scheduler import _build_workflow_payload
+
+        payload = _build_workflow_payload(
+            "直接汇报任务",
+            {
+                "工作流路由": "重新分析",
+                "待安排复核": True,
+                "待执行确认": True,
+                "建议复核时间": 1893456000000,
+                "执行截止时间": 1893542400000,
+            },
+            {"推荐动作": ""},
+            ceo,
+        )
+
+        assert payload["工作流路由"] == "直接汇报"
+        assert payload["待发送汇报"] is True
+        assert payload["待安排复核"] is False
+        assert payload["待执行确认"] is False
+        assert payload["建议复核时间"] is None
+        assert payload["执行截止时间"] is None
+
+    def test_route_transition_to_direct_execute_preserves_existing_due_time(self):
+        ceo = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[ResultSection(title="管理摘要", content="已有明确执行截止时间，继续推进执行。")],
+            action_items=[],
+            raw_output="summary",
+            decision_items=[{"summary": "安排销售团队跟进", "type": "execute_now"}],
+        )
+        from app.bitable_workflow.scheduler import _build_workflow_payload
+
+        payload = _build_workflow_payload(
+            "执行任务",
+            {
+                "执行截止时间": 1893542400000,
+            },
+            {"推荐动作": ""},
+            ceo,
+        )
+
+        assert payload["工作流路由"] == "直接执行"
+        assert payload["待执行确认"] is True
+        assert payload["执行截止时间"] == 1893542400000
+
 
 class TestRunCycleActionRouting:
     @pytest.mark.asyncio

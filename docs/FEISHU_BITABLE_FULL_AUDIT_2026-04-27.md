@@ -359,6 +359,10 @@ pytest -q
 
 - `313 passed, 3 skipped`
 
+2026-04-28 复验：
+
+- `319 passed, 3 skipped`
+
 ### 前端构建
 
 ```bash
@@ -371,6 +375,12 @@ npm run build
 - 500k chunk 告警已消失
 - 无构建级 warning
 
+2026-04-28 复验：
+
+- 构建继续通过
+- 500k chunk 告警未回归
+- 本次产物中 `ResultCharts` 独立 chunk 仍存在，主入口 chunk 未重新膨胀
+
 ### 前端静态检查
 
 ```bash
@@ -381,6 +391,11 @@ npm run lint
 
 - 无 error
 - 无 warning
+
+2026-04-28 复验：
+
+- 继续保持无 error
+- 继续保持无 warning
 
 ---
 

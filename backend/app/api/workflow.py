@@ -17,7 +17,7 @@ from app.bitable_workflow.native_installer import (
     apply_native_manifest,
     sync_native_asset_blueprints,
 )
-from app.bitable_workflow.scheduler import _derive_native_bitable_contract
+from app.bitable_workflow.scheduler import _base_route_transition_fields, _build_route_transition_fields, _derive_native_bitable_contract
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
 from app.core.audit import record_audit
 from app.core.auth import issue_stream_token, require_api_key, verify_stream_token
@@ -189,6 +189,8 @@ def _safe_int(value: object) -> int:
 
 def _confirm_action_allowed(action: str, task_fields: dict[str, object]) -> tuple[bool, str]:
     route = str(task_fields.get("工作流路由") or "").strip() or "未设置"
+    if route in {"补数复核", "重新分析"}:
+        return False, f"当前任务处于 {route} 异常分支，请先完成复核或重跑，不能执行 {action}"
     pending_approval = _boolish(task_fields.get("待拍板确认"))
     approved = _boolish(task_fields.get("是否已拍板"))
     pending_execution = _boolish(task_fields.get("待执行确认"))
@@ -209,6 +211,246 @@ def _confirm_action_allowed(action: str, task_fields: dict[str, object]) -> tupl
     if allowed:
         return True, ""
     return False, f"当前任务处于 {route}，不能执行 {action}；期望阶段为 {expected}"
+
+
+def _route_transition_optional_keys() -> list[str]:
+    return list(_base_route_transition_fields().keys())
+
+
+def _build_approve_confirm_fields(
+    *,
+    actor: str,
+    now_ms: int,
+    task_fields: dict[str, object],
+    route: str,
+) -> tuple[dict[str, object], list[str], str, str, bool]:
+    fields: dict[str, object] = _base_route_transition_fields()
+    optional_keys = _route_transition_optional_keys() + ["拍板人", "拍板时间"]
+    fields.update(
+        {
+            "是否已拍板": True,
+            "拍板人": actor,
+            "拍板时间": now_ms,
+            # 拍板成功本身就消化了待发送汇报，否则视图会残留已拍板任务。
+            "待发送汇报": False,
+        }
+    )
+    action_name = "管理拍板确认"
+    action_summary = f"{actor} 已回写拍板结果"
+    promote_to_execution = route == "等待拍板" and _workflow_has_execution_items(task_fields)
+    if promote_to_execution:
+        fields.update(
+            {
+                "工作流路由": "直接执行",
+                "归档状态": "待执行",
+            }
+        )
+        fields.update(_build_route_transition_fields("直接执行", True, task_fields))
+        optional_keys.extend(["工作流路由", "归档状态"])
+        action_summary = f"{actor} 已回写拍板结果，并推进到执行队列"
+    return fields, optional_keys, action_name, action_summary, promote_to_execution
+
+
+def _build_execute_confirm_fields(now_ms: int) -> tuple[dict[str, object], list[str], str, str]:
+    fields: dict[str, object] = _base_route_transition_fields()
+    fields.update(
+        {
+            "是否已执行落地": True,
+            "待复盘确认": True,
+            "执行完成时间": now_ms,
+            # 推进归档状态到待复盘，否则待复盘视图拉不到刚执行完的任务。
+            "归档状态": "待复盘",
+        }
+    )
+    optional_keys = _route_transition_optional_keys() + ["执行完成时间", "归档状态"]
+    return fields, optional_keys, "执行落地确认", "已回写执行完成时间"
+
+
+def _build_retrospective_confirm_fields() -> tuple[dict[str, object], list[str], str, str]:
+    fields: dict[str, object] = _base_route_transition_fields()
+    fields.update(
+        {
+            "是否进入复盘": True,
+            "状态": Status.ARCHIVED,
+            "归档状态": "已归档",
+        }
+    )
+    optional_keys = _route_transition_optional_keys() + ["状态", "归档状态"]
+    return fields, optional_keys, "进入复盘确认", "已完成复盘并归档"
+
+
+def _build_archive_sync_payload(
+    action: str,
+    *,
+    record_id: str,
+    promote_to_execution: bool,
+) -> tuple[dict[str, object], list[str]]:
+    if action == "approve" and promote_to_execution:
+        return (
+            {
+                "工作流路由": "直接执行",
+                "归档状态": "待执行",
+                "关联记录ID": record_id,
+            },
+            ["工作流路由", "归档状态", "关联记录ID"],
+        )
+    if action == "execute":
+        return (
+            {
+                "归档状态": "待复盘",
+                "关联记录ID": record_id,
+            },
+            ["归档状态", "关联记录ID"],
+        )
+    if action == "retrospective":
+        return (
+            {
+                "归档状态": "已归档",
+                "关联记录ID": record_id,
+            },
+            ["归档状态", "关联记录ID"],
+        )
+    return {}, []
+
+
+def _normalize_task_record_fields(task_record: dict[str, object]) -> dict[str, object]:
+    from app.bitable_workflow.scheduler import _flatten_record_fields
+
+    raw_fields = task_record.get("fields") or {}
+    task_fields = _flatten_record_fields(raw_fields)
+    # SingleSelect 偶尔返回 dict {"text":"...","name":"..."}，再补一层
+    for key, value in list(task_fields.items()):
+        if isinstance(value, dict):
+            task_fields[key] = value.get("text") or value.get("name") or ""
+    return task_fields
+
+
+async def _load_confirm_task_context(app_token: str, table_id: str, record_id: str) -> tuple[str, str, dict[str, object]]:
+    task_record = await bitable_ops.get_record(app_token, table_id, record_id)
+    task_fields = _normalize_task_record_fields(task_record)
+    task_title = str(task_fields.get("任务标题") or "").strip()
+    route = str(task_fields.get("工作流路由") or "").strip()
+    return task_title, route, task_fields
+
+
+def _build_action_log_fields(
+    *,
+    action_name: str,
+    task_title: str,
+    action_status: str,
+    effective_route: str,
+    action_summary: str,
+    actor: str,
+    action: str,
+    record_id: str,
+) -> dict[str, object]:
+    return {
+        "动作标题": f"{action_name} · {task_title}",
+        "任务标题": task_title,
+        "动作类型": "工作流记录",
+        "动作状态": action_status,
+        "工作流路由": effective_route,
+        "动作内容": action_summary,
+        "执行结果": f"{actor} 通过驾驶舱回写 {action}",
+        "关联记录ID": record_id,
+    }
+
+
+def _build_automation_log_fields(
+    *,
+    action_name: str,
+    task_title: str,
+    action_status: str,
+    effective_route: str,
+    action_summary: str,
+    actor: str,
+    action: str,
+    record_id: str,
+) -> dict[str, object]:
+    return {
+        "日志标题": f"{action_name} · {task_title}",
+        "任务标题": task_title,
+        "节点名称": action_name,
+        "触发来源": "驾驶舱回写",
+        "执行状态": action_status,
+        "工作流路由": effective_route,
+        "日志摘要": action_summary,
+        "详细结果": f"{actor} 于驾驶舱执行 {action}，已同步回写主表字段。",
+        "关联记录ID": record_id,
+    }
+
+
+async def _write_confirm_log_records(
+    *,
+    app_token: str,
+    action_tid: str | None,
+    automation_log_tid: str | None,
+    task_title: str,
+    action_name: str,
+    action_status: str,
+    effective_route: str,
+    action_summary: str,
+    actor: str,
+    action: str,
+    record_id: str,
+) -> None:
+    if action_tid and task_title:
+        await bitable_ops.create_record_optional_fields(
+            app_token,
+            action_tid,
+            _build_action_log_fields(
+                action_name=action_name,
+                task_title=task_title,
+                action_status=action_status,
+                effective_route=effective_route,
+                action_summary=action_summary,
+                actor=actor,
+                action=action,
+                record_id=record_id,
+            ),
+            optional_keys=["工作流路由", "关联记录ID"],
+        )
+    if automation_log_tid and task_title:
+        await bitable_ops.create_record_optional_fields(
+            app_token,
+            automation_log_tid,
+            _build_automation_log_fields(
+                action_name=action_name,
+                task_title=task_title,
+                action_status=action_status,
+                effective_route=effective_route,
+                action_summary=action_summary,
+                actor=actor,
+                action=action,
+                record_id=record_id,
+            ),
+            optional_keys=["工作流路由", "触发来源", "详细结果", "关联记录ID"],
+        )
+
+
+async def _sync_confirm_archive_if_needed(
+    *,
+    action: str,
+    app_token: str,
+    archive_tid: str | None,
+    record_id: str,
+    task_title: str,
+    promote_to_execution: bool,
+) -> None:
+    archive_sync_fields, archive_sync_optional_keys = _build_archive_sync_payload(
+        action,
+        record_id=record_id,
+        promote_to_execution=promote_to_execution,
+    )
+    if archive_sync_fields:
+        await _sync_delivery_archive(
+            app_token,
+            archive_tid,
+            record_id,
+            task_title,
+            archive_sync_fields,
+            archive_sync_optional_keys,
+        )
 
 
 def _workflow_has_execution_items(task_fields: dict[str, object]) -> bool:
@@ -368,7 +610,7 @@ async def _resolve_seed_template_defaults(
 
 @router.post("/setup", dependencies=[Depends(require_api_key)])
 async def workflow_setup(req: SetupRequest):
-    """创建飞书多维表格结构（任务/报告/证据/评审/动作等 8 张表）并写入初始分析任务。"""
+    """创建飞书多维表格结构（12 张业务表、多视图、模板中心）并写入初始分析任务。"""
     if runner.is_running():
         raise HTTPException(
             status_code=409,
@@ -634,19 +876,9 @@ async def workflow_confirm(req: ConfirmRequest):
     task_title = ""
     task_fields: dict[str, object] = {}
     try:
-        task_record = await bitable_ops.get_record(req.app_token, req.table_id, req.record_id)
         # v8.6.20-r9（审计 #2）：飞书 get_record 把 Text/SingleSelect 字段返成富文本
-        # 数组或 dict，str() 直接拿到 "[{'text':'等待拍板',...}]" 这种字面量，
-        # 跟 "等待拍板" 字符串永不相等 → 拍板 promote/拒绝判定全部错路径。
-        from app.bitable_workflow.scheduler import _flatten_record_fields
-        raw_fields = task_record.get("fields") or {}
-        task_fields = _flatten_record_fields(raw_fields)
-        # SingleSelect 偶尔返回 dict {"text":"...","name":"..."}，再补一层
-        for k, v in list(task_fields.items()):
-            if isinstance(v, dict):
-                task_fields[k] = v.get("text") or v.get("name") or ""
-        task_title = str(task_fields.get("任务标题") or "").strip()
-        route = str(task_fields.get("工作流路由") or "").strip()
+        # 数组或 dict，必须先统一拍平，再做路由/状态判断。
+        task_title, route, task_fields = await _load_confirm_task_context(req.app_token, req.table_id, req.record_id)
     except Exception as exc:
         logger.warning("confirm fetch task record failed record=%s: %s", req.record_id, exc)
     if task_fields:
@@ -658,80 +890,31 @@ async def workflow_confirm(req: ConfirmRequest):
     action_name = ""
     action_status = "已完成"
     action_summary = ""
-    promote_to_execution = req.action == "approve" and route == "等待拍板" and _workflow_has_execution_items(task_fields)
+    promote_to_execution = False
 
     if req.action == "approve":
-        fields.update(
-            {
-                "是否已拍板": True,
-                "待拍板确认": False,
-                "拍板人": actor,
-                "拍板时间": now_ms,
-                # v8.6.20-r6：审计 #8 — 拍板成功本身就消化了「待发送汇报」状态，
-                # 否则即使 promote_to_execution=False，cockpit「📣 待发送汇报」视图
-                # 仍会卡着这条已拍板任务。
-                "待发送汇报": False,
-            }
+        (
+            approve_fields,
+            approve_optional_keys,
+            action_name,
+            action_summary,
+            promote_to_execution,
+        ) = _build_approve_confirm_fields(
+            actor=actor,
+            now_ms=now_ms,
+            task_fields=task_fields,
+            route=route,
         )
-        optional_keys.extend(["待拍板确认", "拍板人", "拍板时间", "待发送汇报"])
-        action_name = "管理拍板确认"
-        action_summary = f"{actor} 已回写拍板结果"
-        if promote_to_execution:
-            fields.update(
-                {
-                    "工作流路由": "直接执行",
-                    "待创建执行任务": True,
-                    "待执行确认": True,
-                    "归档状态": "待执行",
-                }
-            )
-            optional_keys.extend(["工作流路由", "待创建执行任务", "待执行确认", "归档状态"])
-            if not task_fields.get("执行截止时间"):
-                fields["执行截止时间"] = int(datetime.now(tz=timezone.utc).timestamp() * 1000) + 72 * 3600 * 1000
-                optional_keys.append("执行截止时间")
-            action_summary = f"{actor} 已回写拍板结果，并推进到执行队列"
+        fields.update(approve_fields)
+        optional_keys.extend(approve_optional_keys)
     elif req.action == "execute":
-        fields.update(
-            {
-                "是否已执行落地": True,
-                "待执行确认": False,
-                "待复盘确认": True,
-                "执行完成时间": now_ms,
-                # v8.6.20-r6：审计 #4 — 推进归档状态到「待复盘」，否则 cockpit
-                # 按 归档状态='待复盘' 过滤的视图永远拉不到刚执行完的任务。
-                "归档状态": "待复盘",
-            }
-        )
-        optional_keys.extend(["待执行确认", "待复盘确认", "执行完成时间", "归档状态"])
-        action_name = "执行落地确认"
-        action_summary = "已回写执行完成时间"
+        execute_fields, execute_optional_keys, action_name, action_summary = _build_execute_confirm_fields(now_ms)
+        fields.update(execute_fields)
+        optional_keys.extend(execute_optional_keys)
     elif req.action == "retrospective":
-        # v8.6.20-r6：审计 #4 — 复盘完成 → 归档状态 推到「已归档」+ 清掉所有 pending 标志
-        fields.update(
-            {
-                "是否进入复盘": True,
-                "待复盘确认": False,
-                "状态": Status.ARCHIVED,
-                "归档状态": "已归档",
-                "待发送汇报": False,
-                "待创建执行任务": False,
-                "待执行确认": False,
-                "待安排复核": False,
-            }
-        )
-        optional_keys.extend(
-            [
-                "待复盘确认",
-                "状态",
-                "归档状态",
-                "待发送汇报",
-                "待创建执行任务",
-                "待执行确认",
-                "待安排复核",
-            ]
-        )
-        action_name = "进入复盘确认"
-        action_summary = "已完成复盘并归档"
+        retro_fields, retro_optional_keys, action_name, action_summary = _build_retrospective_confirm_fields()
+        fields.update(retro_fields)
+        optional_keys.extend(retro_optional_keys)
 
     merged_task_fields = dict(task_fields)
     merged_task_fields.update(fields)
@@ -770,69 +953,27 @@ async def workflow_confirm(req: ConfirmRequest):
     automation_log_tid = table_ids.get("automation_log")
     archive_tid = table_ids.get("archive")
     effective_route = str(merged_task_fields.get("工作流路由") or route).strip()
-    if action_tid and task_title:
-        await bitable_ops.create_record_optional_fields(
-            req.app_token,
-            action_tid,
-            {
-                "动作标题": f"{action_name} · {task_title}",
-                "任务标题": task_title,
-                "动作类型": "工作流记录",
-                "动作状态": action_status,
-                "工作流路由": effective_route,
-                "动作内容": action_summary,
-                "执行结果": f"{actor} 通过驾驶舱回写 {req.action}",
-                "关联记录ID": req.record_id,
-            },
-            optional_keys=["工作流路由", "关联记录ID"],
-        )
-    if automation_log_tid and task_title:
-        await bitable_ops.create_record_optional_fields(
-            req.app_token,
-            automation_log_tid,
-            {
-                "日志标题": f"{action_name} · {task_title}",
-                "任务标题": task_title,
-                "节点名称": action_name,
-                "触发来源": "驾驶舱回写",
-                "执行状态": action_status,
-                "工作流路由": effective_route,
-                "日志摘要": action_summary,
-                "详细结果": f"{actor} 于驾驶舱执行 {req.action}，已同步回写主表字段。",
-                "关联记录ID": req.record_id,
-            },
-            optional_keys=["工作流路由", "触发来源", "详细结果", "关联记录ID"],
-        )
-    archive_sync_fields: dict[str, object] = {}
-    archive_sync_optional_keys: list[str] = []
-    if req.action == "approve" and promote_to_execution:
-        archive_sync_fields = {
-            "工作流路由": "直接执行",
-            "归档状态": "待执行",
-            "关联记录ID": req.record_id,
-        }
-        archive_sync_optional_keys = ["工作流路由", "归档状态", "关联记录ID"]
-    elif req.action == "execute":
-        archive_sync_fields = {
-            "归档状态": "待复盘",
-            "关联记录ID": req.record_id,
-        }
-        archive_sync_optional_keys = ["归档状态", "关联记录ID"]
-    elif req.action == "retrospective":
-        archive_sync_fields = {
-            "归档状态": "已归档",
-            "关联记录ID": req.record_id,
-        }
-        archive_sync_optional_keys = ["归档状态", "关联记录ID"]
-    if archive_sync_fields:
-        await _sync_delivery_archive(
-            req.app_token,
-            archive_tid,
-            req.record_id,
-            task_title,
-            archive_sync_fields,
-            archive_sync_optional_keys,
-        )
+    await _write_confirm_log_records(
+        app_token=req.app_token,
+        action_tid=action_tid,
+        automation_log_tid=automation_log_tid,
+        task_title=task_title,
+        action_name=action_name,
+        action_status=action_status,
+        effective_route=effective_route,
+        action_summary=action_summary,
+        actor=actor,
+        action=req.action,
+        record_id=req.record_id,
+    )
+    await _sync_confirm_archive_if_needed(
+        action=req.action,
+        app_token=req.app_token,
+        archive_tid=archive_tid,
+        record_id=req.record_id,
+        task_title=task_title,
+        promote_to_execution=promote_to_execution,
+    )
     return {"record_id": req.record_id, "action": req.action, "updated": fields}
 
 
