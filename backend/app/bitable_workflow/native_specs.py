@@ -610,6 +610,14 @@ def build_role_specs() -> list[dict[str, Any]]:
             "native_goal": "复核人围绕证据、评审和复核历史工作，不直接暴露高管动作面。",
             "config": _review_role_config(),
         },
+        {
+            "name": "复盘负责人工作面",
+            "focus_views": ["🔁 待进入复盘", "🟪 复盘滞留", "🔁 待复盘归档", "📦 归档看板"],
+            "permissions_focus": ["分析任务", "交付结果归档"],
+            "dashboard_focus": ["交付异常看板"],
+            "native_goal": "复盘负责人承接执行后的归档闭环，专注待复盘任务、异常滞留与归档沉淀。",
+            "config": _retrospective_role_config(),
+        },
     ]
 
 
@@ -877,10 +885,10 @@ def _execution_role_config() -> dict[str, Any]:
                 filter_values=["直接执行"],
             ),
             "交付结果归档": _filtered_edit_table_rule(
-                ["🧾 待执行归档", "🔁 待复盘归档", "📦 归档看板"],
+                ["🧾 待执行归档", "📦 归档看板"],
                 _execution_archive_field_rule(),
                 filter_field="归档状态",
-                filter_values=["待执行", "待复盘"],
+                filter_values=["待执行"],
             ),
         },
     }
@@ -911,6 +919,33 @@ def _review_role_config() -> dict[str, Any]:
             "复核历史": _filtered_edit_table_rule(
                 ["🟡 补数复核历史", "🔁 重跑历史", "✅ 直接采用历史", "🧪 复核轮次看板"],
                 _review_history_field_rule(),
+            ),
+        },
+    }
+
+
+def _retrospective_role_config() -> dict[str, Any]:
+    return {
+        "role_name": "复盘负责人工作面",
+        "role_type": "custom_role",
+        "base_rule_map": {"copy": False, "download": False},
+        "dashboard_rule_map": {
+            "管理汇报总览": {"perm": "no_perm"},
+            "证据与评审看板": {"perm": "no_perm"},
+            "交付异常看板": {"perm": "read_only"},
+        },
+        "table_rule_map": {
+            "分析任务": _filtered_edit_table_rule(
+                ["🔁 待进入复盘", "🟪 复盘滞留", "🟥 已异常任务"],
+                _retrospective_task_field_rule(),
+                filter_field="当前责任角色",
+                filter_values=["复盘负责人"],
+            ),
+            "交付结果归档": _filtered_edit_table_rule(
+                ["🔁 待复盘归档", "📦 归档看板"],
+                _retrospective_archive_field_rule(),
+                filter_field="归档状态",
+                filter_values=["待复盘"],
             ),
         },
     }
@@ -1090,6 +1125,53 @@ def _review_history_field_rule() -> dict[str, Any]:
         workflow_schema.REVIEW_HISTORY_FIELDS,
         ["推荐动作", "触发原因", "复核结论", "新旧结论差异", "需补数事项"],
         ["复核标题", "任务标题", "任务编号", "复核轮次", "工作流路由", "前次评审动作", "关联记录ID", "生成时间"],
+    )
+
+
+def _retrospective_task_field_rule() -> dict[str, Any]:
+    edit_fields = [
+        "复盘负责人",
+        "复盘负责人OpenID",
+        "当前责任人",
+        "当前阶段",
+        "当前原生动作",
+        "自动化执行状态",
+        "是否进入复盘",
+        "待复盘确认",
+        "状态",
+        "归档状态",
+        "异常状态",
+        "异常类型",
+        "异常说明",
+    ]
+    read_fields = [
+        "任务标题",
+        "任务编号",
+        "优先级",
+        "目标对象",
+        "输出目的",
+        "业务归属",
+        "工作流路由",
+        "成功标准",
+        "约束条件",
+        "最新管理摘要",
+        "最新评审动作",
+        "汇报对象",
+        "执行负责人",
+        "复核负责人",
+        "待执行确认",
+        "待复盘确认",
+        "创建时间",
+        "最近更新",
+    ]
+    return _specify_field_rule(workflow_schema.TASK_FIELDS, edit_fields, read_fields, ["任务图像"])
+
+
+def _retrospective_archive_field_rule() -> dict[str, Any]:
+    return _specify_field_rule(
+        workflow_schema.DELIVERY_ARCHIVE_FIELDS,
+        ["归档状态", "关联记录ID"],
+        ["归档标题", "任务标题", "任务编号", "汇报版本号", "工作流路由", "一句话结论", "管理摘要", "首要动作", "汇报就绪度", "工作流消息包", "汇报对象", "执行负责人", "复核负责人", "生成时间"],
     )
 
 

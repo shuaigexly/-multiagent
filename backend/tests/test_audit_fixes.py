@@ -1084,6 +1084,38 @@ async def test_workflow_confirm_rejects_duplicate_retrospective_after_archived(m
     update_mock.assert_not_awaited()
 
 
+def test_native_role_specs_include_retrospective_workspace():
+    """原生角色包必须包含复盘负责人工作面，承接最后一段闭环。"""
+    from app.bitable_workflow.native_specs import build_role_specs
+
+    roles = build_role_specs()
+    names = [role["name"] for role in roles]
+
+    assert "高管交付面" in names
+    assert "执行负责人工作面" in names
+    assert "复核负责人工作面" in names
+    assert "复盘负责人工作面" in names
+
+
+def test_retrospective_role_owns_retrospective_archive_queue():
+    """待复盘归档应由复盘角色承接，而不是继续挂在执行角色上。"""
+    from app.bitable_workflow.native_specs import build_role_specs
+
+    roles = {role["name"]: role for role in build_role_specs()}
+    execution = roles["执行负责人工作面"]["config"]["table_rule_map"]["交付结果归档"]
+    retrospective = roles["复盘负责人工作面"]["config"]["table_rule_map"]["交付结果归档"]
+
+    execution_views = execution["view_rule"]["visibility"]["visible_views"]
+    retrospective_views = retrospective["view_rule"]["visibility"]["visible_views"]
+    execution_filters = execution["record_rule"]["edit_filter_rule_group"]["filter_rules"][0]["filters"][0]["filter_values"]
+    retrospective_filters = retrospective["record_rule"]["edit_filter_rule_group"]["filter_rules"][0]["filters"][0]["filter_values"]
+
+    assert "🔁 待复盘归档" not in execution_views
+    assert execution_filters == ["待执行"]
+    assert "🔁 待复盘归档" in retrospective_views
+    assert retrospective_filters == ["待复盘"]
+
+
 def test_apply_native_request_accepts_advperm_surface():
     from app.api.workflow import ApplyNativeRequest
 
