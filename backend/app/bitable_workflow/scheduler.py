@@ -885,7 +885,12 @@ def _build_route_transition_fields(route: str, has_execution_items: bool, task_f
     elif route == "重新分析":
         review_at_ms = int((now + timedelta(hours=4)).timestamp() * 1000)
     elif route == "直接执行":
-        execution_due_at_ms = task_fields.get("执行截止时间") or int((now + timedelta(hours=72)).timestamp() * 1000)
+        # v8.6.20-r13（审计 #6）：之前 task_fields.get("执行截止时间") or default —
+        # 字段是 Date(ms)，但用户/老 base 可能写入字符串/list；OR 会把字符串当
+        # truthy 直接传到 update_record，飞书返 1254060 TextFieldConvFail。
+        # 用 _safe_int_field 兜底，>0 才用，否则取默认 +72h。
+        existing_due = _safe_int_field(task_fields.get("执行截止时间"))
+        execution_due_at_ms = existing_due if existing_due > 0 else int((now + timedelta(hours=72)).timestamp() * 1000)
 
     transition = _base_route_transition_fields()
     transition.update(

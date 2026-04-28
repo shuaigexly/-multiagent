@@ -79,9 +79,16 @@ def _cache_key(task_id: str, agent_id: str, input_hash: str) -> str:
 
 
 def _shared_key(dimension: str, agent_id: str, input_hash: str) -> str:
-    """跨任务共享 cache：相同分析维度 + 相同输入哈希的 agent 输出可复用。"""
+    """跨任务共享 cache：相同分析维度 + 相同输入哈希的 agent 输出可复用。
+
+    v8.6.20-r13（审计 #1 多租户隔离）：必须把 tenant_id 纳入 key，否则租户 A 在
+    某分析维度下缓存的 agent 输出会被租户 B 直接命中 — 含财务数字/客户名等敏感
+    内容跨租户泄漏。
+    """
+    from app.core.observability import get_tenant_id
+    tenant = (get_tenant_id() or "default").strip().replace(":", "_")[:32] or "default"
     dim_safe = (dimension or "default").strip().replace(":", "_")[:32]
-    return f"agent_cache:shared:{dim_safe}:{agent_id}:{input_hash}"
+    return f"agent_cache:shared:{tenant}:{dim_safe}:{agent_id}:{input_hash}"
 
 
 async def get_cached_result(task_id: str, agent_id: str, input_hash: str) -> Optional[AgentResult]:

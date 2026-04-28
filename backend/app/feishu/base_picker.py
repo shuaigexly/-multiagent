@@ -69,7 +69,14 @@ async def _paged_items(
             break
         page_token = _next_page_token(data)
         if not page_token:
-            raise RuntimeError("paged request failed: has_more=true but page_token missing")
+            # v8.6.20-r13（审计 #3）：飞书部分 endpoint 在终页返 has_more=true + 空
+            # page_token，bitable_ops 和 verify.py 都已 break，这里之前 raise 会让
+            # 整个 base picker UI 崩溃。统一为容忍 break。
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "paged request: has_more=true but page_token missing on %s, treating as terminal", url
+            )
+            break
     return items
 
 

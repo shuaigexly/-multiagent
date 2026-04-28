@@ -126,6 +126,10 @@ async def orchestrate(
     """
     if not selected_modules:
         raise ValueError("未选择任何 Agent 模块，请至少选择一个模块后再执行。")
+    # v8.6.20-r13（审计 #7）：去重保留首次顺序 — caller 传入 [data_analyst,
+    # data_analyst, ceo_assistant] 时，旧版会把 data_analyst 在同一波并发跑两次，
+    # 浪费 LLM token 且 all_results 出现重复 section。
+    selected_modules = list(dict.fromkeys(selected_modules))
 
     can_proceed, no_data_message = _assess_data_availability(
         task_description,

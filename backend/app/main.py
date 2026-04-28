@@ -196,8 +196,16 @@ async def correlation_middleware(request: Request, call_next):
     优先使用 X-Correlation-ID 请求头（便于跨服务追踪），否则生成新 uuid4 短码。
     响应同样回写该 header，便于前端关联日志。
     """
+    # v8.6.20-r13（审计 #10 安全）：cid 之前完全不限字符 → 含 \n 的 incoming
+    # 通过 _PlainFormatter 把伪造日志行注入 app.log，污染 audit_log.correlation_id；
+    # X-Tenant-ID 已经走严格 _TENANT_ID_RE，cid 也对齐同等约束。
+    import re as _re
+    _CID_RE = _re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
     incoming = request.headers.get("X-Correlation-ID") or request.headers.get("X-Request-ID")
-    cid = (incoming or uuid.uuid4().hex[:12])[:64]
+    if incoming and _CID_RE.match(incoming.strip()):
+        cid = incoming.strip()[:64]
+    else:
+        cid = uuid.uuid4().hex[:12]
     tenant = _normalize_tenant_id(request.headers.get("X-Tenant-ID"))
     async with correlation_scope(cid):
         # tenant_id 贯穿到 budget / audit / cache key

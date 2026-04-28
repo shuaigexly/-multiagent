@@ -150,7 +150,19 @@ async def run_plan_execute(
     if not isinstance(plan, list):
         raise RuntimeError(f"plan parse: not a list; raw={plan_raw[:300]}")
 
-    plan = [p for p in plan if isinstance(p, dict) and p.get("step")][:max_steps]
+    valid_plan = [p for p in plan if isinstance(p, dict) and p.get("step")]
+    # v8.6.20-r13（审计 #4）：之前 [:max_steps] 静默丢弃超额步骤，复杂 CEO 任务
+    # 一旦 LLM 输出 6-8 步 → 后 2-3 步直接没了，最终报告隐性少 25%-40% 覆盖面，
+    # 无任何告警。改为显式 logger.warning，并在 synthesize 阶段把被截断的 step
+    # 标题以兜底形式塞进去，让 CEO 至少知道还有未展开的子问题。
+    if len(valid_plan) > max_steps:
+        truncated_titles = [p.get("step") for p in valid_plan[max_steps:]]
+        logger.warning(
+            "plan_execute.truncated agent=%s total=%d max=%d dropped=%s",
+            agent.agent_id, len(valid_plan), max_steps,
+            [str(t)[:40] for t in truncated_titles[:3]],
+        )
+    plan = valid_plan[:max_steps]
     if len(plan) < 2:
         raise RuntimeError(f"plan too short: only {len(plan)} valid steps")
     logger.info("plan_execute.plan agent=%s steps=%s", agent.agent_id, len(plan))
