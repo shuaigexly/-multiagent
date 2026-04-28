@@ -1,0 +1,42 @@
+{
+  "appid": "cli_a9551a3edea29bc9",
+  "blockId": "blk_69dfa6237f9a4bc6da11f357",
+  "projectname": "puff-c21-bitable-plugin",
+  "description": "Puff C21 多 Agent 协同决策工作台 — Bitable 数据表视图扩展",
+  "compileType": "block",
+  "blockRoot": "dist",
+  "miniprogramRoot": "dist",
+  "setting": {
+    "es6": true,
+    "minified": true,
+    "minifyWXSS": true,
+    "newFeature": true,
+    "useCompilerPlugins": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "libVersion": "1.0.0",
+  "packOptions": {
+    "ignore": [
+      {
+        "type": "folder",
+        "value": "node_modules"
+      },
+      {
+        "type": "folder",
+        "value": "src"
+      },
+      {
+        "type": "folder",
+        "value": ".github"
+      },
+      {
+        "type": "file",
+        "value": "package-plugin.mjs"
+      }
+    ]
+  }
+}
