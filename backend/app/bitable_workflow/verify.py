@@ -52,7 +52,11 @@ async def _fetch_items(
             return items
         page_token = payload.get("page_token") or payload.get("next_page_token")
         if not page_token:
-            raise RuntimeError("Feishu API returned has_more=true without page_token")
+            # v8.6.20-r10（审计 #5）：飞书部分 endpoint（views/dashboards）会在最后一页
+            # 返回 has_more=true + 空 page_token，此时下一页其实是空。bitable_ops
+            # 同样情况是 break，verify 之前 raise 会让整 audit 中途崩溃，掩盖真实
+            # 问题列表。改为视作分页结束。
+            return items
 
 
 async def audit_bitable(

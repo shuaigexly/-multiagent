@@ -1,6 +1,7 @@
 """飞书 OAuth 用户授权（用于获取 user_access_token，支持任务 API 等用户级接口）"""
 import logging
 import os
+import re
 import secrets
 import time
 from urllib.parse import quote
@@ -65,6 +66,23 @@ def _cleanup_pending_states(now: float | None = None) -> None:
 
 
 def _is_allowed_origin(origin: str) -> bool:
+    # v8.6.20-r10（审计 #7 安全）：除白名单匹配外，强校验 origin 必须是
+    # 干净的 https://host[:port] 或 http://localhost[:port]，不允许 javascript:/
+    # data:/file:/带路径/带 query/带 fragment，防 frontend_origin 注入恶意 URL
+    # 然后在错误回跳时把控制权交给攻击者。
+    if not origin or not isinstance(origin, str):
+        return False
+    try:
+        from urllib.parse import urlparse
+        u = urlparse(origin.rstrip("/"))
+    except Exception:
+        return False
+    if u.scheme not in {"https", "http"}:
+        return False
+    if u.path not in {"", "/"} or u.query or u.fragment:
+        return False
+    if not u.netloc:
+        return False
     allowed = [
         o.strip()
         for o in os.getenv("ALLOWED_ORIGINS", _settings.allowed_origins).split(",")
@@ -182,6 +200,15 @@ async def get_oauth_url(
     return {"ok": True, "url": url, "callback": callback}
 
 
+def _scrub_oauth_msg(value: object, max_chars: int = 200) -> str:
+    """v8.6.20-r10（审计 #7 安全）：剥离 control char + 截断，防止前端日志/页面渲染
+    被注入。url quote 已经做 URL-safe 编码，但前端如果 unescape 后直接拼到 HTML，
+    就会露出真容；此处先把不可打印字符都换成空格。"""
+    s = str(value or "")
+    s = re.sub(r"[\x00-\x1f\x7f]", " ", s)
+    return s[:max_chars]
+
+
 @router.get("/oauth/callback")
 async def oauth_callback(
     code: str = Query(...),
@@ -206,7 +233,7 @@ async def oauth_callback(
             app_token_data = r1.json()
             if app_token_data.get("code") not in (None, 0):
                 logger.error("OAuth: 获取 app_access_token 失败: %s", app_token_data)
-                return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(str(app_token_data.get('msg', '获取app_token失败')), safe='')}")
+                return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(_scrub_oauth_msg(app_token_data.get('msg', '获取app_token失败')), safe='')}")
             app_token = app_token_data.get("app_access_token", "")
             if not app_token:
                 logger.error("OAuth: 获取 app_access_token 失败")
@@ -223,7 +250,7 @@ async def oauth_callback(
 
         if data.get("code") != 0:
             logger.error(f"OAuth token 交换失败: {data}")
-            return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(str(data.get('msg', '授权失败')), safe='')}")
+            return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(_scrub_oauth_msg(data.get('msg', '授权失败')), safe='')}")
 
         user_data = data.get("data", {})
         access_token = user_data.get("access_token", "")
@@ -264,7 +291,7 @@ async def oauth_callback(
     except Exception as e:
         logger.error(f"OAuth 回调异常: {e}", exc_info=True)
         return RedirectResponse(
-            url=f"{frontend_origin}/settings?oauth=error&msg={quote(truncate_with_marker(e, 80), safe='')}"
+            url=f"{frontend_origin}/settings?oauth=error&msg={quote(_scrub_oauth_msg(truncate_with_marker(str(e), 80)), safe='')}"
         )
 
 

@@ -34,14 +34,16 @@ def _safe_prompt_text(value: object, max_chars: int = 1500) -> str:
     没过 injection guard，恶意文档可绕过 prompt 防护层。这里统一过一遍。
     """
     raw = str(value or "")[:max_chars]
-    # 只对足够长的内容做 sanitize（短字符串如时间戳/姓名跳过避免误伤）
-    if len(raw) > 30:
-        try:
-            from app.core.prompt_guard import sanitize
-
-            raw = sanitize(raw, source="feishu_context").text
-        except Exception:
-            pass
+    # v8.6.20-r10（审计 #2 安全）：取消 30-char 短字符串绕过门限。
+    # prompt_guard 的 patterns 含「忽略以上指令」(7字)/「忘记之前提示」(6字)/
+    # "ignore prior rules"(18字) 等短 payload，攻击者把飞书任务/文档标题写成这些
+    # 短文本即可绕过 sanitize。sanitize 对正常短字符串（时间戳/姓名）不会误伤
+    # 因为它只匹配明确的注入模式。
+    try:
+        from app.core.prompt_guard import sanitize
+        raw = sanitize(raw, source="feishu_context").text
+    except Exception:
+        pass
     return _escape_xml(raw)
 
 

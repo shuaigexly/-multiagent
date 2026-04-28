@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from lark_oapi.api.task.v2 import (
@@ -44,7 +44,17 @@ def _due_to_timestamp_ms(due: Optional[str]) -> Optional[int]:
     if not due:
         return None
     try:
-        due_dt = datetime.strptime(due, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        # v8.6.20-r10（审计 #3）：CEO 中文行动项 "截止 2025-12-31" 在 CN 语境下指
+        # 北京时间当日 EOD。之前用 UTC 导致截止时间被偏移 +16 小时（或飞书 UI
+        # 显示前一天）。改为 Asia/Shanghai 当日 23:59。
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("Asia/Shanghai")
+        except Exception:
+            tz = timezone(timedelta(hours=8))
+        due_dt = datetime.strptime(due, "%Y-%m-%d").replace(
+            hour=23, minute=59, tzinfo=tz,
+        )
     except ValueError:
         logger.warning(f"无法解析任务截止日期: {due}")
         return None

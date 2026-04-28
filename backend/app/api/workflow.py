@@ -76,33 +76,35 @@ class StartRequest(BaseModel):
 
 
 class SeedRequest(BaseModel):
-    app_token: str
-    table_id: str
-    title: str = Field(min_length=1)
-    dimension: str = "综合分析"
-    background: str = ""
-    target_audience: str = ""
-    output_purpose: str = ""
-    task_source: str = "手工创建"
-    business_owner: str = ""
-    audience_level: str = ""
-    success_criteria: str = ""
-    constraints: str = ""
-    business_stage: str = ""
-    referenced_dataset: str = ""
-    report_audience: str = ""
-    report_audience_open_id: str = ""
-    approval_owner: str = ""
-    approval_owner_open_id: str = ""
-    execution_owner: str = ""
-    execution_owner_open_id: str = ""
-    review_owner: str = ""
-    review_owner_open_id: str = ""
-    retrospective_owner: str = ""
-    retrospective_owner_open_id: str = ""
-    review_sla_hours: int = Field(default=0, ge=0)
-    template_name: str = ""
-    template: str = ""
+    # v8.6.20-r10（审计 #6）：每个 string 字段都有 max_length 防止 1MB payload 滚到
+    # 飞书 API 触发非确定性 400/500，也防止 app_token/table_id 空串到下游 404。
+    app_token: str = Field(min_length=1, max_length=64)
+    table_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=200)
+    dimension: str = Field(default="综合分析", max_length=50)
+    background: str = Field(default="", max_length=10000)
+    target_audience: str = Field(default="", max_length=500)
+    output_purpose: str = Field(default="", max_length=500)
+    task_source: str = Field(default="手工创建", max_length=50)
+    business_owner: str = Field(default="", max_length=200)
+    audience_level: str = Field(default="", max_length=100)
+    success_criteria: str = Field(default="", max_length=2000)
+    constraints: str = Field(default="", max_length=2000)
+    business_stage: str = Field(default="", max_length=200)
+    referenced_dataset: str = Field(default="", max_length=500)
+    report_audience: str = Field(default="", max_length=200)
+    report_audience_open_id: str = Field(default="", max_length=128)
+    approval_owner: str = Field(default="", max_length=200)
+    approval_owner_open_id: str = Field(default="", max_length=128)
+    execution_owner: str = Field(default="", max_length=200)
+    execution_owner_open_id: str = Field(default="", max_length=128)
+    review_owner: str = Field(default="", max_length=200)
+    review_owner_open_id: str = Field(default="", max_length=128)
+    retrospective_owner: str = Field(default="", max_length=200)
+    retrospective_owner_open_id: str = Field(default="", max_length=128)
+    review_sla_hours: int = Field(default=0, ge=0, le=8760)
+    template_name: str = Field(default="", max_length=200)
+    template: str = Field(default="", max_length=200)
 
     @field_validator("dimension")
     @classmethod
@@ -304,8 +306,11 @@ async def _resolve_seed_template_defaults(
     exact_match: dict | None = None
     purpose_match: dict | None = None
     fallback_match: dict | None = None
+    # v8.6.20-r10（审计 #1）：拍平 Text 字段（飞书偶尔返富文本数组），否则模板名永
+    # 远不命中，整个 seed-template 默认值流程静默失效。
+    from app.bitable_workflow.scheduler import _flatten_record_fields
     for row in templates:
-        fields = row.get("fields") or {}
+        fields = _flatten_record_fields(row.get("fields") or {})
         if not _boolish(fields.get("启用")):
             continue
         row_name = str(fields.get("模板名称") or "").strip()

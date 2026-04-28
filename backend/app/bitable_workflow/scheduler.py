@@ -585,7 +585,11 @@ async def _resolve_template_defaults(
     purpose_match: dict | None = None
     fallback_match: dict | None = None
     for row in templates:
-        fields = row.get("fields") or {}
+        # v8.6.20-r10（审计 #1）：模板表 模板名称/适用输出目的 是 Text 字段，list_records
+        # 偶尔返回富文本数组 [{"text":"...","type":"text"}]。直接 str(...)拿到字面量
+        # "[{'text':'X',...}]"，跟 "X" 永不相等 → 模板永远不命中，整个模板中心功能
+        # 在飞书返回 list 形态时静默失效。先拍平再比对。
+        fields = _flatten_record_fields(row.get("fields") or {})
         if not bool(fields.get("启用")):
             continue
         row_name = str(fields.get("模板名称") or "").strip()
@@ -768,7 +772,8 @@ async def _apply_template_config(
     matched: dict | None = None
     fallback: dict | None = None
     for row in templates:
-        fields = row.get("fields") or {}
+        # v8.6.20-r10（审计 #1）：拍平避免富文本字面量误判
+        fields = _flatten_record_fields(row.get("fields") or {})
         if not bool(fields.get("启用")):
             continue
         template_name = str(fields.get("模板名称") or "").strip()
@@ -779,7 +784,7 @@ async def _apply_template_config(
         selected = exact_match
     else:
         for row in templates:
-            fields = row.get("fields") or {}
+            fields = _flatten_record_fields(row.get("fields") or {})
             if not bool(fields.get("启用")):
                 continue
             template_route = str(fields.get("适用工作流路由") or "").strip()
@@ -1503,9 +1508,16 @@ async def _create_followup_tasks(
 
     # 2. 在「分析任务」表中只为需要继续分析/补数/决策的事项生成后续记录
     from app.bitable_workflow import schema as _schema
+    import hashlib as _hashlib
     for item, kind in analysis_items:
         purpose = "补数核验" if kind == "need_data" else "管理决策"
-        followup_title = f"[跟进] {truncate_with_marker(item, 50, '...[截断]')}"
+        # v8.6.20-r10（审计 #8）：之前 truncate_with_marker(item, 50) 让两个前 42
+        # 字符相同的 decision_items 崩塌成同一 followup_title — dedupe lookup 把
+        # 第二条当成"重复"silently 丢弃，造成数据丢失。给标题尾部加 #6 位 sha1
+        # 摘要确保唯一性，dedupe 仍能精确命中真重复（同 item 必同 hash）。
+        item_hash = _hashlib.sha1(str(item).encode("utf-8")).hexdigest()[:6]
+        title_body = truncate_with_marker(item, 42, "...")
+        followup_title = f"[跟进] {title_body} #{item_hash}"
         try:
             safe_title = bitable_ops.quote_filter_value(followup_title)
             existing_rows = await bitable_ops.list_records(
@@ -2247,6 +2259,15 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
 
             # 标记为已完成，进度置为 100%
             # v8.6.19 — 双字段过渡：完成时间（旧 TEXT 总是写）+ 完成日期（新 DateTime 毫秒戳）
+            # v8.6.20-r10（审计 #4）：完成时间(Text) 和 完成日期(DateTime ms) 必须
+            # 来自同一时刻，且文本字段用北京时间（用户阅读）。之前完成时间用 naive
+            # datetime.now() 跟着服务器 tz 走，UTC 部署下两字段相差 8 小时。
+            _complete_now_utc = datetime.now(tz=timezone.utc)
+            try:
+                from zoneinfo import ZoneInfo as _Zone
+                _complete_now_local = _complete_now_utc.astimezone(_Zone("Asia/Shanghai"))
+            except Exception:
+                _complete_now_local = _complete_now_utc.astimezone(timezone(timedelta(hours=8)))
             # 老 base 缺「完成日期」时 update_record_optional_fields 自动 fallback 仅写完成时间
             await bitable_ops.update_record_optional_fields(
                 app_token,
@@ -2256,8 +2277,8 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     "状态": Status.COMPLETED,
                     "当前阶段": "✅ 七岗分析全部完成",
                     "进度": 1.0,
-                    "完成时间": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "完成日期": int(datetime.now(tz=timezone.utc).timestamp() * 1000),
+                    "完成时间": _complete_now_local.strftime("%Y-%m-%d %H:%M"),
+                    "完成日期": int(_complete_now_utc.timestamp() * 1000),
                     "汇报版本号": (archive_payload or {}).get("version") or "v1",
                     "归档状态": (archive_payload or {}).get("archive_status") or _derive_archive_status(workflow_route),
                     **delivery_snapshot,
