@@ -1,7 +1,9 @@
 """v8.6.18 — 验收 codex 报告里的两个真 bug 修复。"""
 import json
 import shlex
+import sys
 import pytest
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.budget import record_usage
@@ -241,6 +243,49 @@ async def test_apply_native_manifest_promotes_assets_to_created(monkeypatch):
     assert result["native_manifest"]["command_packs"][1]["status"] == "created"
     assert created_logs
     assert created_logs[0]["fields"]["触发来源"] == "native_manifest.apply"
+
+
+@pytest.mark.asyncio
+async def test_apply_native_manifest_backfills_missing_current_blueprints(monkeypatch):
+    from app.bitable_workflow.native_installer import apply_native_manifest
+    from app.bitable_workflow.native_specs import build_automation_specs, build_workflow_specs
+
+    async def fake_cli_base(shortcut: str, *args: str):
+        if shortcut == "+workflow-create":
+            return {"ok": True, "data": {"workflow_id": "wkf_created"}}
+        if shortcut == "+workflow-enable":
+            return {"ok": True, "data": {"workflow_id": "wkf_created", "status": "enabled"}}
+        raise AssertionError(f"unexpected shortcut {shortcut}")
+
+    async def fake_create_record_optional_fields(*args, **kwargs):
+        return "rec_native_log"
+
+    monkeypatch.setattr("app.bitable_workflow.native_installer.is_cli_available", lambda: True)
+    monkeypatch.setattr("app.bitable_workflow.native_installer.cli_base", fake_cli_base)
+    monkeypatch.setattr("app.bitable_workflow.native_installer.bitable_ops.create_record_optional_fields", fake_create_record_optional_fields)
+
+    native_assets = {
+        "automation_templates": [{"name": "A1 新任务入场提醒", "lifecycle_state": "blueprint_ready"}],
+        "workflow_blueprints": [{"name": "W1 路由总分发工作流", "lifecycle_state": "blueprint_ready"}],
+        "dashboard_blueprints": [],
+        "role_blueprints": [],
+        "form_blueprints": [],
+        "manual_finish_checklist": [],
+    }
+    result = await apply_native_manifest(
+        app_token="app_token",
+        base_url="https://feishu.cn/base/app_token",
+        table_ids={"task": "tbl_task", "evidence": "tbl_evidence", "automation_log": "tbl_log"},
+        base_meta={"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
+        native_assets=native_assets,
+        surfaces=["automation", "workflow"],
+        force=True,
+    )
+
+    assert len(result["native_assets"]["automation_templates"]) == len(build_automation_specs())
+    assert len(result["native_assets"]["workflow_blueprints"]) == len(build_workflow_specs())
+    assert all(item["lifecycle_state"] == "created" for item in result["native_assets"]["automation_templates"])
+    assert all(item["lifecycle_state"] == "created" for item in result["native_assets"]["workflow_blueprints"])
 
 
 @pytest.mark.asyncio
@@ -739,6 +784,45 @@ async def test_workflow_setup_keeps_base_result_when_native_apply_fails(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_workflow_native_manifest_refreshes_stale_blueprint_lists(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+
+    from app.api import workflow
+    from app.bitable_workflow.native_specs import build_automation_specs, build_workflow_specs
+
+    workflow._state.clear()
+    workflow._state.update(
+        {
+            "app_token": "app_token",
+            "url": "https://feishu.cn/base/app_token",
+            "base_meta": {"base_type": "production", "mode": "prod_empty", "schema_version": "v-test"},
+            "table_ids": {"task": "tbl_task", "evidence": "tbl_evidence"},
+            "native_assets": {
+                "automation_templates": [{"name": "A1 新任务入场提醒", "lifecycle_state": "blueprint_ready"}],
+                "workflow_blueprints": [{"name": "W1 路由总分发工作流", "lifecycle_state": "blueprint_ready"}],
+                "dashboard_blueprints": [],
+                "role_blueprints": [],
+                "form_blueprints": [],
+                "manual_finish_checklist": [],
+            },
+            "native_manifest": {},
+        }
+    )
+
+    result = await workflow.workflow_native_manifest()
+    packs = {pack["key"]: pack for pack in result["native_manifest"]["command_packs"]}
+
+    assert len(workflow._state["native_assets"]["automation_templates"]) == len(build_automation_specs())
+    assert len(workflow._state["native_assets"]["workflow_blueprints"]) == len(build_workflow_specs())
+    assert len(packs["automation"]["json_bodies"]) == len(build_automation_specs())
+    assert len(packs["workflow"]["json_bodies"]) == len(build_workflow_specs())
+
+
+@pytest.mark.asyncio
 async def test_write_native_install_logs_maps_manual_finish_to_pending_completion(monkeypatch):
     from app.bitable_workflow import native_installer
 
@@ -807,6 +891,7 @@ def test_native_role_field_rules_cover_all_non_system_fields():
 
 def test_refresh_native_assets_includes_advperm_group():
     from app.bitable_workflow.native_installer import _refresh_native_assets
+    from app.bitable_workflow.native_specs import build_automation_specs, build_dashboard_specs, build_role_specs, build_workflow_specs
 
     assets = {
         "advperm_state": "manual_finish_required",
@@ -820,7 +905,8 @@ def test_refresh_native_assets_includes_advperm_group():
 
     _refresh_native_assets(assets)
 
-    assert assets["status_summary"]["total_assets"] == 2
+    expected_total = 2 + len(build_automation_specs()) + len(build_workflow_specs()) + len(build_dashboard_specs()) + len(build_role_specs())
+    assert assets["status_summary"]["total_assets"] == expected_total
     assert assets["status_summary"]["counts"]["manual_finish_required"] == 1
     assert assets["status_summary"]["counts"]["created"] == 1
     assert any(group["key"] == "advperm" for group in assets["asset_groups"])

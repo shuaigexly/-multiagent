@@ -36,6 +36,7 @@ async def apply_native_manifest(
 ) -> dict[str, Any]:
     targets = {item for item in (surfaces or []) if item in _ALL_SURFACES} or set(_ALL_SURFACES)
     assets = copy.deepcopy(native_assets or {})
+    sync_native_asset_blueprints(assets)
     report: list[dict[str, Any]] = []
 
     if not is_cli_available():
@@ -85,6 +86,15 @@ async def apply_native_manifest(
         "native_assets": assets,
         "native_manifest": manifest,
     }
+
+
+def sync_native_asset_blueprints(assets: dict[str, Any]) -> dict[str, Any]:
+    _sync_named_assets(assets, "automation_templates", build_automation_specs(), surface="automation")
+    _sync_named_assets(assets, "workflow_blueprints", build_workflow_specs(), surface="workflow")
+    _sync_named_assets(assets, "dashboard_blueprints", build_dashboard_specs(), surface="dashboard")
+    _sync_named_assets(assets, "role_blueprints", build_role_specs(), surface="role")
+    _sync_form_assets(assets)
+    return assets
 
 
 async def _apply_advperm(app_token: str, assets: dict[str, Any], report: list[dict[str, Any]]) -> bool:
@@ -445,6 +455,59 @@ def _asset_list(assets: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return value if isinstance(value, list) else []
 
 
+def _sync_named_assets(assets: dict[str, Any], key: str, specs: list[dict[str, Any]], *, surface: str) -> None:
+    existing = _asset_list(assets, key)
+    existing_by_name = {str(item.get("name") or ""): item for item in existing if str(item.get("name") or "").strip()}
+    synced: list[dict[str, Any]] = []
+    for spec in specs:
+        name = str(spec.get("name") or "").strip()
+        current = copy.deepcopy(existing_by_name.get(name) or {})
+        if not current:
+            current = {
+                "name": name,
+                "status": "blueprint_ready",
+                "lifecycle_state": "blueprint_ready",
+                "native_surface": surface,
+                "delivery_mode": "manual_native_config",
+                "api_readiness": "not_connected",
+                "next_step": "",
+                "blocking_reason": "",
+            }
+        else:
+            current.setdefault("name", name)
+            current.setdefault("status", str(current.get("lifecycle_state") or "blueprint_ready"))
+            current.setdefault("lifecycle_state", "blueprint_ready")
+            current.setdefault("native_surface", surface)
+            current.setdefault("delivery_mode", "manual_native_config")
+            current.setdefault("api_readiness", "not_connected")
+        synced.append(current)
+    assets[key] = synced
+
+
+def _sync_form_assets(assets: dict[str, Any]) -> None:
+    existing = _asset_list(assets, "form_blueprints")
+    if existing:
+        return
+    form_spec = build_form_spec()
+    assets["form_blueprints"] = [
+        {
+            "name": str(form_spec["name"]),
+            "status": "manual_share_required",
+            "lifecycle_state": "manual_finish_required",
+            "native_surface": "form",
+            "delivery_mode": "setup_created_view",
+            "api_readiness": "connected",
+            "next_step": "在飞书 UI 中开启表单共享，拿到可直接投递的链接",
+            "blocking_reason": "表单蓝图尚未同步共享链接",
+            "shared_url": "",
+            "entry_fields": [str(question["title"]) for question in form_spec["questions"]],
+            "question_count": len(form_spec["questions"]),
+            "questions": form_spec["questions"],
+            "description": str(form_spec["description"]),
+        }
+    ]
+
+
 def _advperm_items(assets: dict[str, Any]) -> list[dict[str, Any]]:
     items = _asset_list(assets, "advperm_blueprints")
     if items:
@@ -511,6 +574,7 @@ def _normalize_block_config(block_config: dict[str, Any], table_ids: dict[str, s
 
 
 def _refresh_native_assets(assets: dict[str, Any]) -> None:
+    sync_native_asset_blueprints(assets)
     groups = [
         {"key": "advperm", "label": "高级权限", "items": _advperm_items(assets)},
         {"key": "forms", "label": "表单入口", "items": _asset_list(assets, "form_blueprints")},

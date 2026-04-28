@@ -270,6 +270,23 @@
   - 真正的多步动作创建统一交给 `W2/W4/W5`
   - 补回归测试锁定“automation 不重复建 workflow-owned action” 这一新契约
 
+### F24. 老 workspace 的 `native_assets` 会静默截断新增蓝图，升级后 apply 仍然只装旧版本
+
+- 位置：
+  - `backend/app/bitable_workflow/native_installer.py`
+  - `backend/app/api/workflow.py`
+- 问题：
+  - `apply_native_manifest()` 之前直接 `zip(existing_assets, current_specs)`
+  - 如果 state 里还是旧版 `3` 条 workflow / `5` 条 automation，升级代码后再 apply，只会继续处理旧列表长度
+  - `GET /native-manifest` 也只是返回缓存 manifest，不会把旧 state 自动刷新成当前蓝图
+- 风险：
+  - 用户会以为自己已经 apply 了最新版原生闭环，实际新增工作流和自动化根本没进入安装包
+  - manifest、apply、飞书云侧对象三者会长期漂移，形成“代码新、state 旧、云侧更旧”的三层错位
+- 结果：
+  - 已新增 blueprint sync，先把 `automation / workflow / dashboard / role / form` 补齐到当前代码定义，再执行 apply
+  - `workflow_native_manifest` 现在会实时刷新旧 state，再返回最新 manifest
+  - 补回归测试锁定“旧 state 也会自动补齐到当前 A/W 蓝图库”
+
 ---
 
 ## 3. 全量验证结果
@@ -282,7 +299,7 @@ pytest -q
 
 结果：
 
-- `310 passed, 3 skipped`
+- `313 passed, 3 skipped`
 
 ### 前端构建
 

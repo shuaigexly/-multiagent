@@ -10,9 +10,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
 from app.bitable_workflow import bitable_ops, progress_broker, runner
+from app.bitable_workflow.native_manifest import build_native_manifest
 from app.bitable_workflow.native_installer import (
     _ALL_SURFACES as _NATIVE_ALL_SURFACES,
+    _refresh_native_assets,
     apply_native_manifest,
+    sync_native_asset_blueprints,
 )
 from app.bitable_workflow.scheduler import _derive_native_bitable_contract
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
@@ -434,8 +437,22 @@ async def workflow_native_assets():
 @router.get("/native-manifest", dependencies=[Depends(require_api_key)])
 async def workflow_native_manifest():
     """返回当前 Base 的飞书原生安装包、命令模板和安装顺序。"""
+    app_token = str(_state.get("app_token") or "").strip()
+    table_ids = _state.get("table_ids") or {}
+    native_assets = _state.get("native_assets") or {}
+    if app_token and table_ids and native_assets:
+        sync_native_asset_blueprints(native_assets)
+        _refresh_native_assets(native_assets)
+        _state["native_assets"] = native_assets
+        _state["native_manifest"] = build_native_manifest(
+            app_token=app_token,
+            base_url=str(_state.get("url") or ""),
+            table_ids=table_ids,
+            base_meta=_state.get("base_meta") or {},
+            native_assets=native_assets,
+        )
     return {
-        "app_token": _state.get("app_token", ""),
+        "app_token": app_token,
         "url": _state.get("url", ""),
         "base_meta": _state.get("base_meta") or {},
         "native_manifest": _state.get("native_manifest") or {},
