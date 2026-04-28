@@ -335,6 +335,50 @@ class TestSendCompletionMessage:
         assert "测试任务" in str(mock_send.call_args)
 
     @pytest.mark.asyncio
+    async def test_message_send_skips_when_completed_log_exists(self, ceo_result):
+        import app.feishu.im as im_module
+        mock_send = AsyncMock(return_value={"message_id": "msg_123"})
+        existing_logs = [
+            {
+                "record_id": "rec_log_done",
+                "fields": {"节点名称": "飞书消息通知", "执行状态": "已完成"},
+            }
+        ]
+        with patch("app.bitable_workflow.scheduler._list_related_rows", new=AsyncMock(return_value=existing_logs)):
+            with patch.object(im_module, "send_card_message", mock_send):
+                from app.bitable_workflow.scheduler import _send_completion_message
+
+                await _send_completion_message(
+                    "app_x",
+                    "tbl_x",
+                    "rec_x",
+                    "测试任务",
+                    ceo_result,
+                    automation_log_tid="tbl_automation_log",
+                )
+
+        mock_send.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_message_send_continues_when_dedupe_lookup_fails(self, ceo_result):
+        import app.feishu.im as im_module
+        mock_send = AsyncMock(return_value={"message_id": "msg_123"})
+        with patch("app.bitable_workflow.scheduler._list_related_rows", new=AsyncMock(side_effect=RuntimeError("lookup failed"))):
+            with patch.object(im_module, "send_card_message", mock_send):
+                from app.bitable_workflow.scheduler import _send_completion_message
+
+                await _send_completion_message(
+                    "app_x",
+                    "tbl_x",
+                    "rec_x",
+                    "测试任务",
+                    ceo_result,
+                    automation_log_tid="tbl_automation_log",
+                )
+
+        mock_send.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_message_sent_writes_action_log(self, ceo_result):
         import app.feishu.im as im_module
         mock_send = AsyncMock(return_value={"message_id": "msg_123"})

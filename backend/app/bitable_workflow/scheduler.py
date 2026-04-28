@@ -1358,6 +1358,32 @@ async def _send_completion_message(
     record 参数为 best-effort（飞书 deeplink 实测可能因版本变化）。
     """
     try:
+        if automation_log_tid and rid:
+            try:
+                existing_logs = await _list_related_rows(
+                    app_token,
+                    automation_log_tid,
+                    task_title=task_title,
+                    record_id=rid,
+                    max_records=50,
+                )
+                completed_log = next(
+                    (
+                        row for row in existing_logs
+                        if str((row.get("fields") or {}).get("节点名称") or "").strip() == "飞书消息通知"
+                        and str((row.get("fields") or {}).get("执行状态") or "").strip() == "已完成"
+                    ),
+                    None,
+                )
+                if completed_log:
+                    logger.info(
+                        "Skip duplicate completion message for task [%s], existing automation log=%s",
+                        task_title,
+                        completed_log.get("record_id"),
+                    )
+                    return
+            except Exception as dedupe_exc:
+                logger.warning("completion message dedupe lookup failed task=%s: %s", task_title, dedupe_exc)
         from app.feishu.im import send_card_message
         from app.feishu.client import get_feishu_base_url
         feishu_base = get_feishu_base_url()
