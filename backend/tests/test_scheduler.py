@@ -127,6 +127,67 @@ class TestFollowupTasks:
         )
 
     @pytest.mark.asyncio
+    async def test_followup_tasks_write_automation_log_on_success(self):
+        result = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[],
+            action_items=[],
+            raw_output="完成",
+            decision_items=[
+                {"summary": "补齐线索质量分析", "type": "need_data"},
+            ],
+        )
+        with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(return_value=[])):
+            with patch("app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields", new=AsyncMock(return_value="rec_followup")):
+                with patch("app.bitable_workflow.scheduler._write_automation_log", new=AsyncMock()) as mock_log:
+                    from app.bitable_workflow.scheduler import _create_followup_tasks
+
+                    await _create_followup_tasks(
+                        "app_token",
+                        "tbl_task",
+                        "经营复盘",
+                        result,
+                        automation_log_tid="tbl_automation_log",
+                        route="补数复核",
+                    )
+
+        assert mock_log.await_args.args[3] == "跟进任务创建"
+        assert mock_log.await_args.args[4] == "已完成"
+
+    @pytest.mark.asyncio
+    async def test_followup_tasks_write_automation_log_on_failure(self):
+        result = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[],
+            action_items=[],
+            raw_output="完成",
+            decision_items=[
+                {"summary": "补齐线索质量分析", "type": "need_data"},
+            ],
+        )
+        with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(return_value=[])):
+            with patch(
+                "app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields",
+                new=AsyncMock(side_effect=RuntimeError("bitable write failed")),
+            ):
+                with patch("app.bitable_workflow.scheduler._write_automation_log", new=AsyncMock()) as mock_log:
+                    from app.bitable_workflow.scheduler import _create_followup_tasks
+
+                    await _create_followup_tasks(
+                        "app_token",
+                        "tbl_task",
+                        "经营复盘",
+                        result,
+                        automation_log_tid="tbl_automation_log",
+                        route="补数复核",
+                    )
+
+        assert mock_log.await_args.args[3] == "跟进任务创建"
+        assert mock_log.await_args.args[4] == "执行失败"
+
+    @pytest.mark.asyncio
     async def test_followup_tasks_skip_duplicate_open_record(self):
         result = AgentResult(
             agent_id="ceo_assistant",

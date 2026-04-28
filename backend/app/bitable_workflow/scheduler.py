@@ -1718,6 +1718,18 @@ async def _create_followup_tasks(
                 result_text=f"已创建后续分析任务：{record_fields['任务标题']}",
                 record_id=new_record_id,
             )
+            await _write_automation_log(
+                app_token,
+                automation_log_tid,
+                task_title,
+                "跟进任务创建",
+                "已完成",
+                route=route,
+                trigger="CEO 助理行动项",
+                summary=f"已创建后续分析任务：{record_fields['任务标题']}",
+                detail=item,
+                record_id=new_record_id,
+            )
             logger.info(
                 "Follow-up task created from [%s]: %s",
                 task_title,
@@ -1733,6 +1745,17 @@ async def _create_followup_tasks(
                 route=route,
                 content=item,
                 result_text=str(exc),
+            )
+            await _write_automation_log(
+                app_token,
+                automation_log_tid,
+                task_title,
+                "跟进任务创建",
+                "执行失败",
+                route=route,
+                trigger="CEO 助理行动项",
+                summary="创建后续分析任务失败",
+                detail=str(exc),
             )
             logger.warning("Failed to create follow-up task from [%s]: %s", task_title, exc)
 
