@@ -1,0 +1,60 @@
+name: Deploy Bitable Plugin to GitHub Pages
+
+# v8.6.20-r15：每次 push master 自动构建 frontend/ 并把 dist/ 发布到 GitHub
+# Pages（gh-pages 分支）。产物根 URL：
+#   https://shuaigexly.github.io/-multiagent/
+# 飞书 Bitable 插件入口：
+#   https://shuaigexly.github.io/-multiagent/bitable.html
+# 在飞书开放平台创建"自建多维表格扩展"应用时把上面 URL 填进去即可。
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-bitable-plugin.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: bitable-plugin-pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install deps
+        run: npm ci || npm install --no-audit --no-fund
+
+      - name: Build (with PUBLIC_BASE_PATH for /-multiagent/)
+        env:
+          PUBLIC_BASE_PATH: /-multiagent/
+        run: npm run build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

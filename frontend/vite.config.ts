@@ -80,8 +80,12 @@ function resolveVendorChunk(id: string): string | undefined {
 
 export default defineConfig(({ mode }) => {
   const bitableOnly = mode === "bitable";
+  // v8.6.20-r15：GitHub Pages 部署 — 仓库名 `-multiagent` → 资源路径 /-multiagent/
+  // PUBLIC_BASE_PATH=/-multiagent/ 由 GitHub Actions workflow 注入；本地 build 默认 "/"
+  const publicBase = process.env.PUBLIC_BASE_PATH || "/";
 
   return {
+    base: publicBase,
     server: {
       host: "::",
       port: 8080,
