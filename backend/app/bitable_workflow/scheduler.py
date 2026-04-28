@@ -1674,6 +1674,7 @@ async def _create_followup_tasks(
         # v8.6.7：跟进任务自动指向原任务，构建依赖图
         if parent_task_number:
             record_fields["依赖任务编号"] = str(parent_task_number)
+        record_fields.update(_derive_native_bitable_contract(record_fields))
         try:
             # v8.6.20：综合评分老 base 没有 → optional fallback
             new_record_id = await bitable_ops.create_record_optional_fields(
@@ -1698,6 +1699,12 @@ async def _create_followup_tasks(
                     "复盘负责人",
                     "复盘负责人OpenID",
                     "复核SLA小时",
+                    "当前责任角色",
+                    "当前责任人",
+                    "当前原生动作",
+                    "异常状态",
+                    "异常类型",
+                    "异常说明",
                 ],
             )
             await _write_action_record(

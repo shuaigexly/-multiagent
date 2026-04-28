@@ -36,6 +36,29 @@ class TestFollowupTasks:
         assert first_call_fields["状态"] == Status.PENDING
         assert first_call_fields["任务标题"].startswith("[跟进]")
         assert "原始任务" in first_call_fields["背景说明"]
+        assert first_call_fields["当前责任角色"] == "系统调度"
+        assert first_call_fields["当前责任人"] == "系统"
+        assert first_call_fields["当前原生动作"] == "等待分析完成"
+        assert first_call_fields["异常状态"] == "正常"
+        assert first_call_fields["异常类型"] == "无"
+
+    @pytest.mark.asyncio
+    async def test_followup_tasks_include_native_contract_optional_keys(self, ceo_result):
+        with patch(
+            "app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields",
+            new=AsyncMock(return_value="rec_followup"),
+        ) as mock_create:
+            from app.bitable_workflow.scheduler import _create_followup_tasks
+
+            await _create_followup_tasks("app_token", "tbl_task", "原始任务", ceo_result)
+
+        optional_keys = mock_create.await_args.kwargs.get("optional_keys") or []
+        assert "当前责任角色" in optional_keys
+        assert "当前责任人" in optional_keys
+        assert "当前原生动作" in optional_keys
+        assert "异常状态" in optional_keys
+        assert "异常类型" in optional_keys
+        assert "异常说明" in optional_keys
 
     @pytest.mark.asyncio
     async def test_no_followup_for_followup_tasks(self, ceo_result):
