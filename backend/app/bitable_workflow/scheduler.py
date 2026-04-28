@@ -1461,6 +1461,7 @@ async def _create_followup_tasks(
     action_tid: str | None = None,
     automation_log_tid: str | None = None,
     route: str = "",
+    source_record_id: str = "",
 ) -> None:
     """将 CEO 助理行动项转化为新的「待分析」任务，实现业务闭环（再流转）。
 
@@ -1520,29 +1521,55 @@ async def _create_followup_tasks(
     try:
         from app.feishu.task import batch_create_tasks
         if should_create_execution_tasks:
-            await batch_create_tasks(execution_items)
-            await _write_action_record(
-                app_token,
-                action_tid,
-                task_title,
-                "创建执行任务",
-                "已完成",
-                route=route,
-                content="\n".join(f"- {item}" for item in execution_items),
-                result_text=f"已创建 {len(execution_items)} 条飞书任务",
-            )
-            await _write_automation_log(
-                app_token,
-                automation_log_tid,
-                task_title,
-                "执行任务创建",
-                "已完成",
-                route=route,
-                trigger="工作流执行包",
-                summary=f"已创建 {len(execution_items)} 条飞书任务",
-                detail="\n".join(execution_items),
-            )
-            logger.info("Created %d Feishu tasks for [%s]", len(execution_items), task_title)
+            if automation_log_tid and source_record_id:
+                existing_logs = await _list_related_rows(
+                    app_token,
+                    automation_log_tid,
+                    task_title=task_title,
+                    record_id=source_record_id,
+                    max_records=50,
+                )
+                completed_log = next(
+                    (
+                        row for row in existing_logs
+                        if str((row.get("fields") or {}).get("节点名称") or "").strip() == "执行任务创建"
+                        and str((row.get("fields") or {}).get("执行状态") or "").strip() == "已完成"
+                    ),
+                    None,
+                )
+                if completed_log:
+                    logger.info(
+                        "Skip duplicate execution task creation for [%s], existing automation log=%s",
+                        task_title,
+                        completed_log.get("record_id"),
+                    )
+                    should_create_execution_tasks = False
+            if should_create_execution_tasks:
+                await batch_create_tasks(execution_items)
+                await _write_action_record(
+                    app_token,
+                    action_tid,
+                    task_title,
+                    "创建执行任务",
+                    "已完成",
+                    route=route,
+                    content="\n".join(f"- {item}" for item in execution_items),
+                    result_text=f"已创建 {len(execution_items)} 条飞书任务",
+                    record_id=source_record_id,
+                )
+                await _write_automation_log(
+                    app_token,
+                    automation_log_tid,
+                    task_title,
+                    "执行任务创建",
+                    "已完成",
+                    route=route,
+                    trigger="工作流执行包",
+                    summary=f"已创建 {len(execution_items)} 条飞书任务",
+                    detail="\n".join(execution_items),
+                    record_id=source_record_id,
+                )
+                logger.info("Created %d Feishu tasks for [%s]", len(execution_items), task_title)
         elif execution_items:
             logger.info(
                 "Skip Feishu task creation for [%s]: route=%s execution_items=%d",
@@ -1560,6 +1587,7 @@ async def _create_followup_tasks(
             route=route,
             content="\n".join(f"- {item}" for item in execution_items),
             result_text=str(exc),
+            record_id=source_record_id,
         )
         await _write_automation_log(
             app_token,
@@ -1571,6 +1599,7 @@ async def _create_followup_tasks(
             trigger="工作流执行包",
             summary="创建飞书任务失败",
             detail=str(exc),
+            record_id=source_record_id,
         )
         logger.warning("Feishu task API failed for [%s]: %s", task_title, exc)
 
@@ -2501,6 +2530,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                 action_tid=action_tid,
                 automation_log_tid=automation_log_tid,
                 route=workflow_route,
+                source_record_id=rid,
             )
             await _create_review_recheck_task(
                 app_token,

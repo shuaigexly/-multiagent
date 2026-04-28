@@ -127,6 +127,43 @@ class TestFollowupTasks:
         )
 
     @pytest.mark.asyncio
+    async def test_followup_tasks_skip_duplicate_execution_task_creation_after_completed_log(self):
+        result = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[],
+            action_items=[],
+            raw_output="完成",
+            decision_items=[
+                {"summary": "立即通知销售团队推进重点客户", "type": "execute_now"},
+            ],
+        )
+        existing_logs = [
+            {
+                "record_id": "rec_log_done",
+                "fields": {"节点名称": "执行任务创建", "执行状态": "已完成"},
+            }
+        ]
+        with patch(
+            "app.bitable_workflow.scheduler._list_related_rows",
+            new=AsyncMock(return_value=existing_logs),
+        ):
+            with patch("app.feishu.task.batch_create_tasks", new=AsyncMock()) as mock_batch:
+                from app.bitable_workflow.scheduler import _create_followup_tasks
+
+                await _create_followup_tasks(
+                    "app_token",
+                    "tbl_task",
+                    "经营复盘",
+                    result,
+                    automation_log_tid="tbl_automation_log",
+                    route="直接执行",
+                    source_record_id="rec_task_parent",
+                )
+
+        mock_batch.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_followup_tasks_write_automation_log_on_success(self):
         result = AgentResult(
             agent_id="ceo_assistant",
@@ -1176,6 +1213,7 @@ class TestRunCycleActionRouting:
         assert mock_followup.await_args.kwargs["action_tid"] == "tbl_action"
         assert mock_followup.await_args.kwargs["automation_log_tid"] == "tbl_automation_log"
         assert mock_followup.await_args.kwargs["route"] == "补数复核"
+        assert mock_followup.await_args.kwargs["source_record_id"] == "rec_task_1"
         assert mock_recheck.await_args.kwargs["action_tid"] == "tbl_action"
         assert mock_recheck.await_args.kwargs["automation_log_tid"] == "tbl_automation_log"
         assert mock_recheck.await_args.kwargs["route"] == "补数复核"
