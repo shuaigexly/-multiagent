@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { bitable } from "@lark-base-open/js-sdk";
+import { FilterConjunction, FilterOperator, bitable, type IGetRecordsFilterInfo } from "@lark-base-open/js-sdk";
 import {
   Activity,
   CheckCircle2,
@@ -266,6 +266,13 @@ async function getTableFieldMap(tableId: string): Promise<Map<string, string>> {
   return new Map(metas.map((meta: { id: string; name: string }) => [meta.id, meta.name]));
 }
 
+function getFieldIdByName(fieldMap: Map<string, string>, fieldName: string): string {
+  for (const [fieldId, name] of fieldMap.entries()) {
+    if (name === fieldName) return fieldId;
+  }
+  return "";
+}
+
 function mapRecordFields(record: BitableRecordValue, fieldMap: Map<string, string>): TaskSnapshot {
   const mapped: Record<string, unknown> = {};
   Object.entries(record.fields || {}).forEach(([fieldId, value]) => {
@@ -327,6 +334,7 @@ export default function BitableWorkflowPlugin() {
     predicate: (record: TaskSnapshot) => boolean,
     limit: number,
     seed: TaskSnapshot[] = [],
+    filter?: IGetRecordsFilterInfo,
   ): Promise<TaskSnapshot[]> => {
     if (limit <= 0) return [];
 
@@ -338,7 +346,11 @@ export default function BitableWorkflowPlugin() {
     let hasMore = true;
 
     while (hasMore && collected.length < limit) {
-      const response = await table.getRecordsByPage({ pageSize: 100, ...(pageToken ? { pageToken } : {}) });
+      const response = await table.getRecordsByPage({
+        pageSize: 100,
+        ...(pageToken ? { pageToken } : {}),
+        ...(filter ? { filter } : {}),
+      });
       for (const record of response.records) {
         const mapped = mapRecordFields(record, fieldMap);
         if (seen.has(mapped.recordId)) continue;
@@ -353,6 +365,24 @@ export default function BitableWorkflowPlugin() {
 
     return collected;
   }, [getCachedFieldMap, getCachedTable]);
+
+  const buildExactTextFilter = useCallback(async (tableId: string, fieldName: string, value: string): Promise<IGetRecordsFilterInfo | null> => {
+    const normalizedValue = value.trim();
+    if (!normalizedValue) return null;
+    const fieldMap = await getCachedFieldMap(tableId);
+    const fieldId = getFieldIdByName(fieldMap, fieldName);
+    if (!fieldId) return null;
+    return {
+      conjunction: FilterConjunction.And,
+      conditions: [
+        {
+          fieldId,
+          operator: FilterOperator.Is,
+          value: normalizedValue,
+        },
+      ],
+    };
+  }, [getCachedFieldMap]);
 
   useEffect(() => {
     let mounted = true;
@@ -434,7 +464,8 @@ export default function BitableWorkflowPlugin() {
           }
         }
         if (!currentTask && locator.taskTitle) {
-          currentTask = (await collectMappedRecords(tableIds.task, (item) => matchesTaskRecord(item, locator), 1))[0] || null;
+          const taskTitleFilter = await buildExactTextFilter(tableIds.task, "任务标题", locator.taskTitle);
+          currentTask = (await collectMappedRecords(tableIds.task, (item) => matchesTaskRecord(item, locator), 1, [], taskTitleFilter || undefined))[0] || null;
         }
         if (!active) return;
 
@@ -442,11 +473,29 @@ export default function BitableWorkflowPlugin() {
         const seededReview = nextSourceKind === "review" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
         const seededActions = nextSourceKind === "action" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
         const seededArchives = nextSourceKind === "archive" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
+        const recordIdFilter = stableLocator.taskRecordId
+          ? await buildExactTextFilter(tableIds.review, "关联记录ID", stableLocator.taskRecordId)
+          : null;
+        const actionRecordIdFilter = stableLocator.taskRecordId
+          ? await buildExactTextFilter(tableIds.action, "关联记录ID", stableLocator.taskRecordId)
+          : null;
+        const archiveRecordIdFilter = stableLocator.taskRecordId
+          ? await buildExactTextFilter(tableIds.archive, "关联记录ID", stableLocator.taskRecordId)
+          : null;
+        const reviewTitleFilter = !recordIdFilter && stableLocator.taskTitle
+          ? await buildExactTextFilter(tableIds.review, "任务标题", stableLocator.taskTitle)
+          : null;
+        const actionTitleFilter = !actionRecordIdFilter && stableLocator.taskTitle
+          ? await buildExactTextFilter(tableIds.action, "任务标题", stableLocator.taskTitle)
+          : null;
+        const archiveTitleFilter = !archiveRecordIdFilter && stableLocator.taskTitle
+          ? await buildExactTextFilter(tableIds.archive, "任务标题", stableLocator.taskTitle)
+          : null;
 
         const [reviewMatches, actionMatches, archiveMatches] = await Promise.all([
-          collectMappedRecords(tableIds.review, (item) => matchesRelatedRecord(item, stableLocator), 1, seededReview),
-          collectMappedRecords(tableIds.action, (item) => matchesRelatedRecord(item, stableLocator), 6, seededActions),
-          collectMappedRecords(tableIds.archive, (item) => matchesRelatedRecord(item, stableLocator), 3, seededArchives),
+          collectMappedRecords(tableIds.review, (item) => matchesRelatedRecord(item, stableLocator), 1, seededReview, recordIdFilter || reviewTitleFilter || undefined),
+          collectMappedRecords(tableIds.action, (item) => matchesRelatedRecord(item, stableLocator), 6, seededActions, actionRecordIdFilter || actionTitleFilter || undefined),
+          collectMappedRecords(tableIds.archive, (item) => matchesRelatedRecord(item, stableLocator), 3, seededArchives, archiveRecordIdFilter || archiveTitleFilter || undefined),
         ]);
         if (!active) return;
 
@@ -504,7 +553,7 @@ export default function BitableWorkflowPlugin() {
     return () => {
       active = false;
     };
-  }, [collectMappedRecords, getMappedRecordById, selection, tableIds]);
+  }, [buildExactTextFilter, collectMappedRecords, getMappedRecordById, selection, tableIds]);
 
   const workflowSteps = useMemo(
     () => buildWorkflowDetails(task, review, actions, archives, live),
