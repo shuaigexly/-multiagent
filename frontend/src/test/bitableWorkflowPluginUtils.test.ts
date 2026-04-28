@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildRelationSections,
   buildSourceContextItems,
   buildResolutionDebug,
   buildTaskLocator,
@@ -87,5 +88,48 @@ describe("bitable workflow plugin utils", () => {
     });
     expect(archiveItems.map((item) => item.label)).toContain("归档状态");
     expect(archiveItems.map((item) => item.value)).toContain("待复盘");
+  });
+
+  it("builds related object sections with readable summaries", () => {
+    const sections = buildRelationSections(
+      {
+        recordId: "rec_review",
+        fields: {
+          任务标题: "经营诊断",
+          推荐动作: "补数后复核",
+          工作流路由: "复核流",
+          需补数事项: "补齐投放成本",
+        },
+      },
+      [
+        {
+          recordId: "rec_action",
+          fields: {
+            动作类型: "发送汇报",
+            动作状态: "待执行",
+            工作流路由: "直接汇报",
+            动作说明: "向老板发送日报",
+            当前责任角色: "交付经理",
+          },
+        },
+      ],
+      [
+        {
+          recordId: "rec_archive",
+          fields: {
+            任务标题: "经营诊断",
+            归档状态: "待复盘",
+            最新评审动作: "补数后复核",
+            归档摘要: "等待复盘材料",
+          },
+        },
+      ],
+    );
+
+    expect(sections[0].label).toBe("评审对象");
+    expect(sections[0].items[0].status).toBe("补数后复核");
+    expect(sections[1].items[0].title).toBe("发送汇报");
+    expect(sections[1].items[0].chips).toContain("交付经理");
+    expect(sections[2].items[0].summary).toBe("等待复盘材料");
   });
 });

@@ -38,6 +38,29 @@ export interface WorkflowSummaryItem {
   value: string;
 }
 
+export interface WorkflowSnapshotLike {
+  recordId: string;
+  fields: Record<string, unknown>;
+}
+
+export interface WorkflowRelationItem {
+  key: string;
+  tableLabel: string;
+  title: string;
+  status: string;
+  route: string;
+  summary: string;
+  chips: string[];
+}
+
+export interface WorkflowRelationSection {
+  key: "review" | "action" | "archive";
+  label: string;
+  count: number;
+  emptyText: string;
+  items: WorkflowRelationItem[];
+}
+
 function textValue(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
@@ -206,4 +229,102 @@ export function buildSourceContextItems(
   }
 
   return items.filter((item): item is WorkflowSummaryItem => Boolean(item));
+}
+
+function pushChip(chips: string[], value: unknown) {
+  const normalized = textValue(value);
+  if (normalized) chips.push(normalized);
+}
+
+function buildRelationItem(
+  key: string,
+  tableLabel: string,
+  record: WorkflowSnapshotLike,
+  config: {
+    titleFields: string[];
+    statusFields: string[];
+    routeFields: string[];
+    summaryFields: string[];
+    chipFields: string[];
+  },
+): WorkflowRelationItem {
+  const pickFirst = (fieldNames: string[]) =>
+    fieldNames
+      .map((fieldName) => textValue(record.fields[fieldName]))
+      .find(Boolean) || "";
+
+  const chips: string[] = [];
+  config.chipFields.forEach((fieldName) => pushChip(chips, record.fields[fieldName]));
+
+  return {
+    key: `${key}:${record.recordId}`,
+    tableLabel,
+    title: pickFirst(config.titleFields) || "未命名记录",
+    status: pickFirst(config.statusFields) || "未标注状态",
+    route: pickFirst(config.routeFields) || "未标注路由",
+    summary: pickFirst(config.summaryFields) || "暂无摘要",
+    chips: chips.slice(0, 4),
+  };
+}
+
+export function buildRelationSections(
+  review: WorkflowSnapshotLike | null,
+  actions: WorkflowSnapshotLike[],
+  archives: WorkflowSnapshotLike[],
+): WorkflowRelationSection[] {
+  const reviewItems = review
+    ? [
+        buildRelationItem("review", "产出评审", review, {
+          titleFields: ["任务标题", "评审结论", "推荐动作"],
+          statusFields: ["评审状态", "推荐动作", "工作流路由"],
+          routeFields: ["工作流路由", "推荐动作"],
+          summaryFields: ["评审摘要", "需补数事项", "评审结论"],
+          chipFields: ["推荐动作", "工作流路由", "需补数事项"],
+        }),
+      ]
+    : [];
+
+  const actionItems = actions.map((record) =>
+    buildRelationItem("action", "交付动作", record, {
+      titleFields: ["动作标题", "动作类型", "任务标题"],
+      statusFields: ["动作状态", "执行状态", "工作流路由"],
+      routeFields: ["工作流路由", "动作类型"],
+      summaryFields: ["动作说明", "执行反馈", "补充说明"],
+      chipFields: ["动作类型", "动作状态", "当前责任角色", "工作流路由"],
+    }),
+  );
+
+  const archiveItems = archives.map((record) =>
+    buildRelationItem("archive", "交付结果归档", record, {
+      titleFields: ["归档标题", "任务标题", "最新评审动作"],
+      statusFields: ["归档状态", "最新评审动作", "工作流路由"],
+      routeFields: ["工作流路由", "最新评审动作"],
+      summaryFields: ["归档摘要", "复盘结论", "后续动作"],
+      chipFields: ["归档状态", "最新评审动作", "工作流路由"],
+    }),
+  );
+
+  return [
+    {
+      key: "review",
+      label: "评审对象",
+      count: reviewItems.length,
+      emptyText: "还没有命中关联评审记录。",
+      items: reviewItems,
+    },
+    {
+      key: "action",
+      label: "动作对象",
+      count: actionItems.length,
+      emptyText: "还没有命中关联动作记录。",
+      items: actionItems,
+    },
+    {
+      key: "archive",
+      label: "归档对象",
+      count: archiveItems.length,
+      emptyText: "还没有命中关联归档记录。",
+      items: archiveItems,
+    },
+  ];
 }

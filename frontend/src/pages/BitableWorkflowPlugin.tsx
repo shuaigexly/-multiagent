@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { API_KEY_STORAGE_KEY, getRuntimeApiKey } from "@/services/http";
 import { subscribeTaskProgress, type ProgressEvent } from "@/services/workflow";
 import {
+  buildRelationSections,
   buildSourceContextItems,
   buildResolutionDebug,
   buildTaskLocator,
@@ -21,6 +22,7 @@ import {
   matchesTaskRecord,
   workflowSourceLabel,
   type WorkflowResolutionDebug,
+  type WorkflowRelationSection,
   type WorkflowSummaryItem,
   type WorkflowSourceKind,
 } from "./bitableWorkflowPluginUtils";
@@ -604,6 +606,28 @@ export default function BitableWorkflowPlugin() {
     ],
     [actions.length, archives.length, review],
   );
+  const relationSections = useMemo<WorkflowRelationSection[]>(
+    () => buildRelationSections(review, actions, archives),
+    [actions, archives, review],
+  );
+  const taskSignalItems = useMemo<WorkflowSummaryItem[]>(
+    () => [
+      { label: "目标对象", value: textValue(task?.fields["目标对象"]) || "未指定" },
+      { label: "当前阶段", value: live?.stage || textValue(task?.fields["当前阶段"]) || "等待调度" },
+      { label: "工作流路由", value: textValue(task?.fields["工作流路由"]) || "待生成" },
+      { label: "当前责任", value: textValue(task?.fields["当前责任角色"]) || "系统调度" },
+    ],
+    [live?.stage, task],
+  );
+  const evidenceItems = useMemo<WorkflowSummaryItem[]>(
+    () => [
+      { label: "证据条数", value: `${numberValue(task?.fields["证据条数"])} 条` },
+      { label: "高置信证据", value: `${numberValue(task?.fields["高置信证据数"])} 条` },
+      { label: "硬证据", value: `${numberValue(task?.fields["硬证据数"])} 条` },
+      { label: "需补数条数", value: `${numberValue(task?.fields["需补数条数"])} 条` },
+    ],
+    [task],
+  );
 
   const renderResolutionCard = () =>
     resolutionDebug ? (
@@ -659,6 +683,62 @@ export default function BitableWorkflowPlugin() {
         </div>
       </div>
     ) : null;
+
+  const renderRelationObjectsCard = () => (
+    <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Related Objects</div>
+          <div className="mt-2 text-lg font-semibold text-slate-950">关联对象清单</div>
+        </div>
+        <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600">
+          共 {relationSections.reduce((sum, section) => sum + section.count, 0)} 条
+        </div>
+      </div>
+      <div className="mt-4 space-y-4">
+        {relationSections.map((section) => (
+          <div key={section.key} className="rounded-[22px] border border-slate-200 bg-slate-50/70 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-slate-900">{section.label}</div>
+              <div className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                {section.count} 条
+              </div>
+            </div>
+            {!section.items.length ? (
+              <div className="mt-3 text-sm leading-6 text-slate-500">{section.emptyText}</div>
+            ) : (
+              <div className="mt-3 space-y-3">
+                {section.items.map((item) => (
+                  <div key={item.key} className="rounded-2xl border border-white/90 bg-white/95 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-950">{item.title}</div>
+                        <div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-400">{item.tableLabel}</div>
+                      </div>
+                      <div className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                        {item.status}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm leading-6 text-slate-600">{item.summary}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700">
+                        路由 · {item.route}
+                      </span>
+                      {item.chips.map((chip) => (
+                        <span key={`${item.key}:${chip}`} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                          {chip}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,250,252,0.94),rgba(255,255,255,0.98))] p-4 text-slate-900">
@@ -719,6 +799,7 @@ export default function BitableWorkflowPlugin() {
 
                 {renderResolutionCard()}
                 {renderEntryContextCard()}
+                {renderRelationObjectsCard()}
               </section>
 
               <section className="rounded-[28px] border border-slate-200 bg-white/94 p-5 shadow-sm">
@@ -747,11 +828,13 @@ export default function BitableWorkflowPlugin() {
                     </div>
                     <div className="w-full max-w-xs rounded-[24px] border border-white/70 bg-white/90 p-4 shadow-sm">
                       <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Task Signals</div>
-                      <div className="mt-3 space-y-3 text-sm text-slate-700">
-                        <div>目标对象：{textValue(task.fields["目标对象"]) || "未指定"}</div>
-                        <div>当前阶段：{live?.stage || textValue(task.fields["当前阶段"]) || "等待调度"}</div>
-                        <div>工作流路由：{textValue(task.fields["工作流路由"]) || "待生成"}</div>
-                        <div>当前责任：{textValue(task.fields["当前责任角色"]) || "系统调度"}</div>
+                      <div className="mt-3 grid gap-3">
+                        {taskSignalItems.map((item) => (
+                          <div key={item.label} className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2.5">
+                            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{item.label}</div>
+                            <div className="mt-1 text-sm leading-6 text-slate-700">{item.value}</div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -767,14 +850,10 @@ export default function BitableWorkflowPlugin() {
 
                 {renderResolutionCard()}
                 {renderEntryContextCard()}
+                {renderRelationObjectsCard()}
 
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  {[
-                    { label: "证据条数", value: `${numberValue(task.fields["证据条数"])} 条` },
-                    { label: "高置信证据", value: `${numberValue(task.fields["高置信证据数"])} 条` },
-                    { label: "硬证据", value: `${numberValue(task.fields["硬证据数"])} 条` },
-                    { label: "需补数条数", value: `${numberValue(task.fields["需补数条数"])} 条` },
-                  ].map((item) => (
+                  {evidenceItems.map((item) => (
                     <div key={item.label} className="rounded-[22px] border border-slate-200 bg-white/92 p-4">
                       <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
                       <div className="mt-2 text-lg font-semibold text-slate-950">{item.value}</div>
