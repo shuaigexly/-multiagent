@@ -1126,14 +1126,15 @@ def test_native_automation_specs_split_report_route_by_workflow_branch():
 
     direct_trigger = direct["body"]["steps"][0]["data"]["field_watch_info"]
     approval_trigger = approval["body"]["steps"][0]["data"]["field_watch_info"]
-    direct_action_fields = direct["body"]["steps"][3]["data"]["field_values"]
+    direct_log_fields = direct["body"]["steps"][3]["data"]["field_values"]
     approval_action_fields = approval["body"]["steps"][3]["data"]["field_values"]
 
     assert direct["condition"] == "待发送汇报 = 是 且 工作流路由 = 直接汇报"
     assert approval["condition"] == "待发送汇报 = 是 且 工作流路由 = 等待拍板"
     assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "直接汇报" for item in direct_trigger)
     assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "等待拍板" for item in approval_trigger)
-    assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "直接汇报" for item in direct_action_fields)
+    assert direct["body"]["steps"][3]["data"]["table_name"] == "自动化日志"
+    assert any(item["field_name"] == "触发来源" and item["value"][0]["value"] == "automation.report_direct" for item in direct_log_fields)
     assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "等待拍板" for item in approval_action_fields)
 
 
@@ -1176,13 +1177,28 @@ def test_native_review_automations_filter_pending_review_and_avoid_false_route()
 
     review_trigger = review["body"]["steps"][0]["data"]
     overdue_trigger = overdue["body"]["steps"][0]["data"]
-    review_action_fields = review["body"]["steps"][2]["data"]["field_values"]
+    review_log_fields = review["body"]["steps"][3]["data"]["field_values"]
 
     assert review["condition"] == "待安排复核 = 是 且 建议复核时间到达"
     assert overdue["condition"] == "待安排复核 = 是 且 建议复核时间超时"
     assert review_trigger["condition_list"] == [{"field_name": "待安排复核", "operator": "is", "value": [{"value_type": "boolean", "value": True}]}]
     assert overdue_trigger["condition_list"] == [{"field_name": "待安排复核", "operator": "is", "value": [{"value_type": "boolean", "value": True}]}]
-    assert all(field["field_name"] != "工作流路由" for field in review_action_fields)
+    assert review["body"]["steps"][3]["data"]["table_name"] == "自动化日志"
+    assert all(field["field_name"] != "工作流路由" for field in review_log_fields)
+
+
+def test_native_automation_specs_do_not_duplicate_workflow_owned_actions():
+    """直接汇报/执行/复核三条自动化只承接入口，不应再和 W2/W4/W5 重复创建交付动作。"""
+    from app.bitable_workflow.native_specs import build_automation_specs
+
+    specs = {spec["name"]: spec for spec in build_automation_specs()}
+    direct = specs["A2 直接汇报自动提醒"]["body"]["steps"][3]["data"]
+    execution = specs["A3 执行任务自动创建"]["body"]["steps"][3]["data"]
+    review = specs["A4 复核提醒"]["body"]["steps"][3]["data"]
+
+    assert direct["table_name"] == "自动化日志"
+    assert execution["table_name"] == "自动化日志"
+    assert review["table_name"] == "自动化日志"
 
 
 def test_native_failure_alarm_automation_listens_to_action_table_failures():
