@@ -103,15 +103,27 @@ def _is_allowed_backend_origin(origin: str) -> bool:
     return origin.rstrip("/") in [a.rstrip("/") for a in allowed if a]
 
 
-def _create_oauth_state(frontend_origin: str) -> str:
+def _hash_actor(api_key: str | None) -> str:
+    """v8.6.20-r11（审计 #4）：把 API key 做 sha256 摘要绑定到 OAuth state。"""
+    import hashlib as _hashlib
+    if not api_key:
+        return ""
+    return _hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+
+def _create_oauth_state(frontend_origin: str, *, actor_hash: str = "") -> str:
     _cleanup_pending_states()
     token = secrets.token_urlsafe(16)
     tenant_id = get_tenant_id() or "default"
-    _pending_states[token] = (frontend_origin, tenant_id, time.time())
+    # v8.6.20-r11（审计 #4 安全）：绑定 actor_hash，防 OAuth login-CSRF —— 攻击者
+    # A 用 A 的 API key 调 /oauth/url 拿到 state，把登录 URL 发给受害者 B；B 同意
+    # 授权后 callback 写入的 token 会被 A 在自己 tenant 名下使用。actor 绑定让
+    # callback 必须由原发起人（同 API key）来消费。
+    _pending_states[token] = (frontend_origin, tenant_id, time.time(), actor_hash)
     return f"{frontend_origin}|{token}"
 
 
-def _consume_oauth_state(state: str) -> tuple[str, str]:
+def _consume_oauth_state(state: str, *, actor_hash: str = "") -> tuple[str, str]:
     _cleanup_pending_states()
     if "|" not in state:
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
@@ -119,9 +131,19 @@ def _consume_oauth_state(state: str) -> tuple[str, str]:
     pending = _pending_states.pop(token, None)
     if pending is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-    expected_origin, tenant_id, created_at = pending
+    # 兼容旧 3-tuple
+    if len(pending) == 4:
+        expected_origin, tenant_id, created_at, expected_actor = pending
+    else:
+        expected_origin, tenant_id, created_at = pending
+        expected_actor = ""
     if time.time() - created_at > STATE_TTL_SECONDS or frontend_origin != expected_origin:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    # v8.6.20-r11（审计 #4）：actor_hash 绑定校验。callback 端目前没有 require_api_key
+    # 守门（飞书侧重定向无法带 X-API-Key），所以这里 expected_actor 为空时不强校验，
+    # 但若 _create_oauth_state 时记录了 actor，就要求 callback 的 X-API-Key 哈希一致。
+    if expected_actor and expected_actor != actor_hash:
+        raise HTTPException(status_code=400, detail="OAuth state actor mismatch")
     return expected_origin, tenant_id
 
 

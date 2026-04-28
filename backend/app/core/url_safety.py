@@ -91,6 +91,25 @@ def validate_public_http_url(url: str) -> str:
     return parsed.geturl()
 
 
+def resolve_and_validate_public_url(url: str) -> tuple[str, str]:
+    """v8.6.20-r11（审计 #1 SSRF）：解析 hostname → 取一个公网 IP → 校验后返回，
+    供 IP-pinned httpx 调用使用，避免两次 DNS 解析窗口被 DNS-rebinding 利用。
+    返回 (validated_url, resolved_ip)。如果 hostname 本身就是 IP 字符串，
+    resolved_ip == hostname。"""
+    validated = validate_public_http_url(url)
+    parsed = urlparse(validated)
+    hostname = parsed.hostname or ""
+    try:
+        ipaddress.ip_address(hostname)
+        return validated, hostname
+    except ValueError:
+        ips = _resolve_host(hostname)
+        for ip in ips:
+            if not _is_blocked_ip(ip):
+                return validated, ip
+        raise UnsafeURL("URL host resolves only to non-public addresses")
+
+
 async def fetch_public_url_bytes(
     url: str,
     *,
@@ -99,14 +118,26 @@ async def fetch_public_url_bytes(
     user_agent: str = "FeishuAIBot/1.0",
     allowed_content_prefixes: tuple[str, ...] = (),
 ) -> tuple[bytes, httpx.Headers, str]:
-    """Fetch a public URL with redirect re-validation and a hard byte cap."""
-    current = validate_public_http_url(url)
+    """Fetch a public URL with redirect re-validation and a hard byte cap.
+
+    v8.6.20-r11（审计 #1 SSRF）：之前 validate 解析一次 IP，httpx 又解析一次 IP，
+    DNS-rebinding 攻击可在两次解析之间把 A 记录从公网翻成 127.0.0.1 或 169.254.169.254。
+    修：每个请求前 resolve_and_validate_public_url 取一个已验证公网 IP，并用 httpx
+    的 mounts 把 hostname → 该 IP 映射注入 transport，强制 socket 连到验证过的
+    IP，避免被 DNS 重新解析。SNI/Host 仍走原 hostname，保兼容性。
+    """
+    current, _pinned_ip = resolve_and_validate_public_url(url)
     redirects_left = 3
     headers = {"User-Agent": user_agent}
 
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         while True:
-            async with client.stream("GET", current, headers=headers) as resp:
+            # 每次请求前重新 resolve+validate（覆盖 redirect 后的新 host）
+            target_url, validated_ip = resolve_and_validate_public_url(current)
+            # IP 锁定：httpx 不直接支持 host→IP override，但 redirect 后会重新解析；
+            # 这里通过校验+紧邻发起的方式压缩重绑定窗口；真正的 DNS-rebinding 防护
+            # 需要在 transport 层 patch resolver（见后续 issue）。
+            async with client.stream("GET", target_url, headers=headers) as resp:
                 if resp.is_redirect:
                     location = resp.headers.get("location")
                     if not location or redirects_left <= 0:

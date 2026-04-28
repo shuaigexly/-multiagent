@@ -7,7 +7,11 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
-_fernet_cache: Fernet | None | bool = False
+# v8.6.20-r11（审计 #5）：缓存同时记住 key 字串，settings.token_encryption_key 在
+# 运行时被改写时自动失效旧 Fernet 实例，避免「旧 key 加密、新 key 解密 → 全失败」。
+# (Fernet | None, key_str) 元组；初值用 _UNSET 哨兵区分 "从未初始化" 与 "已知 None"
+_UNSET = object()
+_fernet_cache: tuple[object, str] = (_UNSET, "")
 
 
 def _requires_token_encryption() -> bool:
@@ -18,30 +22,32 @@ def _requires_token_encryption() -> bool:
 
 def _get_fernet() -> Fernet | None:
     global _fernet_cache
-    if _fernet_cache is not False:
-        return _fernet_cache
-
     key = settings.token_encryption_key.strip()
+    cached_obj, cached_key = _fernet_cache
+    if cached_obj is not _UNSET and cached_key == key:
+        return cached_obj  # type: ignore[return-value]
+
     if not key:
         if _requires_token_encryption():
             raise RuntimeError("TOKEN_ENCRYPTION_KEY is required to store OAuth tokens")
-        _fernet_cache = None
+        _fernet_cache = (None, key)
         return None
     try:
-        _fernet_cache = Fernet(key.encode())
-        return _fernet_cache
+        instance = Fernet(key.encode())
+        _fernet_cache = (instance, key)
+        return instance
     except Exception as exc:
         if _requires_token_encryption():
             raise RuntimeError("TOKEN_ENCRYPTION_KEY is invalid") from exc
         logger.warning("TOKEN_ENCRYPTION_KEY 无效，已按显式配置回退为明文 token")
-        _fernet_cache = None
+        _fernet_cache = (None, key)
         return None
 
 
 def reset_fernet_cache() -> None:
-    """Call this after TOKEN_ENCRYPTION_KEY is changed at runtime."""
+    """Force re-read settings.token_encryption_key on next encrypt/decrypt call."""
     global _fernet_cache
-    _fernet_cache = False
+    _fernet_cache = (_UNSET, "")
 
 
 def encrypt_token(plaintext: str) -> str:

@@ -25,21 +25,30 @@ USER_OPEN_ID_KEY = "feishu_user_open_id"
 _user_access_tokens: dict[str, str] = {}
 _user_refresh_tokens: dict[str, str] = {}
 _user_open_ids: dict[str, str] = {}
-_refresh_lock: asyncio.Lock | None = None
 import threading as _threading
+# v8.6.20-r11（审计 #6）：refresh 锁按 tenant 分键，不再用全局单锁——之前 A 租户
+# 卡 refresh 网络（飞书 timeout=10s），B 租户的所有 _with_user_token_retry 全部
+# 串行等 A 释放锁，整套面板停摆。
+_refresh_locks: dict[str, asyncio.Lock] = {}
 _refresh_lock_init = _threading.Lock()
+# v8.6.20-r11（审计 #7）：记录每个 tenant 上一次 refresh 完成时刻，让并发请求
+# 在锁内做 double-check：发现已被别人在 N 秒内刷过就跳过，避免飞书 refresh_token
+# 一次性失效问题。
+_last_refresh_at: dict[str, float] = {}
+_REFRESH_DEBOUNCE_SECONDS = 5.0
 
 
-def _get_refresh_lock() -> asyncio.Lock:
-    """v8.3 修复：懒初始化 race — 并发首次刷新 user OAuth token 各自创建独立锁
-    → token 双重刷新（飞书 refresh_token 一次性的，可能让其中一个失败）。
-    """
-    global _refresh_lock
-    if _refresh_lock is None:
+def _get_refresh_lock(tenant_id: str | None = None) -> asyncio.Lock:
+    """v8.6.20-r11（审计 #6）：按 tenant_id 取锁，不同租户互不阻塞。"""
+    tenant = _tenant_scope(tenant_id)
+    lock = _refresh_locks.get(tenant)
+    if lock is None:
         with _refresh_lock_init:
-            if _refresh_lock is None:
-                _refresh_lock = asyncio.Lock()
-    return _refresh_lock
+            lock = _refresh_locks.get(tenant)
+            if lock is None:
+                lock = asyncio.Lock()
+                _refresh_locks[tenant] = lock
+    return lock
 
 
 def _tenant_scope(tenant_id: str | None = None) -> str:
@@ -105,8 +114,18 @@ def _feishu_base() -> str:
 
 
 async def refresh_user_token() -> None:
-    async with _get_refresh_lock():
+    # v8.6.20-r11（审计 #6/#7）：按 tenant 分键 + 锁内 debounce double-check
+    import time as _time
+    tenant = _tenant_scope()
+    async with _get_refresh_lock(tenant):
+        last = _last_refresh_at.get(tenant, 0.0)
+        if _time.time() - last < _REFRESH_DEBOUNCE_SECONDS:
+            # 别人刚刷过（5s 内）→ 跳过，避免飞书 refresh_token 一次性失效问题
+            logger.info("refresh_user_token tenant=%s deduped (last refresh %.1fs ago)",
+                        tenant, _time.time() - last)
+            return
         await _refresh_user_token_impl()
+        _last_refresh_at[tenant] = _time.time()
 
 
 async def _refresh_user_token_impl() -> None:
