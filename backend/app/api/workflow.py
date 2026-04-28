@@ -830,6 +830,10 @@ async def workflow_seed(req: SeedRequest):
         fields["复盘负责人OpenID"] = req.retrospective_owner_open_id
     if req.review_sla_hours > 0:
         fields["复核SLA小时"] = req.review_sla_hours
+
+    # 新建任务在调度器接手前也应具备完整的原生责任/异常契约字段，
+    # 避免未安装 A1 自动化或本地静态验收时出现空白责任面。
+    fields.update(_derive_native_bitable_contract(fields))
     record_id = await bitable_ops.create_record_optional_fields(
         req.app_token,
         req.table_id,
@@ -857,6 +861,12 @@ async def workflow_seed(req: SeedRequest):
             "复盘负责人",
             "复盘负责人OpenID",
             "复核SLA小时",
+            "当前责任角色",
+            "当前责任人",
+            "当前原生动作",
+            "异常状态",
+            "异常类型",
+            "异常说明",
         ],
     )
     await record_audit(

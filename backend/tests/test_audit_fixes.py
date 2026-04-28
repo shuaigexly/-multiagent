@@ -189,7 +189,12 @@ async def test_workflow_seed_does_not_write_auto_created_time(monkeypatch):
     assert result == {"record_id": "rec_1"}
     assert captured["任务来源"] == "手工创建"
     assert captured["自动化执行状态"] == "未触发"
-    assert len(captured) == 6
+    assert captured["当前责任角色"] == "系统调度"
+    assert captured["当前责任人"] == "系统"
+    assert captured["当前原生动作"] == "等待分析完成"
+    assert captured["异常状态"] == "正常"
+    assert captured["异常类型"] == "无"
+    assert "异常说明" in captured
 
 
 @pytest.mark.asyncio
@@ -318,6 +323,46 @@ async def test_workflow_seed_explicit_fields_override_template_defaults(monkeypa
     assert captured["复核负责人"] == "数据 PM"
     assert captured["复盘负责人"] == "指定复盘人"
     assert captured["复核SLA小时"] == 6
+
+
+@pytest.mark.asyncio
+async def test_workflow_seed_includes_native_contract_optional_keys(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+
+    captured = {"optional_keys": []}
+
+    async def fake_create_record(_app_token, _table_id, fields, optional_keys=None):
+        captured.update(fields)
+        captured["optional_keys"] = list(optional_keys or [])
+        return "rec_contract_keys"
+
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", fake_create_record)
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+
+    req = workflow.SeedRequest(
+        app_token="app",
+        table_id="tbl",
+        title="task",
+        task_source="原生导入",
+        audience_level="CEO",
+    )
+
+    result = await workflow.workflow_seed(req)
+
+    assert result == {"record_id": "rec_contract_keys"}
+    assert captured["当前责任角色"] == "系统调度"
+    assert "当前责任角色" in captured["optional_keys"]
+    assert "当前责任人" in captured["optional_keys"]
+    assert "当前原生动作" in captured["optional_keys"]
+    assert "异常状态" in captured["optional_keys"]
+    assert "异常类型" in captured["optional_keys"]
+    assert "异常说明" in captured["optional_keys"]
 
 
 @pytest.mark.asyncio
