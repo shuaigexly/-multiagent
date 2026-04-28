@@ -1362,6 +1362,12 @@ export default function BitableWorkflow() {
     return { done, running, pending, error, total: selectedWorkflowDetails.length };
   }, [selectedWorkflowDetails]);
 
+  const selectedWorkflowCompletion = useMemo(() => {
+    if (!selectedWorkflowSnapshot.total) return 0;
+    const weighted = selectedWorkflowSnapshot.done + selectedWorkflowSnapshot.running * 0.5;
+    return Math.round((weighted / selectedWorkflowSnapshot.total) * 100);
+  }, [selectedWorkflowSnapshot]);
+
   const selectedWorkflowSignals = useMemo(
     () => [
       {
@@ -2550,6 +2556,9 @@ export default function BitableWorkflow() {
                                 WORKFLOW_DETAIL_STATUS_STYLE[liveStep?.status || (status === '分析中' ? 'running' : status === '已完成' ? 'done' : 'pending')]
                               }`}
                             >
+                              {(liveStep?.status === 'running' || status === '分析中') && (
+                                <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sky-500 align-middle animate-pulse" />
+                              )}
                               {liveStep?.status === 'done'
                                 ? 'Done'
                                 : liveStep?.status === 'error'
@@ -2690,6 +2699,70 @@ export default function BitableWorkflow() {
                               <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
                                 <span>{selectedLive?.stage || textValue(selectedTask.fields?.当前阶段) || '等待调度'}</span>
                                 <span>{selectedProgress.toFixed(0)}%</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-6 grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
+                            <div className="rounded-[24px] border border-slate-200 bg-white/88 p-4 shadow-sm">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Workflow Overview</div>
+                                  <div className="mt-2 text-lg font-semibold text-slate-950">执行摘要</div>
+                                </div>
+                                <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                                  完成率 {selectedWorkflowCompletion}%
+                                </div>
+                              </div>
+                              <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                                {selectedWorkflowDetails.map((step, index) => (
+                                  <div
+                                    key={step.key}
+                                    className={`rounded-2xl border px-3 py-3 ${
+                                      step.key === selectedActiveWorkflowStep?.key
+                                        ? 'border-sky-200 bg-sky-50/80'
+                                        : 'border-slate-200 bg-slate-50/70'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">0{index + 1}</div>
+                                      <div className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
+                                        {step.status === 'done' ? 'Done' : step.status === 'error' ? 'Error' : step.status === 'running' ? 'Live' : 'Queued'}
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-950">{step.title}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.86))] p-4 shadow-sm">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Next Handoff</div>
+                                  <div className="mt-2 text-lg font-semibold text-slate-950">
+                                    {selectedActiveWorkflowStep?.title || '等待步骤初始化'}
+                                  </div>
+                                </div>
+                                <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedActiveWorkflowStep?.status || 'pending']}`}>
+                                  {selectedActiveWorkflowStep?.status === 'done'
+                                    ? 'Closed'
+                                    : selectedActiveWorkflowStep?.status === 'error'
+                                      ? 'Error'
+                                      : selectedActiveWorkflowStep?.status === 'running'
+                                        ? 'Live'
+                                        : 'Queued'}
+                                </div>
+                              </div>
+                              <div className="mt-3 text-sm leading-6 text-slate-600">
+                                {selectedActiveWorkflowStep?.description || '开始分析后，这里会出现当前节点的交接重点。'}
+                              </div>
+                              <div className="mt-4 flex flex-wrap gap-2">
+                                {selectedWorkflowSignals.map((item) => (
+                                  <div key={item.label} className={`rounded-full border px-3 py-1 text-xs font-medium ${item.tone}`}>
+                                    {item.label} · {item.value}
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           </div>
@@ -2857,6 +2930,9 @@ export default function BitableWorkflow() {
                                 </div>
                               </div>
                               <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedActiveWorkflowStep?.status || 'pending']}`}>
+                                {selectedActiveWorkflowStep?.status === 'running' && (
+                                  <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sky-500 align-middle animate-pulse" />
+                                )}
                                 {selectedActiveWorkflowStep?.status === 'done'
                                   ? 'Closed'
                                   : selectedActiveWorkflowStep?.status === 'error'
@@ -3025,7 +3101,7 @@ export default function BitableWorkflow() {
                                       ) : isDone ? (
                                         <CheckCircle2 className="h-4 w-4" />
                                       ) : isCurrent ? (
-                                        <Sparkles className="h-4 w-4" />
+                                        <Sparkles className="h-4 w-4 animate-pulse" />
                                       ) : (
                                         <Clock3 className="h-4 w-4" />
                                       )}
@@ -3097,7 +3173,7 @@ export default function BitableWorkflow() {
                                     <div className="mt-2 text-sm leading-6 text-slate-600">{event.detail}</div>
                                     <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
                                       <span>{event.stage}</span>
-                                      <span>{formatRelativeTime(event.updatedAt)}</span>
+                                      <span>{formatDateValue(event.updatedAt)}</span>
                                     </div>
                                   </div>
                                 ))}
