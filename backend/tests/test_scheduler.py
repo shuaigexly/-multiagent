@@ -479,6 +479,34 @@ class TestReviewHistoryAndArchive:
         assert "前次推荐动作：补数后复核" in fields["新旧结论差异"]
 
     @pytest.mark.asyncio
+    async def test_write_review_history_record_prefers_record_id_over_same_title_rows(self):
+        async def fake_list_records(_app_token, _table_id, filter_expr=None, max_records=100):
+            assert "关联记录ID" in (filter_expr or "")
+            return []
+
+        with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(side_effect=fake_list_records)):
+            with patch("app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields", new=AsyncMock(return_value="rec_new")) as mock_create:
+                from app.bitable_workflow.scheduler import _write_review_history_record
+
+                payload = await _write_review_history_record(
+                    "app_token",
+                    "tbl_review_history",
+                    "增长复盘任务",
+                    "12",
+                    {
+                        "推荐动作": "建议重跑",
+                        "评审结论": "建议重跑",
+                    },
+                    route="重新分析",
+                    record_id="rec_task_unique",
+                )
+
+        assert payload["round"] == 1
+        fields = mock_create.await_args.args[2]
+        assert fields["复核轮次"] == 1.0
+        assert fields["关联记录ID"] == "rec_task_unique"
+
+    @pytest.mark.asyncio
     async def test_write_delivery_archive_record_returns_version_and_status(self, ceo_result):
         with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(return_value=[{"record_id": "rec_old", "fields": {}}])):
             with patch("app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields", new=AsyncMock(return_value="rec_archive")) as mock_create:
@@ -506,6 +534,38 @@ class TestReviewHistoryAndArchive:
         fields = mock_create.await_args.args[2]
         assert fields["归档状态"] == "待执行"
         assert fields["汇报版本号"] == "v2"
+
+    @pytest.mark.asyncio
+    async def test_write_delivery_archive_record_prefers_record_id_over_same_title_rows(self, ceo_result):
+        async def fake_list_records(_app_token, _table_id, filter_expr=None, max_records=100):
+            assert "关联记录ID" in (filter_expr or "")
+            return []
+
+        with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(side_effect=fake_list_records)):
+            with patch("app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields", new=AsyncMock(return_value="rec_archive")) as mock_create:
+                from app.bitable_workflow.scheduler import _write_delivery_archive_record
+
+                payload = await _write_delivery_archive_record(
+                    "app_token",
+                    "tbl_archive",
+                    "增长复盘任务",
+                    "12",
+                    {"目标对象": "CEO", "执行负责人": "运营负责人A"},
+                    {
+                        "最新评审动作": "直接采用",
+                        "最新管理摘要": "增长放缓，需要先优化投放结构。",
+                        "汇报就绪度": 4,
+                        "工作流消息包": "任务：增长复盘任务",
+                    },
+                    ceo_result,
+                    "直接执行",
+                    record_id="rec_task_unique",
+                )
+
+        assert payload["version"] == "v1"
+        fields = mock_create.await_args.args[2]
+        assert fields["汇报版本号"] == "v1"
+        assert fields["关联记录ID"] == "rec_task_unique"
 
 
 class TestAutomationLog:

@@ -1166,6 +1166,33 @@ async def _write_automation_log(
         logger.warning("write automation log failed task=%s node=%s: %s", task_title, node_name, exc)
 
 
+async def _list_related_rows(
+    app_token: str,
+    table_id: str | None,
+    *,
+    task_title: str,
+    record_id: str = "",
+    max_records: int = 100,
+) -> list[dict]:
+    if not table_id:
+        return []
+    if record_id:
+        safe_record_id = bitable_ops.quote_filter_value(record_id)
+        return await bitable_ops.list_records(
+            app_token,
+            table_id,
+            filter_expr=f"CurrentValue.[关联记录ID]={safe_record_id}",
+            max_records=max_records,
+        )
+    safe_title = bitable_ops.quote_filter_value(task_title)
+    return await bitable_ops.list_records(
+        app_token,
+        table_id,
+        filter_expr=f"CurrentValue.[任务标题]={safe_title}",
+        max_records=max_records,
+    )
+
+
 async def _write_review_history_record(
     app_token: str,
     review_history_tid: str | None,
@@ -1178,11 +1205,11 @@ async def _write_review_history_record(
     if not review_history_tid or not review_fields:
         return None
     try:
-        safe_title = bitable_ops.quote_filter_value(task_title)
-        existing_rows = await bitable_ops.list_records(
+        existing_rows = await _list_related_rows(
             app_token,
             review_history_tid,
-            filter_expr=f"CurrentValue.[任务标题]={safe_title}",
+            task_title=task_title,
+            record_id=record_id,
             max_records=100,
         )
     except Exception as exc:
@@ -1237,11 +1264,11 @@ async def _write_delivery_archive_record(
     if not archive_tid:
         return None
     try:
-        safe_title = bitable_ops.quote_filter_value(task_title)
-        existing_rows = await bitable_ops.list_records(
+        existing_rows = await _list_related_rows(
             app_token,
             archive_tid,
-            filter_expr=f"CurrentValue.[任务标题]={safe_title}",
+            task_title=task_title,
+            record_id=record_id,
             max_records=100,
         )
     except Exception as exc:
