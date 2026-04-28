@@ -224,6 +224,39 @@ class TestFollowupTasks:
         assert mock_action.await_args.args[4] == "已跳过"
 
     @pytest.mark.asyncio
+    async def test_followup_tasks_do_not_dedupe_across_different_parent_task_numbers(self):
+        result = AgentResult(
+            agent_id="ceo_assistant",
+            agent_name="CEO 助理",
+            sections=[],
+            action_items=[],
+            raw_output="完成",
+            decision_items=[
+                {"summary": "补齐线索质量分析", "type": "need_data"},
+            ],
+        )
+        existing = [{
+            "record_id": "rec_existing",
+            "fields": {"状态": Status.PENDING, "依赖任务编号": "11"},
+        }]
+        with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(return_value=existing)):
+            with patch(
+                "app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields",
+                new=AsyncMock(return_value="rec_followup"),
+            ) as mock_create:
+                from app.bitable_workflow.scheduler import _create_followup_tasks
+
+                await _create_followup_tasks(
+                    "app_token",
+                    "tbl_task",
+                    "经营复盘",
+                    result,
+                    parent_task_number="12",
+                )
+
+        mock_create.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_followup_tasks_do_not_create_feishu_tasks_before_approval(self):
         result = AgentResult(
             agent_id="ceo_assistant",
@@ -502,6 +535,33 @@ class TestReviewRecheckTasks:
                 )
 
         mock_create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_review_recheck_task_does_not_dedupe_across_different_parent_task_numbers(self):
+        review_fields = {
+            "推荐动作": "建议重跑",
+            "需补数事项": "",
+        }
+        existing = [{
+            "record_id": "rec_existing",
+            "fields": {"状态": Status.PENDING, "依赖任务编号": "11"},
+        }]
+        with patch("app.bitable_workflow.scheduler.bitable_ops.list_records", new=AsyncMock(return_value=existing)):
+            with patch(
+                "app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields",
+                new=AsyncMock(return_value="rec_recheck"),
+            ) as mock_create:
+                from app.bitable_workflow.scheduler import _create_review_recheck_task
+
+                await _create_review_recheck_task(
+                    "app_token",
+                    "tbl_task",
+                    "增长复盘任务",
+                    review_fields,
+                    parent_task_number="12",
+                )
+
+        mock_create.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_review_recheck_skip_duplicate_writes_action_log(self):

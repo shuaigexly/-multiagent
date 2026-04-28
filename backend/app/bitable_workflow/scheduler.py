@@ -59,6 +59,17 @@ def _flatten_record_fields(fields: dict) -> dict:
         return fields
     return {k: _flatten_text_value(v) for k, v in fields.items()}
 
+
+def _record_matches_parent_task(row: dict, parent_task_number: str | None) -> bool:
+    if not parent_task_number:
+        return True
+    raw = (row.get("fields") or {}).get("依赖任务编号")
+    if isinstance(raw, dict):
+        raw = raw.get("text") or raw.get("name") or ""
+    if not isinstance(raw, str):
+        raw = _flatten_text_value(raw)
+    return str(raw or "").strip() == str(parent_task_number).strip()
+
 # 单轮最多处理任务数（每条任务触发 7 次 LLM 调用）
 _MAX_PER_CYCLE = 3
 # v8.6.20-r7（审计 #3）：本地锁按 (app_token, task_tid) 分键，避免 Redis 不可用降级时
@@ -1592,7 +1603,12 @@ async def _create_followup_tasks(
                 return _flatten_text_value(raw) if not isinstance(raw, str) else raw
 
             duplicate_row = next(
-                (row for row in existing_rows if _row_status(row) in {Status.PENDING, Status.ANALYZING}),
+                (
+                    row
+                    for row in existing_rows
+                    if _row_status(row) in {Status.PENDING, Status.ANALYZING}
+                    and _record_matches_parent_task(row, parent_task_number)
+                ),
                 None,
             )
             if duplicate_row:
@@ -1793,7 +1809,10 @@ async def _create_review_recheck_task(
         )
         for row in existing_rows:
             fields = row.get("fields") or {}
-            if fields.get("状态") in {Status.PENDING, Status.ANALYZING}:
+            if (
+                fields.get("状态") in {Status.PENDING, Status.ANALYZING}
+                and _record_matches_parent_task(row, parent_task_number)
+            ):
                 logger.info(
                     "Skip duplicate review recheck task for [%s], existing record=%s status=%s",
                     task_title,
