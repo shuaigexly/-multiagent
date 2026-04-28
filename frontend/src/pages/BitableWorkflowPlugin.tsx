@@ -35,6 +35,7 @@ import {
   ResolutionCard,
   TraceChainCard,
 } from "./bitableWorkflowPluginCards";
+import BitableAgentLauncher from "./BitableAgentLauncher";
 
 type StepStatus = "done" | "running" | "pending" | "error";
 
@@ -641,7 +642,19 @@ export default function BitableWorkflowPlugin() {
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,250,252,0.94),rgba(255,255,255,0.98))] p-4 text-slate-900">
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-6xl space-y-5">
+        {/* v8.6.20-r24：顶部 Agent 启动器 — 直接输入任务一键写入分析任务表 */}
+        <BitableAgentLauncher
+          onLaunched={(rid) => {
+            // 重置选中到新 record，让主面板自动绑定
+            setSelection((prev) => ({
+              ...prev,
+              tableId: tableIds.task || prev.tableId,
+              recordId: rid,
+            }));
+          }}
+        />
+
         <div className="rounded-[28px] border border-slate-200 bg-white/92 p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
