@@ -63,6 +63,15 @@ interface LiveStepEvent {
   detail: string;
 }
 
+interface WorkflowStepDetail {
+  key: string;
+  title: string;
+  description: string;
+  status: 'done' | 'running' | 'pending' | 'error';
+  items: string[];
+  note?: string;
+}
+
 const STATUS_STYLE: Record<string, { chip: string; lane: string; label: string; surface: string }> = {
   待分析: {
     chip: 'border border-slate-200 bg-slate-100 text-slate-700',
@@ -169,6 +178,13 @@ const ACTION_TYPE_STYLE: Record<string, string> = {
 const STEP_STATUS_STYLE: Record<LiveStepEvent['status'], string> = {
   running: 'border-sky-200 bg-sky-50 text-sky-700',
   done: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  error: 'border-rose-200 bg-rose-50 text-rose-700',
+};
+
+const WORKFLOW_DETAIL_STATUS_STYLE: Record<WorkflowStepDetail['status'], string> = {
+  done: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  running: 'border-sky-200 bg-sky-50 text-sky-700',
+  pending: 'border-slate-200 bg-slate-100 text-slate-600',
   error: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
@@ -840,7 +856,7 @@ export default function BitableWorkflow() {
   const selectedTask =
     tasks.find((task) => task.record_id === selectedTaskId) || highlightedTask || null;
   const selectedLive = selectedTask ? liveEvents[selectedTask.record_id] : undefined;
-  const selectedStepHistory = selectedLive?.history || [];
+  const selectedStepHistory = useMemo(() => selectedLive?.history || [], [selectedLive]);
 
   const latestReportByTitle = useMemo(
     () => buildLatestRecordMap(reportRecords, '报告标题', ['生成时间']),
@@ -1126,6 +1142,105 @@ export default function BitableWorkflow() {
     { title: '需补数', items: splitListText(selectedReport?.fields?.需补数事项 || selectedReview?.fields?.需补数事项), tone: 'text-amber-700' },
     { title: '立即执行', items: splitListText(selectedReport?.fields?.立即执行事项), tone: 'text-emerald-700' },
   ];
+  const selectedWorkflowDetails = useMemo<WorkflowStepDetail[]>(() => {
+    if (!selectedTask) return [];
+
+    const route = taskWorkflowRoute(selectedTask) || '待生成';
+    const recommend = taskReviewAction(selectedTask, selectedReview) || '待评审';
+    const responsibilityRole = taskResponsibilityRole(selectedTask) || '系统调度';
+    const nativeAction = taskNativeAction(selectedTask) || '等待分析完成';
+    const exceptionStatus = taskExceptionStatus(selectedTask) || '正常';
+    const exceptionType = taskExceptionType(selectedTask);
+    const actionSummaries = selectedActions.slice(0, 3).map((record) => {
+      const actionType = textValue(record.fields?.动作类型) || '工作流动作';
+      const actionStatus = textValue(record.fields?.动作状态) || '未知';
+      const result = textValue(record.fields?.执行结果) || textValue(record.fields?.动作内容) || '已记录';
+      return `${actionType} · ${actionStatus}：${result}`;
+    });
+    const automationSummaries = selectedAutomationLogs.slice(0, 3).map((record) => {
+      const node = textValue(record.fields?.节点名称) || '自动化节点';
+      const status = textValue(record.fields?.执行状态) || '未知';
+      const summary = textValue(record.fields?.日志摘要) || textValue(record.fields?.详细结果) || '已记录';
+      return `${node} · ${status}：${summary}`;
+    });
+
+    return [
+      {
+        key: 'intake',
+        title: '第 1 步，任务接入',
+        description: '先明确需求入口、目标对象和数据上下文，避免工作流只是在主表里排队而没有真正的执行语境。',
+        status: 'done',
+        items: [
+          `任务来源：${textValue(selectedTask.fields?.任务来源) || '未标注'}`,
+          `目标对象：${textValue(selectedTask.fields?.目标对象) || textValue(selectedTask.fields?.汇报对象) || '未指定'}`,
+          `引用数据集：${textValue(selectedTask.fields?.引用数据集) || '未绑定'}`,
+        ],
+        note: textValue(selectedTask.fields?.背景说明) || undefined,
+      },
+      {
+        key: 'analysis',
+        title: '第 2 步，七岗分析',
+        description: '把运行中的 wave 推进、当前阶段和增量 token 文案收进一张卡里，形成接近截图右侧的执行中步骤反馈。',
+        status:
+          selectedLive?.status === 'error'
+            ? 'error'
+            : selectedLive?.status === 'done'
+              ? 'done'
+              : textValue(selectedTask.fields?.状态) === '分析中'
+                ? 'running'
+                : 'pending',
+        items:
+          selectedStepHistory.length > 0
+            ? selectedStepHistory.slice(-4).map((step, index) => `${liveStepTitle(step, index)}：${step.stage}`)
+            : [textValue(selectedTask.fields?.当前阶段) || '等待调度进入分析流'],
+        note: selectedLive?.tokenPreview
+          ? `${selectedLive.activeAgent ? `${selectedLive.activeAgent}：` : ''}${selectedLive.tokenPreview}`
+          : undefined,
+      },
+      {
+        key: 'routing',
+        title: '第 3 步，评审与路由',
+        description: '分析完成后需要明确推荐动作、流转路由和责任角色，这一步决定右侧工作流后续到底是汇报、拍板、执行还是复核。',
+        status:
+          selectedLive?.status === 'error'
+            ? 'error'
+            : route !== '待生成' || recommend !== '待评审'
+              ? 'done'
+              : 'pending',
+        items: [
+          `推荐动作：${recommend}`,
+          `工作流路由：${route}`,
+          `当前责任：${responsibilityRole} / ${textValue(selectedTask.fields?.当前责任人) || '未指定'}`,
+          `原生动作：${nativeAction}`,
+          `异常状态：${exceptionStatus}${exceptionType && exceptionType !== '无' ? ` · ${exceptionType}` : ''}`,
+        ],
+      },
+      {
+        key: 'delivery',
+        title: '第 4 步，动作沉淀',
+        description: '不仅要回写主表，还要把动作记录、自动化日志和归档版本落下来，右侧面板才会有“完整闭环”而不是只显示进度。',
+        status:
+          selectedAutomationLogs.some((record) => textValue(record.fields?.执行状态) === '执行失败')
+            ? 'error'
+            : selectedActions.length > 0 || selectedAutomationLogs.length > 0
+              ? 'done'
+              : 'pending',
+        items: [...actionSummaries, ...automationSummaries].slice(0, 6),
+        note:
+          selectedArchiveRecords.length > 0
+            ? `归档版本：${textValue(selectedArchiveRecords[0]?.fields?.汇报版本号) || 'v1'}，归档状态：${textValue(selectedArchiveRecords[0]?.fields?.归档状态) || '待补充'}`
+            : undefined,
+      },
+    ];
+  }, [
+    selectedActions,
+    selectedArchiveRecords,
+    selectedAutomationLogs,
+    selectedLive,
+    selectedReview,
+    selectedStepHistory,
+    selectedTask,
+  ]);
 
   const selectedReviewScores = [
     { label: '真实性', value: clampScore(selectedReview?.fields?.真实性) },
@@ -2485,11 +2600,11 @@ export default function BitableWorkflow() {
                             )}
 
                             <div className="mt-5 space-y-3">
-                              {selectedStepHistory.length === 0 ? (
-                                <EmptyState text="该任务还没有进入实时步骤流。开始分析后，这里会按阶段堆叠步骤详情。" />
+                              {selectedWorkflowDetails.length === 0 ? (
+                                <EmptyState text="该任务还没有进入步骤详情模式。开始分析后，这里会串起接入、分析、评审和动作沉淀。" />
                               ) : (
-                                selectedStepHistory.map((step, index) => {
-                                  const isCurrent = index === selectedStepHistory.length - 1 && step.status === 'running';
+                                selectedWorkflowDetails.map((step) => {
+                                  const isCurrent = step.status === 'running';
                                   return (
                                     <div
                                       key={step.key}
@@ -2502,21 +2617,29 @@ export default function BitableWorkflow() {
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
                                           <div className="flex items-center gap-2">
-                                            <div className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${STEP_STATUS_STYLE[step.status]}`}>
-                                              {step.status === 'done' ? '已完成' : step.status === 'error' ? '失败' : '执行中'}
+                                            <div className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
+                                              {step.status === 'done' ? '已完成' : step.status === 'error' ? '失败' : step.status === 'pending' ? '待开始' : '执行中'}
                                             </div>
-                                            <div className="text-sm font-semibold text-slate-950">{liveStepTitle(step, index)}</div>
+                                            <div className="text-sm font-semibold text-slate-950">{step.title}</div>
                                           </div>
-                                          <div className="mt-2 text-sm leading-6 text-slate-700">{step.detail}</div>
+                                          <div className="mt-2 text-sm leading-6 text-slate-700">{step.description}</div>
                                         </div>
-                                        <div className="text-right text-xs text-slate-500">
-                                          <div>{Math.round(step.progress * 100)}%</div>
-                                          <div className="mt-1">{formatRelativeTime(step.updatedAt)}</div>
+                                        <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
+                                          {step.status === 'done' ? 'Closed' : step.status === 'error' ? 'Error' : step.status === 'pending' ? 'Queued' : 'Live'}
                                         </div>
                                       </div>
-                                      <div className="mt-3 rounded-xl border border-white/80 bg-white/80 px-3 py-2 text-sm text-slate-600">
-                                        {step.stage}
+                                      <div className="mt-3 space-y-2">
+                                        {step.items.map((item) => (
+                                          <div key={item} className="rounded-xl border border-white/80 bg-white/80 px-3 py-2 text-sm leading-6 text-slate-600">
+                                            {item}
+                                          </div>
+                                        ))}
                                       </div>
+                                      {step.note && (
+                                        <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-2 text-sm leading-6 text-slate-500">
+                                          {step.note}
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 })
