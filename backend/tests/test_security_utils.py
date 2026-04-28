@@ -1,7 +1,9 @@
 import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 from cryptography.fernet import Fernet
 
 from app.core.settings import settings
@@ -54,6 +56,47 @@ def test_public_url_validation_allows_matching_allowlist(monkeypatch):
     assert url_safety.validate_public_http_url("https://assets.example.com/report") == (
         "https://assets.example.com/report"
     )
+
+
+def test_stream_token_rejects_tamper_and_wrong_scope(monkeypatch):
+    from app.core.auth import issue_stream_token, verify_stream_token
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "api_key", "test-secret")
+    token = issue_stream_token("task-1", "task-events", ttl_seconds=60)
+
+    verify_stream_token(token, "task-1", "task-events")
+    with pytest.raises(HTTPException):
+        verify_stream_token(token, "task-2", "task-events")
+    with pytest.raises(HTTPException):
+        verify_stream_token(token, "task-1", "workflow-stream")
+    with pytest.raises(HTTPException):
+        verify_stream_token(f"{token}x", "task-1", "task-events")
+
+
+def test_stream_token_rejects_expired_tokens(monkeypatch):
+    from app.core.auth import issue_stream_token, verify_stream_token
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "api_key", "test-secret")
+    token = issue_stream_token("task-1", "task-events", ttl_seconds=1)
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now + 120)
+
+    with pytest.raises(HTTPException):
+        verify_stream_token(token, "task-1", "task-events")
+
+
+def test_stream_token_requires_secret_in_production(monkeypatch):
+    from app.core.auth import issue_stream_token
+    from app.core.settings import settings
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setattr(settings, "api_key", "")
+
+    with pytest.raises(HTTPException) as exc:
+        issue_stream_token("task-1", "task-events")
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio

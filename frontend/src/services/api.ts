@@ -93,7 +93,8 @@ export async function createFeishuTask(
 }
 
 export async function createSSEConnection(taskId: string): Promise<EventSource> {
-  const resp = await api.post<{ token: string }>(`/api/v1/tasks/${taskId}/events-token`);
-  const url = `${BASE_URL}/api/v1/tasks/${taskId}/events?token=${encodeURIComponent(resp.data.token)}`;
+  const encodedTaskId = encodeURIComponent(taskId);
+  const resp = await api.post<{ token: string }>(`/api/v1/tasks/${encodedTaskId}/events-token`);
+  const url = `${BASE_URL}/api/v1/tasks/${encodedTaskId}/events?token=${encodeURIComponent(resp.data.token)}`;
   return new EventSource(url);
 }

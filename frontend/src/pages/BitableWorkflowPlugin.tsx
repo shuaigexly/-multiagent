@@ -381,6 +381,7 @@ export default function BitableWorkflowPlugin() {
       }
       hasMore = response.hasMore;
       pageToken = response.pageToken;
+      if (hasMore && !pageToken) break;
     }
 
     return collected;

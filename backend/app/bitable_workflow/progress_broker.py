@@ -1,7 +1,7 @@
 """进程内 SSE 进度广播（无需外部依赖）。
 
-scheduler 里的 Wave 进度回调会 publish 事件，/api/v1/workflow/stream/{task_id}
-的 SSE 端点从对应队列消费并推给前端。
+scheduler 里的 Wave 进度回调会 publish 事件，token 保护的
+/api/v1/workflow/stream/{task_id} SSE 端点从对应队列消费并推给前端。
 
 设计要点：
 - 按 task_id 隔离队列，互不干扰

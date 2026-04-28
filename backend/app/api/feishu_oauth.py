@@ -174,7 +174,7 @@ async def refresh_oauth_token():
 @router.get("/oauth/url", dependencies=[Depends(require_api_key)])
 async def get_oauth_url(
     backend_origin: str | None = Query(None),
-    frontend_origin: str = Query("http://localhost:8080"),
+    frontend_origin: str = Query("http://localhost:5173"),
 ):
     """生成飞书 OAuth 授权 URL"""
     if not _is_allowed_origin(frontend_origin):

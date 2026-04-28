@@ -238,7 +238,8 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 | `GET`  | `/api/v1/workflow/native-assets` | 查看当前 Base 的原生蓝图状态 |
 | `GET`  | `/api/v1/workflow/native-manifest` | 查看原生安装顺序、命令包和 Markdown 安装说明 |
 | `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包，把蓝图落到飞书云侧 |
-| `GET`  | `/api/v1/workflow/stream/{record_id}` | **SSE 实时进度流**（task.started / wave.completed / task.done / task.error） |
+| `POST` | `/api/v1/workflow/stream-token/{record_id}` | 签发 SSE 短时订阅 token |
+| `GET`  | `/api/v1/workflow/stream/{record_id}?token=...` | **SSE 实时进度流**（task.started / wave.completed / task.done / task.error） |
 
 当前展示承载已经切到飞书多维表格扩展脚本：
 
@@ -402,7 +403,13 @@ DAU,32000,38000,45000
 ### 前端订阅实时进度流
 
 ```javascript
-const es = new EventSource(`/api/v1/workflow/stream/${recordId}`);
+const encodedRecordId = encodeURIComponent(recordId);
+const tokenResp = await fetch(`/api/v1/workflow/stream-token/${encodedRecordId}`, {
+  method: 'POST',
+  headers: { 'X-API-Key': apiKey },
+});
+const { token } = await tokenResp.json();
+const es = new EventSource(`/api/v1/workflow/stream/${encodedRecordId}?token=${encodeURIComponent(token)}`);
 es.addEventListener('task.started', e => console.log('开始:', JSON.parse(e.data)));
 es.addEventListener('wave.completed', e => {
   const { payload } = JSON.parse(e.data);
@@ -658,6 +665,8 @@ docker run -p 80:80 puff-frontend
 | `GET`  | `/api/v1/workflow/native-assets` | 查看当前 Base 的原生资产蓝图 |
 | `GET`  | `/api/v1/workflow/native-manifest` | 查看原生安装顺序和命令包 |
 | `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包 |
+| `POST` | `/api/v1/workflow/stream-token/{record_id}` | 签发 SSE 短时订阅 token |
+| `GET`  | `/api/v1/workflow/stream/{record_id}?token=...` | 订阅工作流实时进度流 |
 
 ### 健康检查
 
@@ -1355,7 +1364,7 @@ Explore agent 审计 v8.6.4→v8.6.16 发现 base_picker / user_token_view_setup
 
 **📡 SSE 实时进度流**
 - 新增 `progress_broker.py`：进程内 `asyncio.Queue` pub/sub，按 task_id 隔离
-- 新增端点 `GET /api/v1/workflow/stream/{record_id}`（基于 `sse-starlette`）
+- 新增 token 保护的 `GET /api/v1/workflow/stream/{record_id}?token=...`（基于 `sse-starlette`）
 - 事件类型：`task.started` / `wave.completed` / `task.done` / `task.error`
 
 **🛡️ 健壮性**

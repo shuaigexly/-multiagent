@@ -240,6 +240,7 @@ export function subscribeTaskProgress(
 ): () => void {
   let es: EventSource | null = null;
   let closed = false;
+  const encodedRecordId = encodeURIComponent(recordId);
 
   const handler = (e: MessageEvent) => {
     try {
@@ -254,11 +255,11 @@ export function subscribeTaskProgress(
   };
 
   void api
-    .post<{ token: string }>(`/api/v1/workflow/stream-token/${recordId}`)
+    .post<{ token: string }>(`/api/v1/workflow/stream-token/${encodedRecordId}`)
     .then((resp) => {
       if (closed) return;
       es = new EventSource(
-        `${BASE_URL}/api/v1/workflow/stream/${recordId}?token=${encodeURIComponent(resp.data.token)}`,
+        `${BASE_URL}/api/v1/workflow/stream/${encodedRecordId}?token=${encodeURIComponent(resp.data.token)}`,
       );
       ['task.started', 'wave.completed', 'task.done', 'task.error', 'agent.token'].forEach((evt) =>
         es?.addEventListener(evt, handler as EventListener),
