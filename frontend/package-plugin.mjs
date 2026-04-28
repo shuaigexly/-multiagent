@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /**
- * v8.6.20-r16：把 frontend/dist/ 打成飞书 Bitable 小组件 zip 包。
+ * v8.6.20-r17：按飞书数据表视图扩展开发指南打 zip 包
+ * https://open.feishu.cn/document/base-extensions/base-table-view-extension-development-guide
  *
- * 飞书数据表视图插件要求：所有 HTML/JS/CSS/img 静态资源 + 一个 manifest.json
- * 一起 zip，由开发者后台上传得到「小组件版本号」。我们这里把构建产物 dist/
- * 里的所有文件 + dist/manifest.json（vite 自动从 public/ 拷贝）打成
- * `lark-multiagent-plugin.zip`，用户在飞书开发者后台上传即可。
+ * 关键要求：
+ * - dist/ 根必须含 index.html（入口）—— 我们的 bitable.html 要复制成 index.html
+ * - dist/ 根必须含 block.json（含 blockTypeID）
+ * - dist/ 根必须含 app.json（含 appId，飞书后台注入）
+ * - 所有资源用相对路径（./assets/...）
  *
  * 用法：
  *   cd frontend
- *   PUBLIC_BASE_PATH=./ npm run build      # 关键：用相对路径，飞书 zip 不允许绝对 URL
- *   node package-plugin.mjs                # 输出 lark-multiagent-plugin.zip
+ *   PUBLIC_BASE_PATH=./ npm run build    # 相对路径产物
+ *   node package-plugin.mjs              # 输出 lark-multiagent-plugin.zip
  */
-import { createWriteStream, existsSync, statSync, readdirSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { createWriteStream, existsSync, copyFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,12 +26,22 @@ if (!existsSync(DIST)) {
   console.error(`✗ ${DIST} 不存在 — 先跑 npm run build`);
   process.exit(1);
 }
-if (!existsSync(path.join(DIST, "manifest.json"))) {
-  console.error(`✗ ${DIST}/manifest.json 不存在 — 确认 public/manifest.json 存在并重新 build`);
+if (!existsSync(path.join(DIST, "block.json"))) {
+  console.error(`✗ ${DIST}/block.json 不存在 — 确认 public/block.json 存在并重新 build`);
   process.exit(1);
 }
-if (!existsSync(path.join(DIST, "bitable.html"))) {
-  console.error(`✗ ${DIST}/bitable.html 不存在 — 确认 vite build 输出了 bitable.html 入口`);
+if (!existsSync(path.join(DIST, "app.json"))) {
+  console.error(`✗ ${DIST}/app.json 不存在 — 确认 public/app.json 存在并重新 build`);
+  process.exit(1);
+}
+// v8.6.20-r17：飞书要 dist/index.html 入口，我们 vite 输出的 bitable.html 复制为 index.html
+const BITABLE_HTML = path.join(DIST, "bitable.html");
+const INDEX_HTML = path.join(DIST, "index.html");
+if (existsSync(BITABLE_HTML)) {
+  copyFileSync(BITABLE_HTML, INDEX_HTML);
+  console.log("ℹ 已把 bitable.html 复制为 index.html（飞书插件入口）");
+} else if (!existsSync(INDEX_HTML)) {
+  console.error(`✗ ${BITABLE_HTML} 和 ${INDEX_HTML} 都不存在`);
   process.exit(1);
 }
 
