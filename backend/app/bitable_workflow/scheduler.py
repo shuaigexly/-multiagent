@@ -2468,9 +2468,33 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
         except Exception as exc:
             logger.error("Pipeline failed for task=%s record=%s: %s", task_title, rid, exc)
             try:
-                await bitable_ops.update_record(
+                failure_stage = f"❌ 执行失败，将重试：{truncate_with_marker(exc, 100, '...[截断]')}"
+                reset_fields = {
+                    "状态": Status.PENDING,
+                    "当前阶段": failure_stage,
+                    "进度": 0,
+                }
+                reset_contract = _derive_native_bitable_contract({**fields, **reset_fields})
+                reset_contract["自动化执行状态"] = "失败"
+                await bitable_ops.update_record_optional_fields(
                     app_token, task_tid, rid,
-                    {"状态": Status.PENDING, "当前阶段": f"❌ 执行失败，将重试：{truncate_with_marker(exc, 100, '...[截断]')}"}
+                    {
+                        **reset_fields,
+                        **reset_contract,
+                    },
+                    optional_keys=[
+                        "业务归属",
+                        "汇报对象级别",
+                        "拍板负责人",
+                        "复盘负责人",
+                        "当前责任角色",
+                        "当前责任人",
+                        "当前原生动作",
+                        "异常状态",
+                        "异常类型",
+                        "异常说明",
+                        "自动化执行状态",
+                    ],
                 )
             except Exception as reset_exc:
                 logger.error(

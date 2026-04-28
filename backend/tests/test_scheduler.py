@@ -1035,3 +1035,90 @@ class TestRunCycleActionRouting:
         assert mock_recheck.await_args.kwargs["action_tid"] == "tbl_action"
         assert mock_recheck.await_args.kwargs["automation_log_tid"] == "tbl_automation_log"
         assert mock_recheck.await_args.kwargs["route"] == "补数复核"
+
+    @pytest.mark.asyncio
+    async def test_run_cycle_resets_failed_pipeline_with_failure_status(self):
+        pending_record = {
+            "record_id": "rec_task_fail",
+            "fields": {
+                "任务标题": "失败重试任务",
+                "状态": Status.PENDING,
+                "优先级": "P1 高",
+                "任务编号": "15",
+            },
+        }
+        claim_record = {
+            "record_id": "rec_task_fail",
+            "fields": {
+                "任务标题": "失败重试任务",
+                "状态": Status.ANALYZING,
+                "优先级": "P1 高",
+                "任务编号": "15",
+                "背景说明": "模拟 pipeline 失败",
+            },
+        }
+
+        async def fake_list_records(_app_token, _table_id, filter_expr=None, **_kwargs):
+            if Status.ANALYZING in (filter_expr or ""):
+                return []
+            if Status.PENDING in (filter_expr or ""):
+                return [pending_record]
+            return []
+
+        update_optional_mock = AsyncMock()
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("app.bitable_workflow.scheduler.USE_RECORDS_SEARCH", False))
+            stack.enter_context(patch("app.bitable_workflow.scheduler.USE_BATCH_RECORDS", False))
+            stack.enter_context(
+                patch("app.bitable_workflow.scheduler.bitable_ops.list_records", side_effect=fake_list_records)
+            )
+            stack.enter_context(
+                patch("app.bitable_workflow.scheduler._build_dep_index", new=AsyncMock(return_value={}))
+            )
+            stack.enter_context(
+                patch("app.bitable_workflow.scheduler._claim_pending_record", new=AsyncMock(return_value=claim_record))
+            )
+            stack.enter_context(
+                patch(
+                    "app.bitable_workflow.scheduler._hydrate_task_dataset_reference",
+                    new=AsyncMock(side_effect=lambda *args: args[-1]),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "app.bitable_workflow.scheduler.run_task_pipeline",
+                    new=AsyncMock(side_effect=RuntimeError("LLM timeout while generating report")),
+                )
+            )
+            stack.enter_context(
+                patch("app.bitable_workflow.scheduler.bitable_ops.update_record", new=AsyncMock())
+            )
+            stack.enter_context(
+                patch(
+                    "app.bitable_workflow.scheduler.bitable_ops.update_record_optional_fields",
+                    new=update_optional_mock,
+                )
+            )
+            publish_mock = stack.enter_context(
+                patch("app.bitable_workflow.progress_broker.publish", new=AsyncMock())
+            )
+            stack.enter_context(
+                patch("app.bitable_workflow.agent_cache.invalidate_task_cache", new=AsyncMock())
+            )
+            from app.bitable_workflow.scheduler import _run_one_cycle_locked
+
+            processed = await _run_one_cycle_locked("app_token", TABLE_IDS)
+
+        assert processed == 0
+        reset_call = update_optional_mock.await_args
+        assert reset_call.args[:3] == ("app_token", "tbl_task", "rec_task_fail")
+        reset_fields = reset_call.args[3]
+        assert reset_fields["状态"] == Status.PENDING
+        assert reset_fields["进度"] == 0
+        assert reset_fields["自动化执行状态"] == "失败"
+        assert reset_fields["当前责任角色"] == "系统调度"
+        assert reset_fields["当前原生动作"] == "等待分析完成"
+        assert "执行失败，将重试" in reset_fields["当前阶段"]
+        assert "自动化执行状态" in reset_call.kwargs["optional_keys"]
+        assert publish_mock.await_args_list[-1].args[1] == "task.error"
