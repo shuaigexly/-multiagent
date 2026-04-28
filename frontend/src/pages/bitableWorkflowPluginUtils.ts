@@ -33,6 +33,11 @@ export interface WorkflowResolutionDebug {
   issues: string[];
 }
 
+export interface WorkflowSummaryItem {
+  label: string;
+  value: string;
+}
+
 function textValue(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
@@ -163,4 +168,42 @@ export function buildResolutionDebug(
     resolutionLabel,
     issues,
   };
+}
+
+export function buildSourceContextItems(
+  sourceKind: WorkflowSourceKind,
+  selectionRecord: WorkflowSelectionRecord | null,
+): WorkflowSummaryItem[] {
+  if (!selectionRecord) return [];
+
+  const fields = selectionRecord.fields;
+  const pushIfPresent = (label: string, value: unknown) => {
+    const normalized = textValue(value);
+    return normalized ? { label, value: normalized } : null;
+  };
+
+  const items: Array<WorkflowSummaryItem | null> = [
+    { label: "来源表", value: workflowSourceLabel(sourceKind) },
+    { label: "记录ID", value: selectionRecord.recordId || "缺失" },
+  ];
+
+  if (sourceKind === "task") {
+    items.push(pushIfPresent("任务状态", fields["状态"]));
+    items.push(pushIfPresent("当前阶段", fields["当前阶段"]));
+    items.push(pushIfPresent("工作流路由", fields["工作流路由"]));
+  } else if (sourceKind === "review") {
+    items.push(pushIfPresent("推荐动作", fields["推荐动作"]));
+    items.push(pushIfPresent("工作流路由", fields["工作流路由"]));
+    items.push(pushIfPresent("需补数事项", fields["需补数事项"]));
+  } else if (sourceKind === "action") {
+    items.push(pushIfPresent("动作类型", fields["动作类型"]));
+    items.push(pushIfPresent("动作状态", fields["动作状态"]));
+    items.push(pushIfPresent("工作流路由", fields["工作流路由"]));
+  } else if (sourceKind === "archive") {
+    items.push(pushIfPresent("归档状态", fields["归档状态"]));
+    items.push(pushIfPresent("工作流路由", fields["工作流路由"]));
+    items.push(pushIfPresent("最新评审动作", fields["最新评审动作"]));
+  }
+
+  return items.filter((item): item is WorkflowSummaryItem => Boolean(item));
 }

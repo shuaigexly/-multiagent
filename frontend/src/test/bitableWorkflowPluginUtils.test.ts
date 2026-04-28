@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSourceContextItems,
   buildResolutionDebug,
   buildTaskLocator,
   getWorkflowSourceKind,
@@ -70,5 +71,21 @@ describe("bitable workflow plugin utils", () => {
     expect(unresolved.resolutionMode).toBe("unresolved");
     expect(unresolved.issues).toContain("缺少「关联记录ID」");
     expect(unresolved.issues).toContain("缺少「任务标题」");
+  });
+
+  it("builds source context items for related workflow rows", () => {
+    const actionItems = buildSourceContextItems("action", {
+      recordId: "rec_action",
+      fields: { 动作类型: "发送汇报", 动作状态: "待执行", 工作流路由: "直接汇报" },
+    });
+    expect(actionItems.map((item) => item.label)).toContain("动作类型");
+    expect(actionItems.map((item) => item.value)).toContain("发送汇报");
+
+    const archiveItems = buildSourceContextItems("archive", {
+      recordId: "rec_archive",
+      fields: { 归档状态: "待复盘", 工作流路由: "直接执行", 最新评审动作: "补数后复核" },
+    });
+    expect(archiveItems.map((item) => item.label)).toContain("归档状态");
+    expect(archiveItems.map((item) => item.value)).toContain("待复盘");
   });
 });

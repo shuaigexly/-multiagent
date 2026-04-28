@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { API_KEY_STORAGE_KEY, getRuntimeApiKey } from "@/services/http";
 import { subscribeTaskProgress, type ProgressEvent } from "@/services/workflow";
 import {
+  buildSourceContextItems,
   buildResolutionDebug,
   buildTaskLocator,
   getWorkflowSourceKind,
@@ -20,6 +21,7 @@ import {
   matchesTaskRecord,
   workflowSourceLabel,
   type WorkflowResolutionDebug,
+  type WorkflowSummaryItem,
   type WorkflowSourceKind,
 } from "./bitableWorkflowPluginUtils";
 
@@ -313,6 +315,7 @@ export default function BitableWorkflowPlugin() {
   const [archives, setArchives] = useState<TaskSnapshot[]>([]);
   const [live, setLive] = useState<LiveState | null>(null);
   const [resolutionDebug, setResolutionDebug] = useState<WorkflowResolutionDebug | null>(null);
+  const [selectedRecordSnapshot, setSelectedRecordSnapshot] = useState<TaskSnapshot | null>(null);
   const unsubscribeRef = useRef<null | (() => void)>(null);
   const tableCacheRef = useRef(new Map<string, Promise<{ getRecordById(recordId: string): Promise<BitableRecordValue>; getRecordsByPage(params: { pageSize?: number; pageToken?: number }): Promise<{ records: BitableRecordValue[]; hasMore: boolean; pageToken?: number }>; }>>());
   const fieldMapCacheRef = useRef(new Map<string, Promise<Map<string, string>>>());
@@ -437,6 +440,7 @@ export default function BitableWorkflowPlugin() {
       setArchives([]);
       setLive(null);
       setResolutionDebug(null);
+      setSelectedRecordSnapshot(null);
       setLoading(false);
       unsubscribeRef.current?.();
       unsubscribeRef.current = null;
@@ -450,6 +454,7 @@ export default function BitableWorkflowPlugin() {
       setArchives([]);
       setLive(null);
       setResolutionDebug(null);
+      setSelectedRecordSnapshot(null);
       setLoading(false);
       unsubscribeRef.current?.();
       unsubscribeRef.current = null;
@@ -465,6 +470,7 @@ export default function BitableWorkflowPlugin() {
       setError("");
       try {
         const selectedRecord = await getMappedRecordById(selection.tableId!, selection.recordId!);
+        setSelectedRecordSnapshot(selectedRecord);
         const locator = buildTaskLocator(nextSourceKind, selectedRecord, selection.recordId);
 
         let currentTask: TaskSnapshot | null = nextSourceKind === "task" ? selectedRecord : null;
@@ -558,6 +564,7 @@ export default function BitableWorkflowPlugin() {
         if (!active) return;
         setError(`加载多维表格记录失败：${String(err)}`);
         setResolutionDebug(null);
+        setSelectedRecordSnapshot(null);
       } finally {
         if (active) setLoading(false);
       }
@@ -584,6 +591,74 @@ export default function BitableWorkflowPlugin() {
   const progress = live ? Math.max(safeProgress(task?.fields["进度"]), live.progress) : safeProgress(task?.fields["进度"]);
   const reviewAction = textValue(task?.fields["最新评审动作"]) || textValue(review?.fields["推荐动作"]) || "待评审";
   const sourceLabel = workflowSourceLabel(sourceKind);
+  const selectedRecordTitle = textValue(selectedRecordSnapshot?.fields["任务标题"]);
+  const sourceContextItems = useMemo<WorkflowSummaryItem[]>(
+    () => buildSourceContextItems(sourceKind, selectedRecordSnapshot),
+    [selectedRecordSnapshot, sourceKind],
+  );
+  const relationSummaryItems = useMemo<WorkflowSummaryItem[]>(
+    () => [
+      { label: "评审命中", value: review ? "1 条" : "0 条" },
+      { label: "动作命中", value: `${actions.length} 条` },
+      { label: "归档命中", value: `${archives.length} 条` },
+    ],
+    [actions.length, archives.length, review],
+  );
+
+  const renderResolutionCard = () =>
+    resolutionDebug ? (
+      <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Traceability</div>
+            <div className="mt-2 text-lg font-semibold text-slate-950">回溯诊断</div>
+          </div>
+          <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${RESOLUTION_STYLE[resolutionDebug.resolutionMode]}`}>
+            {resolutionDebug.resolutionLabel}
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {[
+            `来源表：${resolutionDebug.sourceLabel}`,
+            `当前记录ID：${resolutionDebug.selectedRecordId || "缺失"}`,
+            `关联记录ID：${resolutionDebug.taskRecordIdCandidate || "缺失"}`,
+            `任务标题：${resolutionDebug.taskTitleCandidate || "缺失"}`,
+          ].map((item) => (
+            <div key={item} className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm leading-6 text-slate-600">
+              {item}
+            </div>
+          ))}
+        </div>
+        {!!resolutionDebug.issues.length && (
+          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-3 text-sm leading-6 text-rose-700">
+            {resolutionDebug.issues.join("；")}
+          </div>
+        )}
+      </div>
+    ) : null;
+
+  const renderEntryContextCard = () =>
+    selectedRecordSnapshot ? (
+      <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Entry Context</div>
+            <div className="mt-2 text-lg font-semibold text-slate-950">当前记录上下文</div>
+          </div>
+          <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600">
+            {sourceLabel}
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {[...sourceContextItems, ...relationSummaryItems].map((item) => (
+            <div key={`${item.label}:${item.value}`} className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{item.label}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-700">{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    ) : null;
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,250,252,0.94),rgba(255,255,255,0.98))] p-4 text-slate-900">
@@ -623,8 +698,32 @@ export default function BitableWorkflowPlugin() {
               <EmptyState text="请在「分析任务 / 产出评审 / 交付动作 / 交付结果归档」任一工作流表中选中记录。插件会在右侧面板自动回溯并展示对应任务轨道。" />
             </div>
           ) : !task ? (
-            <div className="mt-6">
-              <EmptyState text={`当前已从「${sourceLabel}」进入，但还没有成功回溯到对应分析任务。请检查该行的「关联记录ID」或「任务标题」是否完整。`} />
+            <div className="mt-6 grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
+              <section className="space-y-6">
+                <div className="rounded-[28px] border border-slate-200 bg-[linear-gradient(135deg,rgba(251,191,36,0.10),rgba(255,255,255,0.98)_42%,rgba(248,250,252,0.90))] p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="max-w-3xl">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">待人工修正</span>
+                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">{sourceLabel}</span>
+                      </div>
+                      <div className="mt-4 text-3xl font-semibold leading-tight text-slate-950">
+                        {selectedRecordTitle || "当前记录尚未关联到分析任务"}
+                      </div>
+                      <div className="mt-3 text-sm leading-7 text-slate-700">
+                        你当前选中的不是主任务记录，且插件还没有成功回溯到对应分析任务。请优先检查该行是否具备完整的 `关联记录ID` 或 `任务标题`。
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {renderResolutionCard()}
+                {renderEntryContextCard()}
+              </section>
+
+              <section className="rounded-[28px] border border-slate-200 bg-white/94 p-5 shadow-sm">
+                <EmptyState text={`当前已从「${sourceLabel}」进入，但还没有成功回溯到对应分析任务。请检查该行的「关联记录ID」或「任务标题」是否完整。`} />
+              </section>
             </div>
           ) : (
             <div className="mt-6 grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
@@ -666,36 +765,8 @@ export default function BitableWorkflowPlugin() {
                   </div>
                 </div>
 
-                {resolutionDebug && (
-                  <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Traceability</div>
-                        <div className="mt-2 text-lg font-semibold text-slate-950">回溯诊断</div>
-                      </div>
-                      <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${RESOLUTION_STYLE[resolutionDebug.resolutionMode]}`}>
-                        {resolutionDebug.resolutionLabel}
-                      </div>
-                    </div>
-                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      {[
-                        `来源表：${resolutionDebug.sourceLabel}`,
-                        `当前记录ID：${resolutionDebug.selectedRecordId || "缺失"}`,
-                        `关联记录ID：${resolutionDebug.taskRecordIdCandidate || "缺失"}`,
-                        `任务标题：${resolutionDebug.taskTitleCandidate || "缺失"}`,
-                      ].map((item) => (
-                        <div key={item} className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm leading-6 text-slate-600">
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                    {!!resolutionDebug.issues.length && (
-                      <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-3 text-sm leading-6 text-rose-700">
-                        {resolutionDebug.issues.join("；")}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {renderResolutionCard()}
+                {renderEntryContextCard()}
 
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   {[
