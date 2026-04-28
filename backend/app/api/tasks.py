@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_api_key
 from app.core.data_parser import parse_content
+from app.core.env import get_int_env
 from app.core.event_emitter import EventEmitter
 from app.core.orchestrator import orchestrate
 from app.core.settings import settings
@@ -32,8 +33,8 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 logger = logging.getLogger(__name__)
 
 # Simple in-memory rate limiter: max RATE_LIMIT_MAX tasks per RATE_LIMIT_WINDOW seconds per client IP
-_RATE_LIMIT_MAX = int(os.getenv("TASK_RATE_LIMIT_MAX", "10"))
-_RATE_LIMIT_WINDOW = int(os.getenv("TASK_RATE_LIMIT_WINDOW", "60"))
+_RATE_LIMIT_MAX = get_int_env("TASK_RATE_LIMIT_MAX", 10, minimum=1)
+_RATE_LIMIT_WINDOW = get_int_env("TASK_RATE_LIMIT_WINDOW", 60, minimum=1)
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _claim_lock: asyncio.Lock | None = None
 import threading as _threading
@@ -373,7 +374,7 @@ async def _execute_task(
 
             claim_error_message = None
             async with _get_claim_lock():
-                MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_TASKS", "3"))
+                MAX_CONCURRENT = get_int_env("MAX_CONCURRENT_TASKS", 3, minimum=1)
                 running_count = await db.scalar(
                     select(func.count()).select_from(Task).where(Task.status == "running")
                 )
@@ -447,7 +448,7 @@ async def _execute_task(
                     data_summary = None
 
             # 执行 Agent 模块
-            TASK_TIMEOUT = int(os.getenv("TASK_TIMEOUT_SECONDS", "300"))
+            TASK_TIMEOUT = get_int_env("TASK_TIMEOUT_SECONDS", 300, minimum=1)
             try:
                 agent_results = await asyncio.wait_for(
                     orchestrate(

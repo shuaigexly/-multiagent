@@ -1,7 +1,6 @@
 """工作流管理 API — 初始化多维表格、启停调度循环、手动触发分析任务 + SSE 进度流"""
 import json
 import logging
-import os
 import re
 import time
 from datetime import datetime, timezone
@@ -23,13 +22,14 @@ from app.bitable_workflow.scheduler import _base_route_transition_fields, _build
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
 from app.core.audit import record_audit
 from app.core.auth import issue_stream_token, require_api_key, verify_stream_token
+from app.core.env import get_int_env
 
 _VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
 _VALID_STATUSES: set[str] = set(ALL_STATUSES)
 _VALID_CONFIRM_ACTIONS: set[str] = {"approve", "execute", "retrospective"}
 _VALID_SETUP_MODES: set[str] = {"seed_demo", "prod_empty", "template_only"}
 _VALID_BASE_TYPES: set[str] = {"template", "production", "validation"}
-MAX_WORKFLOW_SSE_SECONDS = int(os.getenv("MAX_WORKFLOW_SSE_SECONDS", "600"))
+MAX_WORKFLOW_SSE_SECONDS = get_int_env("MAX_WORKFLOW_SSE_SECONDS", 600, minimum=1)
 
 router = APIRouter(
     prefix="/api/v1/workflow",

@@ -2,7 +2,6 @@
 import asyncio
 import json
 import logging
-import os
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -10,12 +9,13 @@ from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.auth import issue_stream_token, require_api_key, verify_stream_token
+from app.core.env import get_int_env
 from app.models.database import AsyncSessionLocal, Task, TaskEvent
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["events"])
 logger = logging.getLogger(__name__)
-MAX_SSE_SECONDS = int(os.getenv("MAX_SSE_SECONDS", "600"))
-STREAM_TOKEN_TTL_SECONDS = int(os.getenv("STREAM_TOKEN_TTL_SECONDS", "60"))
+MAX_SSE_SECONDS = get_int_env("MAX_SSE_SECONDS", 600, minimum=1)
+STREAM_TOKEN_TTL_SECONDS = get_int_env("STREAM_TOKEN_TTL_SECONDS", 60, minimum=1)
 
 
 @router.post("/{task_id}/events-token", dependencies=[Depends(require_api_key)])
