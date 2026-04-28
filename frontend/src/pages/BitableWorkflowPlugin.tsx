@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bitable } from "@lark-base-open/js-sdk";
 import {
   Activity,
@@ -57,6 +57,11 @@ interface LiveState {
   workflowSteps?: WorkflowStepDetail[];
 }
 
+interface BitableRecordValue {
+  recordId?: string;
+  fields: Record<string, unknown>;
+}
+
 const TASK_TABLE_NAME = "分析任务";
 const REVIEW_TABLE_NAME = "产出评审";
 const ACTION_TABLE_NAME = "交付动作";
@@ -107,13 +112,6 @@ function numberValue(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
-}
-
-function booleanValue(value: unknown): boolean {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value > 0;
-  if (typeof value === "string") return ["true", "1", "yes", "是"].includes(value.toLowerCase());
-  return false;
 }
 
 function safeProgress(value: unknown): number {
@@ -268,7 +266,7 @@ async function getTableFieldMap(tableId: string): Promise<Map<string, string>> {
   return new Map(metas.map((meta: { id: string; name: string }) => [meta.id, meta.name]));
 }
 
-function mapRecordFields(record: { recordId?: string; fields: Record<string, unknown> }, fieldMap: Map<string, string>): TaskSnapshot {
+function mapRecordFields(record: BitableRecordValue, fieldMap: Map<string, string>): TaskSnapshot {
   const mapped: Record<string, unknown> = {};
   Object.entries(record.fields || {}).forEach(([fieldId, value]) => {
     mapped[fieldMap.get(fieldId) || fieldId] = value;
@@ -277,13 +275,6 @@ function mapRecordFields(record: { recordId?: string; fields: Record<string, unk
     recordId: record.recordId || "",
     fields: mapped,
   };
-}
-
-async function listMappedRecords(tableId: string, limit = 200): Promise<TaskSnapshot[]> {
-  const table = await bitable.base.getTableById(tableId);
-  const fieldMap = await getTableFieldMap(tableId);
-  const response = await table.getRecordsByPage({ pageSize: limit });
-  return response.records.map((record) => mapRecordFields(record, fieldMap));
 }
 
 function EmptyState({ text }: { text: string }) {
@@ -306,6 +297,62 @@ export default function BitableWorkflowPlugin() {
   const [archives, setArchives] = useState<TaskSnapshot[]>([]);
   const [live, setLive] = useState<LiveState | null>(null);
   const unsubscribeRef = useRef<null | (() => void)>(null);
+  const tableCacheRef = useRef(new Map<string, Promise<{ getRecordById(recordId: string): Promise<BitableRecordValue>; getRecordsByPage(params: { pageSize?: number; pageToken?: number }): Promise<{ records: BitableRecordValue[]; hasMore: boolean; pageToken?: number }>; }>>());
+  const fieldMapCacheRef = useRef(new Map<string, Promise<Map<string, string>>>());
+
+  const getCachedTable = useCallback((tableId: string) => {
+    const cached = tableCacheRef.current.get(tableId);
+    if (cached) return cached;
+    const promise = bitable.base.getTableById(tableId);
+    tableCacheRef.current.set(tableId, promise);
+    return promise;
+  }, []);
+
+  const getCachedFieldMap = useCallback((tableId: string) => {
+    const cached = fieldMapCacheRef.current.get(tableId);
+    if (cached) return cached;
+    const promise = getTableFieldMap(tableId);
+    fieldMapCacheRef.current.set(tableId, promise);
+    return promise;
+  }, []);
+
+  const getMappedRecordById = useCallback(async (tableId: string, recordId: string): Promise<TaskSnapshot> => {
+    const [table, fieldMap] = await Promise.all([getCachedTable(tableId), getCachedFieldMap(tableId)]);
+    const record = await table.getRecordById(recordId);
+    return mapRecordFields(record, fieldMap);
+  }, [getCachedFieldMap, getCachedTable]);
+
+  const collectMappedRecords = useCallback(async (
+    tableId: string,
+    predicate: (record: TaskSnapshot) => boolean,
+    limit: number,
+    seed: TaskSnapshot[] = [],
+  ): Promise<TaskSnapshot[]> => {
+    if (limit <= 0) return [];
+
+    const collected = [...seed];
+    const seen = new Set(collected.map((item) => item.recordId));
+    const [table, fieldMap] = await Promise.all([getCachedTable(tableId), getCachedFieldMap(tableId)]);
+
+    let pageToken: number | undefined;
+    let hasMore = true;
+
+    while (hasMore && collected.length < limit) {
+      const response = await table.getRecordsByPage({ pageSize: 100, ...(pageToken ? { pageToken } : {}) });
+      for (const record of response.records) {
+        const mapped = mapRecordFields(record, fieldMap);
+        if (seen.has(mapped.recordId)) continue;
+        if (!predicate(mapped)) continue;
+        collected.push(mapped);
+        seen.add(mapped.recordId);
+        if (collected.length >= limit) break;
+      }
+      hasMore = response.hasMore;
+      pageToken = response.pageToken;
+    }
+
+    return collected;
+  }, [getCachedFieldMap, getCachedTable]);
 
   useEffect(() => {
     let mounted = true;
@@ -375,24 +422,37 @@ export default function BitableWorkflowPlugin() {
       setLoading(true);
       setError("");
       try {
-        const selectedTable = await bitable.base.getTableById(selection.tableId!);
-        const selectedFieldMap = await getTableFieldMap(selection.tableId!);
-        const selectedRecord = mapRecordFields(await selectedTable.getRecordById(selection.recordId!), selectedFieldMap);
+        const selectedRecord = await getMappedRecordById(selection.tableId!, selection.recordId!);
         const locator = buildTaskLocator(nextSourceKind, selectedRecord, selection.recordId);
 
-        const [taskRows, reviewRows, actionRows, archiveRows] = await Promise.all([
-          listMappedRecords(tableIds.task),
-          listMappedRecords(tableIds.review),
-          listMappedRecords(tableIds.action),
-          listMappedRecords(tableIds.archive),
+        let currentTask: TaskSnapshot | null = nextSourceKind === "task" ? selectedRecord : null;
+        if (!currentTask && locator.taskRecordId) {
+          try {
+            currentTask = await getMappedRecordById(tableIds.task, locator.taskRecordId);
+          } catch {
+            currentTask = null;
+          }
+        }
+        if (!currentTask && locator.taskTitle) {
+          currentTask = (await collectMappedRecords(tableIds.task, (item) => matchesTaskRecord(item, locator), 1))[0] || null;
+        }
+        if (!active) return;
+
+        const stableLocator = buildTaskLocator(nextSourceKind, currentTask ?? selectedRecord, selection.recordId);
+        const seededReview = nextSourceKind === "review" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
+        const seededActions = nextSourceKind === "action" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
+        const seededArchives = nextSourceKind === "archive" && matchesRelatedRecord(selectedRecord, stableLocator) ? [selectedRecord] : [];
+
+        const [reviewMatches, actionMatches, archiveMatches] = await Promise.all([
+          collectMappedRecords(tableIds.review, (item) => matchesRelatedRecord(item, stableLocator), 1, seededReview),
+          collectMappedRecords(tableIds.action, (item) => matchesRelatedRecord(item, stableLocator), 6, seededActions),
+          collectMappedRecords(tableIds.archive, (item) => matchesRelatedRecord(item, stableLocator), 3, seededArchives),
         ]);
         if (!active) return;
 
-        const currentTask = taskRows.find((item) => matchesTaskRecord(item, locator)) || null;
-        const stableLocator = buildTaskLocator(nextSourceKind, currentTask ?? selectedRecord, selection.recordId);
-        const currentReview = reviewRows.find((item) => matchesRelatedRecord(item, stableLocator)) || null;
-        const currentActions = actionRows.filter((item) => matchesRelatedRecord(item, stableLocator)).slice(0, 6);
-        const currentArchives = archiveRows.filter((item) => matchesRelatedRecord(item, stableLocator)).slice(0, 3);
+        const currentReview = reviewMatches[0] || null;
+        const currentActions = actionMatches.slice(0, 6);
+        const currentArchives = archiveMatches.slice(0, 3);
 
         setTask(currentTask);
         setReview(currentReview);
@@ -444,7 +504,7 @@ export default function BitableWorkflowPlugin() {
     return () => {
       active = false;
     };
-  }, [selection, tableIds]);
+  }, [collectMappedRecords, getMappedRecordById, selection, tableIds]);
 
   const workflowSteps = useMemo(
     () => buildWorkflowDetails(task, review, actions, archives, live),
