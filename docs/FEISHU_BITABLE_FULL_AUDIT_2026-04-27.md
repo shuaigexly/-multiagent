@@ -330,6 +330,21 @@
   - 同 Base 重启不会误清现有 native state
   - 补回归测试锁定“换 Base 要清，重启同 Base 不清”
 
+### F28. 旧 state 回填出来的新蓝图只有数量，没有详情字段，前端蓝图卡片会大片空白
+
+- 位置：
+  - `backend/app/bitable_workflow/native_installer.py`
+  - `frontend/src/pages/BitableWorkflow.tsx`
+- 问题：
+  - 之前 `sync_native_asset_blueprints()` 回填旧 state 时，只补 `name / lifecycle_state / native_surface`
+  - 但前端详情卡依赖 `summary / condition / entry_condition / focus_metrics / focus_views / questions` 等字段
+- 风险：
+  - 旧 state 升级后，数量看起来已经补齐，但自动化、工作流、仪表盘、角色蓝图详情仍是空白
+  - 这会让原生化汇报页面呈现出“像没做完”的效果，直接影响方案展示和验收判断
+- 结果：
+  - 现在回填旧 state 时会一并补齐 automation/workflow/dashboard/role/form 的展示元数据
+  - 补回归测试锁定“旧 state 升级后，蓝图详情字段也必须完整”
+
 ---
 
 ## 3. 全量验证结果

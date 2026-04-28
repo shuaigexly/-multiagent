@@ -461,51 +461,108 @@ def _sync_named_assets(assets: dict[str, Any], key: str, specs: list[dict[str, A
     synced: list[dict[str, Any]] = []
     for spec in specs:
         name = str(spec.get("name") or "").strip()
+        defaults = _native_asset_defaults(surface, spec)
         current = copy.deepcopy(existing_by_name.get(name) or {})
         if not current:
-            current = {
-                "name": name,
-                "status": "blueprint_ready",
-                "lifecycle_state": "blueprint_ready",
-                "native_surface": surface,
-                "delivery_mode": "manual_native_config",
-                "api_readiness": "not_connected",
-                "next_step": "",
-                "blocking_reason": "",
-            }
+            current = dict(defaults)
         else:
-            current.setdefault("name", name)
+            for field_name, field_value in defaults.items():
+                if field_name not in current or current.get(field_name) in (None, "", [], {}):
+                    current[field_name] = copy.deepcopy(field_value)
             current.setdefault("status", str(current.get("lifecycle_state") or "blueprint_ready"))
             current.setdefault("lifecycle_state", "blueprint_ready")
-            current.setdefault("native_surface", surface)
-            current.setdefault("delivery_mode", "manual_native_config")
-            current.setdefault("api_readiness", "not_connected")
         synced.append(current)
     assets[key] = synced
 
 
 def _sync_form_assets(assets: dict[str, Any]) -> None:
     existing = _asset_list(assets, "form_blueprints")
-    if existing:
-        return
     form_spec = build_form_spec()
-    assets["form_blueprints"] = [
-        {
-            "name": str(form_spec["name"]),
-            "status": "manual_share_required",
-            "lifecycle_state": "manual_finish_required",
-            "native_surface": "form",
-            "delivery_mode": "setup_created_view",
-            "api_readiness": "connected",
-            "next_step": "在飞书 UI 中开启表单共享，拿到可直接投递的链接",
-            "blocking_reason": "表单蓝图尚未同步共享链接",
-            "shared_url": "",
-            "entry_fields": [str(question["title"]) for question in form_spec["questions"]],
-            "question_count": len(form_spec["questions"]),
-            "questions": form_spec["questions"],
-            "description": str(form_spec["description"]),
-        }
-    ]
+    defaults = _form_asset_defaults(form_spec)
+    if existing:
+        merged = copy.deepcopy(existing[0])
+        for field_name, field_value in defaults.items():
+            if field_name not in merged or merged.get(field_name) in (None, "", [], {}):
+                merged[field_name] = copy.deepcopy(field_value)
+        merged.setdefault("status", str(merged.get("lifecycle_state") or "manual_finish_required"))
+        merged.setdefault("lifecycle_state", "manual_finish_required")
+        assets["form_blueprints"] = [merged]
+        return
+    assets["form_blueprints"] = [defaults]
+
+
+def _native_asset_defaults(surface: str, spec: dict[str, Any]) -> dict[str, Any]:
+    base = {
+        "name": str(spec.get("name") or ""),
+        "status": "blueprint_ready",
+        "lifecycle_state": "blueprint_ready",
+        "native_surface": surface,
+        "delivery_mode": "manual_native_config",
+        "api_readiness": "not_connected",
+        "next_step": "",
+        "blocking_reason": "",
+    }
+    if surface == "automation":
+        base.update(
+            {
+                "trigger": spec.get("trigger", ""),
+                "condition": spec.get("condition", ""),
+                "action": spec.get("action", ""),
+                "primary_field": spec.get("primary_field", ""),
+                "summary": spec.get("summary", ""),
+                "receiver_binding_fields": copy.deepcopy(spec.get("receiver_binding_fields", [])),
+                "owner_binding_fields": copy.deepcopy(spec.get("owner_binding_fields", [])),
+                "requires_member_binding": bool(spec.get("requires_member_binding")),
+            }
+        )
+    elif surface == "workflow":
+        base.update(
+            {
+                "entry_condition": spec.get("entry_condition", ""),
+                "route_field": spec.get("route_field", ""),
+                "actions": copy.deepcopy(spec.get("actions", [])),
+                "summary": spec.get("summary", ""),
+                "receiver_binding_fields": copy.deepcopy(spec.get("receiver_binding_fields", [])),
+                "requires_member_binding": bool(spec.get("requires_member_binding")),
+            }
+        )
+    elif surface == "dashboard":
+        base.update(
+            {
+                "focus_metrics": copy.deepcopy(spec.get("focus_metrics", [])),
+                "recommended_views": copy.deepcopy(spec.get("recommended_views", [])),
+                "narrative": spec.get("narrative", ""),
+                "block_count": len(spec.get("block_specs") or []),
+            }
+        )
+    elif surface == "role":
+        base.update(
+            {
+                "focus_views": copy.deepcopy(spec.get("focus_views", [])),
+                "permissions_focus": copy.deepcopy(spec.get("permissions_focus", [])),
+                "dashboard_focus": copy.deepcopy(spec.get("dashboard_focus", [])),
+            }
+        )
+    return base
+
+
+def _form_asset_defaults(form_spec: dict[str, Any]) -> dict[str, Any]:
+    questions = copy.deepcopy(form_spec["questions"])
+    return {
+        "name": str(form_spec["name"]),
+        "status": "manual_share_required",
+        "lifecycle_state": "manual_finish_required",
+        "native_surface": "form",
+        "delivery_mode": "setup_created_view",
+        "api_readiness": "connected",
+        "next_step": "在飞书 UI 中开启表单共享，拿到可直接投递的链接",
+        "blocking_reason": "表单蓝图尚未同步共享链接",
+        "shared_url": "",
+        "entry_fields": [str(question["title"]) for question in questions],
+        "question_count": len(questions),
+        "questions": questions,
+        "description": str(form_spec["description"]),
+    }
 
 
 def _advperm_items(assets: dict[str, Any]) -> list[dict[str, Any]]:

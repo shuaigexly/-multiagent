@@ -941,6 +941,30 @@ async def test_workflow_native_assets_refreshes_stale_native_assets(monkeypatch)
     assert len(result["native_assets"]["automation_templates"]) == len(build_automation_specs())
     assert len(result["native_assets"]["workflow_blueprints"]) == len(build_workflow_specs())
     assert workflow._state["native_manifest"]["manifest_version"] == "v2"
+    assert result["native_assets"]["automation_templates"][0]["condition"]
+    assert result["native_assets"]["workflow_blueprints"][0]["summary"]
+
+
+def test_sync_native_asset_blueprints_backfills_display_metadata():
+    from app.bitable_workflow.native_installer import sync_native_asset_blueprints
+
+    assets = {
+        "form_blueprints": [{"name": "任务收集表单", "lifecycle_state": "manual_finish_required"}],
+        "automation_templates": [{"name": "A1 新任务入场提醒", "lifecycle_state": "blueprint_ready"}],
+        "workflow_blueprints": [{"name": "W1 路由总分发工作流", "lifecycle_state": "blueprint_ready"}],
+        "dashboard_blueprints": [{"name": "管理汇报总览", "lifecycle_state": "blueprint_ready"}],
+        "role_blueprints": [{"name": "高管交付面", "lifecycle_state": "blueprint_ready"}],
+    }
+
+    sync_native_asset_blueprints(assets)
+
+    assert assets["form_blueprints"][0]["question_count"] > 0
+    assert assets["automation_templates"][0]["summary"]
+    assert assets["automation_templates"][0]["condition"]
+    assert assets["workflow_blueprints"][0]["entry_condition"]
+    assert assets["workflow_blueprints"][0]["actions"]
+    assert assets["dashboard_blueprints"][0]["focus_metrics"]
+    assert assets["role_blueprints"][0]["focus_views"]
 
 
 @pytest.mark.asyncio
