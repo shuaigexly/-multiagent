@@ -1362,6 +1362,31 @@ export default function BitableWorkflow() {
     return { done, running, pending, error, total: selectedWorkflowDetails.length };
   }, [selectedWorkflowDetails]);
 
+  const selectedWorkflowSignals = useMemo(
+    () => [
+      {
+        label: '工作流路由',
+        value: taskWorkflowRoute(selectedTask) || '待生成',
+        tone: ROUTE_STYLE[taskWorkflowRoute(selectedTask)] || 'border-slate-200 bg-slate-100 text-slate-700',
+      },
+      {
+        label: '当前责任',
+        value: taskResponsibilityRole(selectedTask) || '系统调度',
+        tone:
+          RESPONSIBILITY_STYLE[taskResponsibilityRole(selectedTask)] ||
+          'border-slate-200 bg-slate-100 text-slate-700',
+      },
+      {
+        label: '原生动作',
+        value: taskNativeAction(selectedTask) || '等待分析完成',
+        tone:
+          NATIVE_ACTION_STYLE[taskNativeAction(selectedTask)] ||
+          'border-slate-200 bg-slate-100 text-slate-700',
+      },
+    ],
+    [selectedTask],
+  );
+
   const taskSwitcher = prioritizedTasks.slice(0, 6);
 
   const liveFeed = useMemo(
@@ -2486,21 +2511,55 @@ export default function BitableWorkflow() {
                       const workflowRoute = taskWorkflowRoute(task);
                       const readinessScore = taskReadinessScore(task, latestReviewByTitle.get(taskTitle(task)) || null);
                       const isSelected = task.record_id === selectedTask?.record_id;
+                      const live = liveEvents[task.record_id];
+                      const liveStep =
+                        live?.workflowSteps?.find((step) => step.status === 'running') ||
+                        live?.workflowSteps?.find((step) => step.status === 'error') ||
+                        live?.workflowSteps?.find((step) => step.status === 'pending') ||
+                        live?.workflowSteps?.[live.workflowSteps.length - 1];
+                      const liveProgress = live ? Math.max(safeProgress(task.fields?.进度), safeProgress(live.progress)) : safeProgress(task.fields?.进度);
                       return (
                         <button
                           key={task.record_id}
                           type="button"
                           onClick={() => setSelectedTaskId(task.record_id)}
-                          className={`rounded-[22px] border p-4 text-left transition ${isSelected ? 'border-teal-300 bg-teal-50/70 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70'}`}
+                          className={`relative overflow-hidden rounded-[22px] border p-4 text-left transition ${isSelected ? 'border-teal-300 bg-teal-50/70 shadow-sm ring-1 ring-teal-100' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70'}`}
                         >
+                          {isSelected && <div className="absolute inset-y-0 left-0 w-1.5 bg-teal-400" />}
                           <div className="flex items-center justify-between gap-3">
                             <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${STATUS_STYLE[status]?.chip || 'border border-slate-200 bg-slate-100 text-slate-600'}`}>
                               {status}
                             </span>
-                            <span className="text-xs text-slate-400">{textValue(task.fields?.优先级) || '未分级'}</span>
+                            <div className="flex items-center gap-2">
+                              {isSelected && <ArrowUpRight className="h-4 w-4 text-teal-600" />}
+                              <span className="text-xs text-slate-400">{textValue(task.fields?.优先级) || '未分级'}</span>
+                            </div>
                           </div>
                           <div className="mt-3 line-clamp-2 text-sm font-semibold leading-6 text-slate-950">
                             {taskTitle(task)}
+                          </div>
+                          <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2">
+                            <div className="min-w-0">
+                              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Workflow Node</div>
+                              <div className="mt-1 truncate text-sm font-medium text-slate-900">
+                                {liveStep?.title || live?.stage || textValue(task.fields?.当前阶段) || '等待进入步骤'}
+                              </div>
+                            </div>
+                            <div
+                              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                                WORKFLOW_DETAIL_STATUS_STYLE[liveStep?.status || (status === '分析中' ? 'running' : status === '已完成' ? 'done' : 'pending')]
+                              }`}
+                            >
+                              {liveStep?.status === 'done'
+                                ? 'Done'
+                                : liveStep?.status === 'error'
+                                  ? 'Error'
+                                  : liveStep?.status === 'running'
+                                    ? 'Live'
+                                    : status === '分析中'
+                                      ? 'Live'
+                                      : 'Queued'}
+                            </div>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
                             {purpose && (
@@ -2524,9 +2583,12 @@ export default function BitableWorkflow() {
                               </span>
                             )}
                           </div>
+                          <div className="mt-3">
+                            <Progress value={liveProgress} className="h-2" />
+                          </div>
                           <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
                             <span>证据 {numberValue(task.fields?.证据条数)}</span>
-                            <span>就绪度 {readinessScore}/5</span>
+                            <span>{liveProgress.toFixed(0)}% · 就绪度 {readinessScore}/5</span>
                           </div>
                         </button>
                       );
@@ -2816,6 +2878,30 @@ export default function BitableWorkflow() {
                             </div>
                           </div>
 
+                          <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                            {selectedWorkflowDetails.map((step, index) => {
+                              const isCurrent = step.key === selectedActiveWorkflowStep?.key;
+                              return (
+                                <div
+                                  key={step.key}
+                                  className={`rounded-2xl border px-3 py-3 transition ${
+                                    isCurrent
+                                      ? 'border-sky-200 bg-sky-50/80 shadow-sm'
+                                      : 'border-slate-200 bg-white/88'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">0{index + 1}</div>
+                                    <div className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
+                                      {step.status === 'done' ? 'Done' : step.status === 'error' ? 'Error' : step.status === 'running' ? 'Live' : 'Queued'}
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-950">{step.title}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
                           <div className="mt-4 grid gap-3 sm:grid-cols-2">
                             {[
                               {
@@ -2856,6 +2942,57 @@ export default function BitableWorkflow() {
                                 <span>实时流{selectedLive.activeAgent ? ` · ${selectedLive.activeAgent}` : ''}</span>
                               </div>
                               <div className="mt-2 text-sm leading-6 text-slate-600">{selectedLive.tokenPreview}</div>
+                            </div>
+                          )}
+
+                          <div className="mt-4 rounded-[24px] border border-slate-200 bg-white/92 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Handoff Signals</div>
+                                <div className="mt-2 text-lg font-semibold text-slate-950">交接信号</div>
+                              </div>
+                              <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                                当前节点到下一责任方
+                              </div>
+                            </div>
+                            <div className="mt-4 grid gap-3">
+                              {selectedWorkflowSignals.map((item) => (
+                                <div key={item.label} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+                                  <div className="text-sm text-slate-500">{item.label}</div>
+                                  <div className={`rounded-full border px-3 py-1 text-xs font-medium ${item.tone}`}>{item.value}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {selectedActiveWorkflowStep && (
+                            <div className="mt-4 rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.86))] p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Current Focus</div>
+                                  <div className="mt-2 text-lg font-semibold text-slate-950">{selectedActiveWorkflowStep.title}</div>
+                                </div>
+                                <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedActiveWorkflowStep.status]}`}>
+                                  {selectedActiveWorkflowStep.status === 'done'
+                                    ? 'Closed'
+                                    : selectedActiveWorkflowStep.status === 'error'
+                                      ? 'Error'
+                                      : selectedActiveWorkflowStep.status === 'running'
+                                        ? 'Live'
+                                        : 'Queued'}
+                                </div>
+                              </div>
+                              <div className="mt-3 text-sm leading-6 text-slate-600">{selectedActiveWorkflowStep.description}</div>
+                              <div className="mt-4 space-y-2">
+                                {(selectedActiveWorkflowStep.items.length > 0
+                                  ? selectedActiveWorkflowStep.items
+                                  : ['等待该阶段补充执行信号']
+                                ).slice(0, 4).map((item) => (
+                                  <div key={item} className="rounded-xl border border-white/80 bg-white/92 px-3 py-2 text-sm leading-6 text-slate-700">
+                                    {item}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           )}
 
@@ -2915,7 +3052,9 @@ export default function BitableWorkflow() {
                                         <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">0{index + 1}</div>
                                       </div>
                                       <div className="mt-3 space-y-2">
-                                        {(step.items.length > 0 ? step.items : ['等待进入该阶段']).slice(0, 3).map((item) => (
+                                        {(step.items.length > 0 ? step.items : ['等待进入该阶段'])
+                                          .slice(0, step.key === selectedActiveWorkflowStep?.key ? 4 : 2)
+                                          .map((item) => (
                                           <div key={item} className="rounded-xl border border-white/80 bg-white/88 px-3 py-2 text-sm leading-6 text-slate-600">
                                             {item}
                                           </div>
