@@ -121,10 +121,10 @@ def build_automation_specs() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "A2 分析完成自动汇报",
-            "summary": "当任务满足汇报条件时，自动切换到汇报责任面，并创建一条汇报动作。",
+            "name": "A2 直接汇报自动提醒",
+            "summary": "直接汇报任务满足汇报条件时，自动切换到汇报责任面，并创建一条汇报动作。",
             "trigger": "字段修改时",
-            "condition": "待发送汇报 = 是",
+            "condition": "待发送汇报 = 是 且 工作流路由 = 直接汇报",
             "action": "回写汇报责任角色 + 发送管理提醒 + 创建汇报动作",
             "primary_field": "工作流消息包",
             "native_goal": "把分析完成到管理汇报这一段尽量原生化。",
@@ -133,9 +133,14 @@ def build_automation_specs() -> list[dict[str, Any]]:
             "requires_member_binding": True,
             "body": {
                 "client_token": _token("a2"),
-                "title": "A2 分析完成自动汇报",
+                "title": "A2 直接汇报自动提醒",
                 "steps": [
-                    _checkbox_trigger("step_trigger", "待发送汇报", "等待触发汇报动作"),
+                    _checkbox_trigger(
+                        "step_trigger",
+                        "待发送汇报",
+                        "等待触发直接汇报动作",
+                        extra_watch_info=[_option_condition("工作流路由", "直接汇报")],
+                    ),
                     _set_record_action(
                         "step_stage",
                         "分析任务",
@@ -168,6 +173,65 @@ def build_automation_specs() -> list[dict[str, Any]]:
                             _route_field("工作流路由", "直接汇报"),
                             _text_field("动作内容", "按主表中的工作流消息包发送汇报，并回填管理确认结果。"),
                             _text_field("执行结果", "自动化 scaffold 已创建动作，请在飞书补齐接收人和消息卡片。"),
+                            _ref_field("关联记录ID", "$.step_trigger.recordId"),
+                        ],
+                    ),
+                ],
+            },
+        },
+        {
+            "name": "A2b 待拍板汇报提醒",
+            "summary": "待拍板任务满足汇报条件时，自动切换到汇报责任面，并创建一条待拍板汇报动作。",
+            "trigger": "字段修改时",
+            "condition": "待发送汇报 = 是 且 工作流路由 = 等待拍板",
+            "action": "回写汇报责任角色 + 发送管理提醒 + 创建待拍板汇报动作",
+            "primary_field": "工作流消息包",
+            "native_goal": "把拍板前汇报动作沉淀到多维表格原生动作表，避免错分支。",
+            "receiver_binding_fields": ["汇报对象OpenID", "拍板负责人OpenID"],
+            "owner_binding_fields": ["汇报对象OpenID", "拍板负责人OpenID"],
+            "requires_member_binding": True,
+            "body": {
+                "client_token": _token("a2b"),
+                "title": "A2b 待拍板汇报提醒",
+                "steps": [
+                    _checkbox_trigger(
+                        "step_trigger",
+                        "待发送汇报",
+                        "等待触发待拍板汇报动作",
+                        extra_watch_info=[_option_condition("工作流路由", "等待拍板")],
+                    ),
+                    _set_record_action(
+                        "step_stage",
+                        "分析任务",
+                        [
+                            _text_field("当前阶段", "原生拍板汇报发送中"),
+                            _role_field("当前责任角色", "汇报对象"),
+                            _native_action_field("当前原生动作", "发送汇报"),
+                            _automation_status_field("自动化执行状态", "执行中"),
+                        ],
+                        next_step="step_notify",
+                    ),
+                    _message_action(
+                        "step_notify",
+                        "发送待拍板汇报提醒",
+                        "分析任务已进入拍板前汇报阶段",
+                        [
+                            "请在主表查看工作流消息包、管理摘要、汇报对象和拍板负责人。",
+                            "这条自动化已经把任务切换到待拍板汇报阶段。",
+                        ],
+                        next_step="step_action",
+                    ),
+                    _add_record_action(
+                        "step_action",
+                        "交付动作",
+                        [
+                            _text_field("动作标题", "系统创建待拍板汇报动作"),
+                            _text_field("任务标题", "请在主表查看对应分析任务"),
+                            _action_type_field("动作类型", "发送汇报"),
+                            _action_status_field("动作状态", "待执行"),
+                            _route_field("工作流路由", "等待拍板"),
+                            _text_field("动作内容", "按主表中的工作流消息包发送汇报，并回填拍板确认结果。"),
+                            _text_field("执行结果", "自动化 scaffold 已创建待拍板汇报动作，请在飞书补齐接收人、消息卡片和拍板反馈。"),
                             _ref_field("关联记录ID", "$.step_trigger.recordId"),
                         ],
                     ),
@@ -635,7 +699,13 @@ def _add_record_trigger(step_id: str, table_name: str, watched_field_name: str, 
     }
 
 
-def _checkbox_trigger(step_id: str, field_name: str, title: str) -> dict[str, Any]:
+def _checkbox_trigger(
+    step_id: str,
+    field_name: str,
+    title: str,
+    *,
+    extra_watch_info: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     return {
         "id": step_id,
         "type": "SetRecordTrigger",
@@ -650,7 +720,8 @@ def _checkbox_trigger(step_id: str, field_name: str, title: str) -> dict[str, An
                     "field_name": field_name,
                     "operator": "is",
                     "value": [{"value_type": "boolean", "value": True}],
-                }
+                },
+                *(extra_watch_info or []),
             ],
             "trigger_control_list": [],
             "condition_list": None,
@@ -678,6 +749,14 @@ def _select_trigger(step_id: str, field_name: str, option_name: str, title: str)
             "trigger_control_list": [],
             "condition_list": None,
         },
+    }
+
+
+def _option_condition(field_name: str, option_name: str) -> dict[str, Any]:
+    return {
+        "field_name": field_name,
+        "operator": "is",
+        "value": [{"value_type": "option", "value": {"name": option_name}}],
     }
 
 

@@ -1116,6 +1116,27 @@ def test_retrospective_role_owns_retrospective_archive_queue():
     assert retrospective_filters == ["待复盘"]
 
 
+def test_native_automation_specs_split_report_route_by_workflow_branch():
+    """待发送汇报同时覆盖直接汇报/等待拍板时，原生自动化不能把路由写死成直接汇报。"""
+    from app.bitable_workflow.native_specs import build_automation_specs
+
+    specs = {spec["name"]: spec for spec in build_automation_specs()}
+    direct = specs["A2 直接汇报自动提醒"]
+    approval = specs["A2b 待拍板汇报提醒"]
+
+    direct_trigger = direct["body"]["steps"][0]["data"]["field_watch_info"]
+    approval_trigger = approval["body"]["steps"][0]["data"]["field_watch_info"]
+    direct_action_fields = direct["body"]["steps"][3]["data"]["field_values"]
+    approval_action_fields = approval["body"]["steps"][3]["data"]["field_values"]
+
+    assert direct["condition"] == "待发送汇报 = 是 且 工作流路由 = 直接汇报"
+    assert approval["condition"] == "待发送汇报 = 是 且 工作流路由 = 等待拍板"
+    assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "直接汇报" for item in direct_trigger)
+    assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "等待拍板" for item in approval_trigger)
+    assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "直接汇报" for item in direct_action_fields)
+    assert any(item["field_name"] == "工作流路由" and item["value"][0]["value"]["name"] == "等待拍板" for item in approval_action_fields)
+
+
 def test_apply_native_request_accepts_advperm_surface():
     from app.api.workflow import ApplyNativeRequest
 
