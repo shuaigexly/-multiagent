@@ -258,6 +258,7 @@ class _SafeCalcValidator(ast.NodeVisitor):
     _allowed_binops = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
     _allowed_unary = (ast.UAdd, ast.USub)
     _allowed_compare = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE)
+    _blocked_math_calls = {"factorial", "comb", "perm", "prod"}
     _max_sequence_size = 100_000
 
     def __init__(self) -> None:
@@ -307,6 +308,10 @@ class _SafeCalcValidator(ast.NodeVisitor):
                 self._validate_pow(node)
         elif isinstance(node.func, ast.Attribute):
             self.visit_Attribute(node.func)
+            if node.func.attr in self._blocked_math_calls:
+                raise ValueError(f"math function is too expensive: {node.func.attr}")
+            if node.func.attr == "pow":
+                self._validate_pow(node)
         else:
             raise ValueError("call target is not allowed")
         for arg in node.args:

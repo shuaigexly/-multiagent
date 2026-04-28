@@ -328,6 +328,25 @@ async def test_python_calc_blocks_nested_large_repetition():
 
 
 @pytest.mark.asyncio
+async def test_python_calc_blocks_expensive_math_calls():
+    import importlib
+
+    from app.agents import builtin_tools
+    from app.agents.tools import dispatch_tool, reset_registry
+
+    reset_registry()
+    importlib.reload(builtin_tools)
+
+    result = await dispatch_tool(
+        "python_calc",
+        {"expression": "math.factorial(100000000)"},
+    )
+
+    assert result.startswith("ERROR:")
+    assert "unsafe expression" in result
+
+
+@pytest.mark.asyncio
 async def test_vision_rejects_oversized_inline_image_before_client(monkeypatch):
     from app.core import vision
 
