@@ -1339,6 +1339,29 @@ export default function BitableWorkflow() {
       .slice(0, 6);
   }, [selectedTask, selectedTaskNumber, selectedTitle, tasks]);
 
+  const selectedActiveWorkflowStep = useMemo(() => {
+    if (!selectedWorkflowDetails.length) return null;
+    return (
+      selectedWorkflowDetails.find((step) => step.status === 'running') ||
+      selectedWorkflowDetails.find((step) => step.status === 'error') ||
+      selectedWorkflowDetails.find((step) => step.status === 'pending') ||
+      selectedWorkflowDetails[selectedWorkflowDetails.length - 1]
+    );
+  }, [selectedWorkflowDetails]);
+
+  const selectedWorkflowTrace = useMemo(
+    () => selectedStepHistory.slice(-6).reverse(),
+    [selectedStepHistory],
+  );
+
+  const selectedWorkflowSnapshot = useMemo(() => {
+    const done = selectedWorkflowDetails.filter((step) => step.status === 'done').length;
+    const running = selectedWorkflowDetails.filter((step) => step.status === 'running').length;
+    const pending = selectedWorkflowDetails.filter((step) => step.status === 'pending').length;
+    const error = selectedWorkflowDetails.filter((step) => step.status === 'error').length;
+    return { done, running, pending, error, total: selectedWorkflowDetails.length };
+  }, [selectedWorkflowDetails]);
+
   const taskSwitcher = prioritizedTasks.slice(0, 6);
 
   const liveFeed = useMemo(
@@ -2609,80 +2632,6 @@ export default function BitableWorkflow() {
                             </div>
                           </div>
 
-                          <div className="mt-6 rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(248,250,252,0.96))] p-5 shadow-sm">
-                            <div className="flex items-start justify-between gap-4">
-                              <div>
-                                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Step Detail</div>
-                                <div className="mt-2 text-xl font-semibold text-slate-950">步骤详情</div>
-                                <p className="mt-2 text-sm leading-6 text-slate-600">
-                                  这里展示当前任务的阶段推进轨迹，目标是承接类似右侧 agent workflow 面板的执行反馈。
-                                </p>
-                              </div>
-                              <div className={`rounded-full px-3 py-1 text-xs font-medium ${selectedLive?.status === 'done' ? 'bg-emerald-100 text-emerald-700' : selectedLive?.status === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-sky-100 text-sky-700'}`}>
-                                {selectedLive?.status === 'done' ? '已完成' : selectedLive?.status === 'error' ? '异常待重试' : '进行中'}
-                              </div>
-                            </div>
-
-                            {selectedLive?.tokenPreview && (
-                              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-                                <div className="flex items-center gap-2 text-sm font-medium text-slate-950">
-                                  <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
-                                  <span>当前动态{selectedLive.activeAgent ? ` · ${selectedLive.activeAgent}` : ''}</span>
-                                </div>
-                                <div className="mt-2 text-sm leading-6 text-slate-600">
-                                  {selectedLive.tokenPreview}
-                                </div>
-                              </div>
-                            )}
-
-                            <div className="mt-5 space-y-3">
-                              {selectedWorkflowDetails.length === 0 ? (
-                                <EmptyState text="该任务还没有进入步骤详情模式。开始分析后，这里会串起接入、分析、评审和动作沉淀。" />
-                              ) : (
-                                selectedWorkflowDetails.map((step) => {
-                                  const isCurrent = step.status === 'running';
-                                  return (
-                                    <div
-                                      key={step.key}
-                                      className={`rounded-2xl border p-4 transition ${
-                                        isCurrent
-                                          ? 'border-sky-200 bg-sky-50/70 shadow-[0_12px_32px_rgba(14,165,233,0.12)]'
-                                          : 'border-slate-200 bg-white/90'
-                                      }`}
-                                    >
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                          <div className="flex items-center gap-2">
-                                            <div className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
-                                              {step.status === 'done' ? '已完成' : step.status === 'error' ? '失败' : step.status === 'pending' ? '待开始' : '执行中'}
-                                            </div>
-                                            <div className="text-sm font-semibold text-slate-950">{step.title}</div>
-                                          </div>
-                                          <div className="mt-2 text-sm leading-6 text-slate-700">{step.description}</div>
-                                        </div>
-                                        <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
-                                          {step.status === 'done' ? 'Closed' : step.status === 'error' ? 'Error' : step.status === 'pending' ? 'Queued' : 'Live'}
-                                        </div>
-                                      </div>
-                                      <div className="mt-3 space-y-2">
-                                        {step.items.map((item) => (
-                                          <div key={item} className="rounded-xl border border-white/80 bg-white/80 px-3 py-2 text-sm leading-6 text-slate-600">
-                                            {item}
-                                          </div>
-                                        ))}
-                                      </div>
-                                      {step.note && (
-                                        <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-2 text-sm leading-6 text-slate-500">
-                                          {step.note}
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })
-                              )}
-                            </div>
-                          </div>
-
                           <div className="mt-6 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
                             <div className="rounded-[24px] border border-slate-200 bg-white/90 p-5 shadow-sm">
                               <div className="text-xs uppercase tracking-[0.2em] text-slate-500">One-Liner</div>
@@ -2823,6 +2772,201 @@ export default function BitableWorkflow() {
                       </div>
 
                       <div className="space-y-6">
+                        <section className="rounded-[28px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.94),rgba(255,255,255,0.98))] p-6 shadow-sm xl:sticky xl:top-6">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Agent Workflow</p>
+                              <h3 className="mt-2 text-2xl font-semibold text-slate-950">执行轨道</h3>
+                              <p className="mt-2 text-sm leading-6 text-slate-600">
+                                右侧面板专门承接当前步骤、实时增量输出和阶段时间线，避免 workflow 反馈被淹没在正文里。
+                              </p>
+                            </div>
+                            <div className={`rounded-full px-3 py-1 text-xs font-medium ${selectedLive?.status === 'done' ? 'bg-emerald-100 text-emerald-700' : selectedLive?.status === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-sky-100 text-sky-700'}`}>
+                              {selectedLive?.status === 'done' ? '已完成' : selectedLive?.status === 'error' ? '异常待重试' : '执行中'}
+                            </div>
+                          </div>
+
+                          <div className="mt-5 rounded-[24px] border border-slate-200 bg-white/90 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Current Step</div>
+                                <div className="mt-2 text-lg font-semibold text-slate-950">
+                                  {selectedActiveWorkflowStep?.title || '等待进入步骤详情'}
+                                </div>
+                              </div>
+                              <div className={`rounded-full border px-3 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[selectedActiveWorkflowStep?.status || 'pending']}`}>
+                                {selectedActiveWorkflowStep?.status === 'done'
+                                  ? 'Closed'
+                                  : selectedActiveWorkflowStep?.status === 'error'
+                                    ? 'Error'
+                                    : selectedActiveWorkflowStep?.status === 'running'
+                                      ? 'Live'
+                                      : 'Queued'}
+                              </div>
+                            </div>
+                            <div className="mt-3 text-sm leading-6 text-slate-600">
+                              {selectedActiveWorkflowStep?.description || '任务开始分析后，这里会展示当前进入的 workflow 节点。'}
+                            </div>
+                            <div className="mt-4">
+                              <Progress value={selectedProgress} className="h-2.5" />
+                              <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                                <span>{selectedLive?.stage || textValue(selectedTask.fields?.当前阶段) || '等待调度'}</span>
+                                <span>{selectedProgress.toFixed(0)}%</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            {[
+                              {
+                                label: '已完成步骤',
+                                value: `${selectedWorkflowSnapshot.done}/${selectedWorkflowSnapshot.total || 4}`,
+                                tone: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                              },
+                              {
+                                label: '实时岗位',
+                                value: selectedLive?.activeAgent || '等待分配',
+                                tone: 'border-sky-200 bg-sky-50 text-sky-700',
+                              },
+                              {
+                                label: '最新更新',
+                                value: selectedLive ? formatRelativeTime(selectedLive.updatedAt) : '暂无',
+                                tone: 'border-slate-200 bg-slate-100 text-slate-700',
+                              },
+                              {
+                                label: '阶段事件',
+                                value: `${selectedStepHistory.length} 条`,
+                                tone:
+                                  selectedWorkflowSnapshot.error > 0
+                                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                    : 'border-violet-200 bg-violet-50 text-violet-700',
+                              },
+                            ].map((item) => (
+                              <div key={item.label} className={`rounded-2xl border px-4 py-3 ${item.tone}`}>
+                                <div className="text-[11px] uppercase tracking-[0.18em] opacity-70">{item.label}</div>
+                                <div className="mt-2 text-sm font-semibold">{item.value}</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {selectedLive?.tokenPreview && (
+                            <div className="mt-4 rounded-[24px] border border-sky-200 bg-[linear-gradient(135deg,rgba(224,242,254,0.72),rgba(255,255,255,0.96))] p-4">
+                              <div className="flex items-center gap-2 text-sm font-medium text-slate-950">
+                                <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
+                                <span>实时流{selectedLive.activeAgent ? ` · ${selectedLive.activeAgent}` : ''}</span>
+                              </div>
+                              <div className="mt-2 text-sm leading-6 text-slate-600">{selectedLive.tokenPreview}</div>
+                            </div>
+                          )}
+
+                          <div className="mt-5 space-y-4">
+                            {selectedWorkflowDetails.length === 0 ? (
+                              <EmptyState text="该任务还没有进入步骤详情模式。开始分析后，这里会串起接入、分析、评审和动作沉淀。" />
+                            ) : (
+                              selectedWorkflowDetails.map((step, index) => {
+                                const isCurrent = step.status === 'running';
+                                const isError = step.status === 'error';
+                                const isDone = step.status === 'done';
+                                return (
+                                  <div key={step.key} className="relative pl-10">
+                                    {index < selectedWorkflowDetails.length - 1 && (
+                                      <div className="absolute left-[15px] top-10 h-[calc(100%+0.5rem)] w-px bg-slate-200" />
+                                    )}
+                                    <div
+                                      className={`absolute left-0 top-1 flex h-8 w-8 items-center justify-center rounded-full border ${
+                                        isError
+                                          ? 'border-rose-200 bg-rose-50 text-rose-600'
+                                          : isDone
+                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                                            : isCurrent
+                                              ? 'border-sky-200 bg-sky-50 text-sky-600'
+                                              : 'border-slate-200 bg-white text-slate-400'
+                                      }`}
+                                    >
+                                      {isError ? (
+                                        <ShieldAlert className="h-4 w-4" />
+                                      ) : isDone ? (
+                                        <CheckCircle2 className="h-4 w-4" />
+                                      ) : isCurrent ? (
+                                        <Sparkles className="h-4 w-4" />
+                                      ) : (
+                                        <Clock3 className="h-4 w-4" />
+                                      )}
+                                    </div>
+                                    <div
+                                      className={`rounded-[22px] border p-4 transition ${
+                                        isCurrent
+                                          ? 'border-sky-200 bg-sky-50/80 shadow-[0_12px_32px_rgba(14,165,233,0.12)]'
+                                          : isError
+                                            ? 'border-rose-200 bg-rose-50/70'
+                                            : 'border-slate-200 bg-white/92'
+                                      }`}
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <div className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
+                                              {step.status === 'done' ? '已完成' : step.status === 'error' ? '失败' : step.status === 'pending' ? '待开始' : '执行中'}
+                                            </div>
+                                            <div className="text-sm font-semibold text-slate-950">{step.title}</div>
+                                          </div>
+                                          <div className="mt-2 text-sm leading-6 text-slate-700">{step.description}</div>
+                                        </div>
+                                        <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">0{index + 1}</div>
+                                      </div>
+                                      <div className="mt-3 space-y-2">
+                                        {(step.items.length > 0 ? step.items : ['等待进入该阶段']).slice(0, 3).map((item) => (
+                                          <div key={item} className="rounded-xl border border-white/80 bg-white/88 px-3 py-2 text-sm leading-6 text-slate-600">
+                                            {item}
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {step.note && (
+                                        <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/90 px-3 py-2 text-sm leading-6 text-slate-500">
+                                          {step.note}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+
+                          <div className="mt-5 rounded-[24px] border border-slate-200 bg-white/92 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Live Timeline</div>
+                                <div className="mt-2 text-lg font-semibold text-slate-950">阶段时间线</div>
+                              </div>
+                              <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                                最近 {selectedWorkflowTrace.length} 条
+                              </div>
+                            </div>
+                            {selectedWorkflowTrace.length === 0 ? (
+                              <div className="mt-4 text-sm leading-6 text-slate-500">任务开始推进后，这里会按时间倒序展示 wave 和交付事件。</div>
+                            ) : (
+                              <div className="mt-4 space-y-3">
+                                {selectedWorkflowTrace.map((event, index) => (
+                                  <div key={event.key} className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div className="text-sm font-medium text-slate-950">{liveStepTitle(event, selectedWorkflowTrace.length - index - 1)}</div>
+                                      <div className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${STEP_STATUS_STYLE[event.status]}`}>
+                                        {event.status === 'done' ? '完成' : event.status === 'error' ? '异常' : '推进'}
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 text-sm leading-6 text-slate-600">{event.detail}</div>
+                                    <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                                      <span>{event.stage}</span>
+                                      <span>{formatRelativeTime(event.updatedAt)}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </section>
+
                         <section className="rounded-[28px] border border-slate-200 bg-white p-6">
                           <div className="flex items-center justify-between gap-3">
                             <div>
