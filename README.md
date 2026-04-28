@@ -240,6 +240,13 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 | `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包，把蓝图落到飞书云侧 |
 | `GET`  | `/api/v1/workflow/stream/{record_id}` | **SSE 实时进度流**（task.started / wave.completed / task.done / task.error） |
 
+当前展示承载已经切到飞书多维表格扩展脚本：
+
+- 生产入口：`frontend/bitable.html`
+- React 入口：`frontend/src/bitable-main.tsx`
+- 面板实现：`frontend/src/pages/BitableWorkflowPlugin.tsx`
+- 独立 `/workflow` 页面只保留迁移说明，不再作为真实执行界面
+
 ### 当前验收边界
 
 当前仓库已经实际跑过：
@@ -460,24 +467,28 @@ backend/app/
 ### 前端核心页面
 
 ```
-frontend/src/
-├── pages/
-│   ├── Index.tsx              # 工作台主页（任务输入 + 模块选择 + 执行监控）
-│   ├── ResultView.tsx         # 结果详情（分节报告 + 行动项 + 飞书发布）
-│   ├── BitableWorkflow.tsx    # 七岗工作流仪表盘（初始化 / 启停 / SSE 实时进度）
-│   ├── FeishuWorkspace.tsx    # 飞书工作区（云盘/日历/任务/群聊 四 Tab）
-│   ├── Settings.tsx           # 设置页（LLM + 飞书配置 + OAuth 授权）
-│   └── History.tsx            # 任务历史列表
-├── services/
-│   ├── api.ts                 # 主工作流任务 REST + SSE
-│   ├── feishu.ts              # 飞书工作区数据读取
-│   ├── workflow.ts            # 七岗工作流 + SSE 进度订阅（subscribeTaskProgress）
-│   └── config.ts              # LLM/飞书配置读写
-└── components/
-    ├── ExecutionTimeline.tsx  # 执行日志（Agent 活动卡片 + 时间线）
-    ├── ModuleCard.tsx         # Agent 选择卡片（含 persona 信息）
-    ├── ContextSuggestions.tsx # 飞书上下文智能推荐
-    └── FeishuAssetCard.tsx    # 发布资产卡片（doc/bitable/slides/message）
+frontend/
+├── bitable.html               # 多维表格扩展脚本入口 HTML
+├── src/
+│   ├── bitable-main.tsx       # 多维表格扩展脚本 React 入口
+│   ├── pages/
+│   │   ├── Index.tsx              # 工作台主页（任务输入 + 模块选择 + 执行监控）
+│   │   ├── ResultView.tsx         # 结果详情（分节报告 + 行动项 + 飞书发布）
+│   │   ├── BitableWorkflowGuide.tsx # 独立站点迁移提示页
+│   │   ├── BitableWorkflowPlugin.tsx # 多维表格内嵌执行面板
+│   │   ├── FeishuWorkspace.tsx    # 飞书工作区（云盘/日历/任务/群聊 四 Tab）
+│   │   ├── Settings.tsx           # 设置页（LLM + 飞书配置 + OAuth 授权）
+│   │   └── History.tsx            # 任务历史列表
+│   ├── services/
+│   │   ├── api.ts                 # 主工作流任务 REST + SSE
+│   │   ├── feishu.ts              # 飞书工作区数据读取
+│   │   ├── workflow.ts            # 七岗工作流 + SSE 进度订阅（subscribeTaskProgress）
+│   │   └── config.ts              # LLM/飞书配置读写
+│   └── components/
+│       ├── ExecutionTimeline.tsx  # 执行日志（Agent 活动卡片 + 时间线）
+│       ├── ModuleCard.tsx         # Agent 选择卡片（含 persona 信息）
+│       ├── ContextSuggestions.tsx # 飞书上下文智能推荐
+│       └── FeishuAssetCard.tsx    # 发布资产卡片（doc/bitable/slides/message）
 ```
 
 ### 关键工程设计
