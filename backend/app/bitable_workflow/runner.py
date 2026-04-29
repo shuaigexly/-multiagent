@@ -22,6 +22,7 @@ from app.bitable_workflow.native_specs import (
 )
 from app.bitable_workflow.schema import agent_output_fields, report_fields
 from app.bitable_workflow.scheduler import run_one_cycle
+from app.core.redaction import redact_sensitive_text
 from app.feishu.bitable import create_bitable, create_table, create_view
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,11 @@ async def setup_workflow(
             },
         )
     except Exception as setup_exc:
-        logger.error("setup_workflow failed mid-way, rolling back base %s: %s", app_token, setup_exc)
+        logger.error(
+            "setup_workflow failed mid-way, rolling back base %s: %s",
+            redact_sensitive_text(f"app_token={app_token}"),
+            redact_sensitive_text(setup_exc, max_chars=500),
+        )
         await _delete_base_best_effort(app_token)
         raise
 
@@ -137,7 +142,11 @@ async def setup_workflow(
             base_meta=base_meta,
         )
     except Exception as populate_exc:
-        logger.error("populate base records failed, rolling back %s: %s", app_token, populate_exc)
+        logger.error(
+            "populate base records failed, rolling back %s: %s",
+            redact_sensitive_text(f"app_token={app_token}"),
+            redact_sensitive_text(populate_exc, max_chars=500),
+        )
         await _delete_base_best_effort(app_token)
         raise
 
@@ -170,7 +179,11 @@ async def setup_workflow(
         native_assets=native_assets,
     )
 
-    logger.info("Workflow setup complete: app_token=%s url=%s", app_token, result["url"])
+    logger.info(
+        "Workflow setup complete: app_token=%s url=%s",
+        redact_sensitive_text(f"app_token={app_token}"),
+        redact_sensitive_text(result["url"]),
+    )
     return {
         "app_token": app_token,
         "url": result["url"],
@@ -452,9 +465,12 @@ async def _delete_base_best_effort(app_token: str) -> None:
                     r.status_code, body.get("code"), body.get("msg"),
                 )
             else:
-                logger.info("rollback: DELETE base %s success", app_token)
+                logger.info(
+                    "rollback: DELETE base %s success",
+                    redact_sensitive_text(f"app_token={app_token}"),
+                )
     except Exception as exc:
-        logger.warning("rollback DELETE base raised: %s", exc)
+        logger.warning("rollback DELETE base raised: %s", redact_sensitive_text(exc, max_chars=500))
 
 
 async def _cleanup_auto_created_artifacts(app_token: str, keep_table_ids: set[str]) -> None:
@@ -476,7 +492,7 @@ async def _cleanup_auto_created_artifacts(app_token: str, keep_table_ids: set[st
     try:
         token = await get_tenant_access_token()
     except Exception as exc:
-        logger.warning("cleanup skipped — token fetch failed: %s", exc)
+        logger.warning("cleanup skipped — token fetch failed: %s", redact_sensitive_text(exc, max_chars=500))
         return
 
     headers = {"Authorization": f"Bearer {token}"}
@@ -681,11 +697,16 @@ async def _create_extra_views(
                 shared_url = await _share_form_view(app_token, table_id, view_id)
                 if shared_url:
                     view_meta["shared_url"] = shared_url
-                    logger.info("Form view %r shared at %s", name, shared_url)
+                    logger.info("Form view %r shared at %s", name, redact_sensitive_text(shared_url))
                 form_views.append(view_meta)
             created_views.append(view_meta)
         except Exception as exc:
-            logger.warning("创建视图失败 table=%s name=%s: %s", table_id, name, exc)
+            logger.warning(
+                "创建视图失败 table=%s name=%s: %s",
+                table_id,
+                name,
+                redact_sensitive_text(exc, max_chars=500),
+            )
     return {"views": created_views, "forms": form_views}
 
 

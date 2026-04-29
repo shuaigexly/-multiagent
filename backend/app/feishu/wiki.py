@@ -10,6 +10,7 @@ from lark_oapi.api.wiki.v2 import (
 
 from app.feishu.client import get_feishu_base_url, get_feishu_client
 from app.feishu.retry import with_retry
+from app.core.redaction import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -49,5 +50,5 @@ async def _create_wiki_node_impl(
 
     node_token = resp.data.node.node_token
     url = f"{get_feishu_base_url()}/wiki/{node_token}"
-    logger.info(f"知识库节点创建成功: {node_token}")
+    logger.info("知识库节点创建成功: %s", redact_sensitive_text(f"node_token={node_token}"))
     return {"node_token": node_token, "url": url, "title": title}

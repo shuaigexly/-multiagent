@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import type { InternalAxiosRequestConfig } from 'axios';
-import { API_KEY_STORAGE_KEY, attachRuntimeApiKeyHeader, getRuntimeApiKey } from '../services/http';
+import { API_KEY_STORAGE_KEY, attachRuntimeApiKeyHeader, getRuntimeApiKey, setRuntimeApiKey } from '../services/http';
 
 function installWindowWithApiKey(apiKey: string) {
   Object.defineProperty(globalThis, 'window', {
@@ -41,5 +41,24 @@ describe('http service', () => {
     });
 
     expect(getRuntimeApiKey()).toBe('');
+  });
+
+  it('reports blocked localStorage writes without throwing', () => {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        localStorage: {
+          setItem: () => {
+            throw new DOMException('blocked', 'SecurityError');
+          },
+          removeItem: () => {
+            throw new DOMException('blocked', 'SecurityError');
+          },
+        },
+      },
+    });
+
+    expect(setRuntimeApiKey('runtime-secret')).toBe(false);
+    expect(setRuntimeApiKey('')).toBe(false);
   });
 });

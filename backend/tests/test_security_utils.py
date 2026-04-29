@@ -230,7 +230,7 @@ def test_sensitive_redaction_handles_nested_data_and_text():
     text = redact_sensitive_text(
         "access_token=access-secret app_secret='app-secret' x-api-key=api-key-secret "
         "Authorization: Bearer bearer-secret {'refresh_token': 'refresh-secret'} "
-        '{"app_token": "base-secret"}'
+        '{"app_token": "base-secret"} doc_token=doc-secret folder_token=folder-secret'
     )
     assert "access-secret" not in text
     assert "app-secret" not in text
@@ -238,7 +238,28 @@ def test_sensitive_redaction_handles_nested_data_and_text():
     assert "bearer-secret" not in text
     assert "refresh-secret" not in text
     assert "base-secret" not in text
+    assert "doc-secret" not in text
+    assert "folder-secret" not in text
     assert text.count("[REDACTED]") >= 5
+
+    url_text = redact_sensitive_text(
+        "GET https://open.feishu.test/open-apis/bitable/v1/apps/base-secret/tables/tbl/records "
+        "https://tenant.feishu.test/base/base-secret?table=tbl "
+        "https://open.feishu.test/open-apis/drive/v1/permissions/base-secret/members"
+    )
+    assert "base-secret" not in url_text
+    assert "/apps/[REDACTED]/tables/tbl/records" in url_text
+    assert "/base/[REDACTED]?table=tbl" in url_text
+    assert "/permissions/[REDACTED]/members" in url_text
+
+    generic_url_text = redact_sensitive_text(
+        "redis://:redis-secret@localhost:6379/0 "
+        "https://assets.example.test/image.png?token=signed-secret&name=logo"
+    )
+    assert "redis-secret" not in generic_url_text
+    assert "signed-secret" not in generic_url_text
+    assert "redis://[REDACTED]@localhost:6379/0" in generic_url_text
+    assert "token=[REDACTED]" in generic_url_text
 
 
 def test_feishu_http_error_helpers_redact_response_bodies():

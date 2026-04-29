@@ -205,7 +205,13 @@ async def _add_bitable_member(
             f"add member failed status={r.status_code} code={body.get('code')} "
             f"msg={body.get('msg')} member={member_type}:{member_id} perm={perm}"
         )
-    logger.info("Granted %s to %s:%s on bitable %s", perm, member_type, member_id, app_token)
+    logger.info(
+        "Granted %s to %s:%s on bitable %s",
+        perm,
+        member_type,
+        member_id,
+        redact_sensitive_text(f"app_token={app_token}"),
+    )
 
 
 async def _patch_public_link_share(*, base: str, token: str, app_token: str) -> None:
@@ -235,7 +241,10 @@ async def _patch_public_link_share(*, base: str, token: str, app_token: str) -> 
         raise RuntimeError(
             f"public link share failed status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
         )
-    logger.info("Enabled tenant_readable link share on bitable %s", app_token)
+    logger.info(
+        "Enabled tenant_readable link share on bitable %s",
+        redact_sensitive_text(f"app_token={app_token}"),
+    )
 
 
 async def create_table(app_token: str, table_name: str, fields: list[dict]) -> str:
@@ -477,7 +486,7 @@ async def _create_bitable_impl(name: str, client=None) -> dict:
         raise RuntimeError(f"创建多维表格失败: {resp.msg}")
     app_token = resp.data.app.app_token
     url = f"{get_feishu_base_url()}/base/{app_token}"
-    logger.info("多维表格创建成功: %s", app_token)
+    logger.info("多维表格创建成功: %s", redact_sensitive_text(f"app_token={app_token}"))
     return {"app_token": app_token, "url": url, "name": name}
 
 

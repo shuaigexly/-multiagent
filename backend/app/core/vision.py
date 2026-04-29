@@ -22,6 +22,7 @@ import os
 from typing import Optional
 
 from app.core.budget import BudgetExceeded, check_budget, record_usage
+from app.core.redaction import redact_sensitive_text
 from app.core.settings import get_llm_api_key, get_llm_base_url
 from app.core.url_safety import UnsafeURL, fetch_public_url_bytes, validate_public_http_url
 
@@ -71,10 +72,18 @@ async def _fetch_as_base64(url: str) -> Optional[str]:
         )
         return base64.b64encode(content).decode("ascii")
     except UnsafeURL as exc:
-        logger.warning("vision: unsafe image url rejected url=%s err=%s", url[:80], exc)
+        logger.warning(
+            "vision: unsafe image url rejected url=%s err=%s",
+            redact_sensitive_text(url, max_chars=120),
+            redact_sensitive_text(exc, max_chars=500),
+        )
         return None
     except Exception as exc:
-        logger.warning("vision: fetch image failed url=%s err=%s", url[:80], exc)
+        logger.warning(
+            "vision: fetch image failed url=%s err=%s",
+            redact_sensitive_text(url, max_chars=120),
+            redact_sensitive_text(exc, max_chars=500),
+        )
         return None
 
 
@@ -111,7 +120,7 @@ async def analyze_image(
         try:
             image_url_block: dict = {"url": validate_public_http_url(image)}
         except UnsafeURL as exc:
-            logger.warning("vision: unsafe image url rejected: %s", exc)
+            logger.warning("vision: unsafe image url rejected: %s", redact_sensitive_text(exc, max_chars=500))
             return None
     elif image.startswith("data:image"):
         if "," not in image:

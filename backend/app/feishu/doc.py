@@ -21,6 +21,7 @@ from lark_oapi.api.docx.v1 import (
 )
 
 from app.agents.base_agent import AgentResult
+from app.core.redaction import redact_sensitive_text
 from app.feishu import cli_bridge
 from app.feishu.client import get_feishu_base_url, get_feishu_client
 from app.feishu.retry import with_retry
@@ -171,7 +172,7 @@ async def _create_document_shell(
     folder_token: Optional[str] = None,
 ) -> str:
     if folder_token:
-        logger.info("当前文档创建流程暂未处理 folder_token=%s", folder_token)
+        logger.info("当前文档创建流程暂未处理 folder_token=%s", redact_sensitive_text(f"folder_token={folder_token}"))
 
     req_body = CreateDocumentRequestBody.builder().title(title).build()
     req = CreateDocumentRequest.builder().request_body(req_body).build()
@@ -184,7 +185,7 @@ async def _create_document_shell(
         raise RuntimeError(f"创建飞书文档失败: {resp.msg} (code={resp.code})")
 
     doc_token = resp.data.document.document_id
-    logger.info("飞书文档创建成功: %s", doc_token)
+    logger.info("飞书文档创建成功: %s", redact_sensitive_text(f"doc_token={doc_token}"))
     return doc_token
 
 

@@ -12,6 +12,18 @@ export function getRuntimeApiKey(): string {
   }
 }
 
+export function setRuntimeApiKey(value: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const normalized = value.trim();
+    if (normalized) window.localStorage.setItem(API_KEY_STORAGE_KEY, normalized);
+    else window.localStorage.removeItem(API_KEY_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function attachRuntimeApiKeyHeader(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
   const apiKey = getRuntimeApiKey();
   if (apiKey) {

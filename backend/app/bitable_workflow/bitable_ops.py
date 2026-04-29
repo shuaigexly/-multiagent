@@ -105,7 +105,13 @@ async def field_exists(
     try:
         names = await _fetch_field_names(app_token, table_id)
     except Exception as exc:
-        logger.warning("field_exists fetch failed (%s.%s): %s", app_token, table_id, exc)
+        safe_app = redact_sensitive_text(f"app_token={app_token}")
+        logger.warning(
+            "field_exists fetch failed (%s.%s): %s",
+            safe_app,
+            table_id,
+            redact_sensitive_text(exc, max_chars=500),
+        )
         return False
     return field_name in names
 

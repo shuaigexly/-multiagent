@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { getConfig, saveConfigs, setStoredLLMConfigured, testFeishu, testLLM, type ConfigMap, type ConnectionTestResult } from '../services/config';
-import { api, API_KEY_STORAGE_KEY, BASE_URL } from '../services/http';
+import { api, API_KEY_STORAGE_KEY, BASE_URL, getRuntimeApiKey, setRuntimeApiKey } from '../services/http';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -62,7 +62,7 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    setApiKeyInput(window.localStorage.getItem(API_KEY_STORAGE_KEY) || '');
+    setApiKeyInput(getRuntimeApiKey());
     load().catch(e => setError(getErr(e, '加载失败'))).finally(() => setLoading(false));
     // 处理 OAuth 回调结果
     const oauthResult = searchParams.get('oauth');
@@ -83,9 +83,11 @@ export default function Settings() {
 
   const saveRuntimeApiKey = () => {
     const value = apiKeyInput.trim();
-    if (value) window.localStorage.setItem(API_KEY_STORAGE_KEY, value);
-    else window.localStorage.removeItem(API_KEY_STORAGE_KEY);
-    toast({ title: value ? '访问密钥已保存到本机' : '访问密钥已清除' });
+    if (setRuntimeApiKey(value)) {
+      toast({ title: value ? '访问密钥已保存到本机' : '访问密钥已清除' });
+    } else {
+      toast({ title: '当前环境禁止本地存储访问', variant: 'destructive' });
+    }
   };
 
   const saveFeishu = async () => {

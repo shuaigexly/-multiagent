@@ -6,6 +6,10 @@ import type {
 } from './types';
 import { api, BASE_URL } from './http';
 
+function taskPath(taskId: string): string {
+  return encodeURIComponent(taskId);
+}
+
 export async function submitTask(
   inputText: string,
   file?: File,
@@ -24,7 +28,7 @@ export async function confirmTask(
   selectedModules: string[],
   userInstructions?: string | null
 ): Promise<{ task_id: string; status: string }> {
-  const resp = await api.post(`/api/v1/tasks/${taskId}/confirm`, {
+  const resp = await api.post(`/api/v1/tasks/${taskPath(taskId)}/confirm`, {
     selected_modules: selectedModules,
     user_instructions: userInstructions || null,
   });
@@ -32,24 +36,24 @@ export async function confirmTask(
 }
 
 export async function getTaskResults(taskId: string): Promise<TaskResultsResponse> {
-  const resp = await api.get(`/api/v1/tasks/${taskId}/results`);
+  const resp = await api.get(`/api/v1/tasks/${taskPath(taskId)}/results`);
   return resp.data;
 }
 
 export async function getTaskStatus(taskId: string): Promise<{ status: string }> {
-  const res = await api.get<{ status: string }>(`/api/v1/tasks/${taskId}/status`);
+  const res = await api.get<{ status: string }>(`/api/v1/tasks/${taskPath(taskId)}/status`);
   return res.data;
 }
 
 export async function cancelTask(taskId: string): Promise<{ status: string }> {
-  const res = await api.delete<{ status: string }>(`/api/v1/tasks/${taskId}`, {
+  const res = await api.delete<{ status: string }>(`/api/v1/tasks/${taskPath(taskId)}`, {
     params: { action: 'cancel' },
   });
   return res.data;
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
-  await api.delete(`/api/v1/tasks/${taskId}`);
+  await api.delete(`/api/v1/tasks/${taskPath(taskId)}`);
 }
 
 export async function listTasks(params?: {
@@ -67,7 +71,7 @@ export async function publishTask(
   assetTypes: string[],
   options?: { docTitle?: string; chatId?: string }
 ): Promise<{ published: object[] }> {
-  const resp = await api.post(`/api/v1/tasks/${taskId}/publish`, {
+  const resp = await api.post(`/api/v1/tasks/${taskPath(taskId)}/publish`, {
     asset_types: assetTypes,
     doc_title: options?.docTitle,
     chat_id: options?.chatId,
@@ -93,7 +97,7 @@ export async function createFeishuTask(
 }
 
 export async function createSSEConnection(taskId: string): Promise<EventSource> {
-  const encodedTaskId = encodeURIComponent(taskId);
+  const encodedTaskId = taskPath(taskId);
   const resp = await api.post<{ token: string }>(`/api/v1/tasks/${encodedTaskId}/events-token`);
   const url = `${BASE_URL}/api/v1/tasks/${encodedTaskId}/events?token=${encodeURIComponent(resp.data.token)}`;
   return new EventSource(url);

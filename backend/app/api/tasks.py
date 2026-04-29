@@ -40,6 +40,13 @@ _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _claim_lock: asyncio.Lock | None = None
 import threading as _threading
 _claim_lock_init = _threading.Lock()
+_MAX_FEISHU_CONTEXT_CHARS = 200_000
+_FEISHU_CONTEXT_LIST_LIMITS = {
+    "drive": 20,
+    "calendar": 50,
+    "tasks": 50,
+    "assets": 20,
+}
 
 
 def _get_claim_lock() -> asyncio.Lock:
@@ -98,6 +105,52 @@ async def _remove_upload_file(path: str | None) -> None:
         await asyncio.to_thread(target.unlink, missing_ok=True)
     except OSError as exc:
         logger.warning("uploaded file cleanup failed for path=%s: %s", path, exc)
+
+
+def _trim_context_value(value, *, depth: int = 0):
+    if depth > 4:
+        return None
+    if isinstance(value, str):
+        return truncate_with_marker(value, 1000)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [_trim_context_value(item, depth=depth + 1) for item in value[:20]]
+    if isinstance(value, dict):
+        return {
+            str(key)[:80]: _trim_context_value(item, depth=depth + 1)
+            for key, item in list(value.items())[:50]
+        }
+    return str(value)[:200]
+
+
+def _parse_feishu_context(raw: str | None) -> dict | None:
+    if not raw:
+        return None
+    if len(raw) > _MAX_FEISHU_CONTEXT_CHARS:
+        raise HTTPException(413, "feishu_context 超过大小限制")
+    import json as _json
+
+    try:
+        ctx = _json.loads(raw)
+    except _json.JSONDecodeError as exc:
+        raise HTTPException(422, f"feishu_context JSON 格式错误: {exc}") from exc
+    if not isinstance(ctx, dict):
+        raise HTTPException(422, "feishu_context 必须是 JSON object")
+
+    normalized: dict[str, object] = {}
+    for key, limit in _FEISHU_CONTEXT_LIST_LIMITS.items():
+        value = ctx.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list):
+            raise HTTPException(422, f"feishu_context.{key} 必须是数组")
+        normalized[key] = [
+            _trim_context_value(item)
+            for item in value[:limit]
+            if isinstance(item, dict)
+        ]
+    return normalized
 
 
 @router.post("", response_model=TaskPlanResponse, dependencies=[Depends(require_api_key)])
@@ -165,14 +218,13 @@ async def create_task(
         planning_text += f"\n\n[附件内容片段]\n{truncate_with_marker(file_content, 500)}"
 
     # TaskPlanner 识别
-    import json as _json
     ctx = None
     if feishu_context:
         try:
-            ctx = _json.loads(feishu_context)
-        except _json.JSONDecodeError as exc:
+            ctx = _parse_feishu_context(feishu_context)
+        except HTTPException:
             await _remove_upload_file(input_file_path)
-            raise HTTPException(422, f"feishu_context JSON 格式错误: {exc}")
+            raise
     try:
         plan = await plan_task(planning_text, ctx)
     except Exception:

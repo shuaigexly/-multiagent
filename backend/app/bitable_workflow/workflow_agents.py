@@ -34,6 +34,7 @@ from app.agents.operations_manager import operations_manager_agent
 from app.agents.product_manager import product_manager_agent
 from app.agents.seo_advisor import seo_advisor_agent
 from app.bitable_workflow import bitable_ops
+from app.core.redaction import redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ async def _enrich_with_vision(task_description: str, fields: dict) -> str:
     try:
         token = await get_tenant_access_token()
     except Exception as exc:
-        logger.warning("vision skipped: feishu token failed: %s", exc)
+        logger.warning("vision skipped: feishu token failed: %s", redact_sensitive_text(exc, max_chars=500))
         return task_description
 
     descriptions: list[str] = []

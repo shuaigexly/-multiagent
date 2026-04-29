@@ -755,7 +755,11 @@ async def _resolve_template_defaults(
     try:
         templates = await bitable_ops.list_records(app_token, template_tid, max_records=200)
     except Exception as exc:
-        logger.warning("template defaults lookup failed app=%s: %s", app_token, exc)
+        logger.warning(
+            "template defaults lookup failed app=%s: %s",
+            redact_sensitive_text(f"app_token={app_token}"),
+            redact_sensitive_text(exc, max_chars=500),
+        )
         return {}
 
     normalized_name = template_name.strip()
@@ -1599,7 +1603,7 @@ async def _send_completion_message(
             detail=url,
             record_id=rid,
         )
-        logger.info("Feishu card sent for task [%s] url=%s", task_title, url)
+        logger.info("Feishu card sent for task [%s] url=%s", task_title, redact_sensitive_text(url))
     except ValueError:
         await _write_action_record(
             app_token,

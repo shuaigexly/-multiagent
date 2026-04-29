@@ -14,6 +14,7 @@ import time
 from typing import Optional
 
 from app.agents.base_agent import AgentResult
+from app.core.redaction import redact_sensitive_text
 from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -62,11 +63,11 @@ async def _get_redis():
             client = aioredis.from_url(settings.redis_url, decode_responses=True)
             await client.ping()
             _redis_client = client
-            logger.info("Redis agent cache ready: %s", settings.redis_url)
+            logger.info("Redis agent cache ready: %s", redact_sensitive_text(settings.redis_url))
             return client
         except Exception as exc:
             _redis_retry_at = time.monotonic() + _REDIS_RETRY_SECONDS
-            logger.info("Redis unavailable, agent cache disabled: %s", exc)
+            logger.info("Redis unavailable, agent cache disabled: %s", redact_sensitive_text(exc, max_chars=500))
             return None
 
 

@@ -13,6 +13,7 @@ from sqlalchemy import select, update
 from app.api import config as config_api
 from app.api import events, feishu, feishu_bot as feishu_bot_api, feishu_context as feishu_context_api, feishu_oauth as feishu_oauth_api, health as health_api, results, tasks, workflow as workflow_api
 from app.core.observability import configure_logging, correlation_scope, set_task_context
+from app.core.redaction import redact_sensitive_text
 from app.core.settings import apply_db_config, settings
 from app.feishu.client import reset_feishu_client
 from app.feishu import mcp_client
@@ -132,7 +133,11 @@ async def _load_runtime_config():
                 set_user_access_token(decrypt_token(user_token), tenant_id=tenant_id)
                 logger.info("loaded Feishu user OAuth token tenant=%s", tenant_id)
             except RuntimeError as exc:
-                logger.warning("Feishu user OAuth token not loaded tenant=%s: %s", tenant_id, exc)
+                logger.warning(
+                    "Feishu user OAuth token not loaded tenant=%s: %s",
+                    tenant_id,
+                    redact_sensitive_text(exc, max_chars=500),
+                )
         for key, refresh_token in rows.items():
             tenant_id = tenant_from_config_key(key, USER_REFRESH_TOKEN_KEY)
             if tenant_id is None or not refresh_token:
@@ -141,7 +146,11 @@ async def _load_runtime_config():
                 set_user_refresh_token(decrypt_token(refresh_token), tenant_id=tenant_id)
                 logger.info("loaded Feishu user refresh token tenant=%s", tenant_id)
             except RuntimeError as exc:
-                logger.warning("Feishu refresh token not loaded tenant=%s: %s", tenant_id, exc)
+                logger.warning(
+                    "Feishu refresh token not loaded tenant=%s: %s",
+                    tenant_id,
+                    redact_sensitive_text(exc, max_chars=500),
+                )
         for key, open_id in rows.items():
             tenant_id = tenant_from_config_key(key, USER_OPEN_ID_KEY)
             if tenant_id is None or not open_id:

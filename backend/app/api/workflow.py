@@ -23,6 +23,7 @@ from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Statu
 from app.core.audit import record_audit
 from app.core.auth import issue_stream_token, require_api_key, stream_audience_from_request, verify_stream_token
 from app.core.env import get_int_env
+from app.core.redaction import redact_sensitive_text
 
 _VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
 _VALID_STATUSES: set[str] = set(ALL_STATUSES)
@@ -567,7 +568,11 @@ async def _resolve_seed_template_defaults(
     try:
         templates = await bitable_ops.list_records(app_token, template_tid, max_records=200)
     except Exception as exc:
-        logger.warning("seed template lookup failed app=%s: %s", app_token, exc)
+        logger.warning(
+            "seed template lookup failed app=%s: %s",
+            redact_sensitive_text(f"app_token={app_token}"),
+            redact_sensitive_text(exc, max_chars=500),
+        )
         return {}
 
     normalized_name = template_name.strip()
@@ -633,7 +638,11 @@ async def workflow_setup(req: SetupRequest):
             result["native_manifest"] = native_apply["native_manifest"]
             result["native_apply_report"] = native_apply["report"]
         except Exception as exc:
-            logger.warning("setup native apply failed app=%s: %s", result.get("app_token"), exc)
+            logger.warning(
+                "setup native apply failed app=%s: %s",
+                redact_sensitive_text(f"app_token={result.get('app_token')}"),
+                redact_sensitive_text(exc, max_chars=500),
+            )
             result["native_apply_report"] = [
                 {
                     "surface": "setup",
