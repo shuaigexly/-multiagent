@@ -1247,6 +1247,30 @@ def test_seed_request_max_length_protects_long_payloads():
         SeedRequest(app_token="abc", table_id="def", title="ok", background="x" * 50000)
 
 
+def test_workflow_request_models_bound_identifiers():
+    from pydantic import ValidationError
+    from app.api.workflow import ConfirmRequest, StartRequest
+
+    with pytest.raises(ValidationError):
+        StartRequest(
+            app_token="a" * 500,
+            table_ids={"task": "tbl", "report": "tbl_r", "performance": "tbl_p"},
+        )
+    with pytest.raises(ValidationError):
+        StartRequest(
+            app_token="app",
+            table_ids={"task": "t" * 500, "report": "tbl_r", "performance": "tbl_p"},
+        )
+    with pytest.raises(ValidationError):
+        ConfirmRequest(
+            app_token="app",
+            table_id="tbl",
+            record_id="rec",
+            action="approve",
+            actor="x" * 1000,
+        )
+
+
 def test_oauth_origin_rejects_javascript_uri():
     """v8.6.20-r10（审计 #7 安全）：frontend_origin 必须是干净 https/http URL。"""
     import os

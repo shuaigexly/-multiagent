@@ -83,8 +83,8 @@ class SetupRequest(BaseModel):
 
 
 class StartRequest(BaseModel):
-    app_token: str
-    table_ids: dict
+    app_token: str = Field(min_length=1, max_length=64)
+    table_ids: dict[str, str]
     interval: int = Field(default=30, ge=1)
     analysis_every: int = Field(default=5, ge=1)
 
@@ -94,9 +94,15 @@ class StartRequest(BaseModel):
         missing = required - self.table_ids.keys()
         if missing:
             raise ValueError(f"table_ids 缺少必需键: {missing}")
+        if len(self.table_ids) > 32:
+            raise ValueError("table_ids 数量超过限制")
         for key, val in self.table_ids.items():
+            if not isinstance(key, str) or not key.strip() or len(key) > 64:
+                raise ValueError("table_ids key 必须是 1-64 字符字符串")
             if not isinstance(val, str) or not val.strip():
                 raise ValueError(f"table_ids['{key}'] 不能为空字符串")
+            if len(val) > 128:
+                raise ValueError(f"table_ids['{key}'] 超过长度限制")
         return self
 
 
@@ -146,11 +152,11 @@ class SeedRequest(BaseModel):
 
 
 class ConfirmRequest(BaseModel):
-    app_token: str
-    table_id: str
-    record_id: str = Field(min_length=1)
-    action: str = Field(min_length=1)
-    actor: str = ""
+    app_token: str = Field(min_length=1, max_length=64)
+    table_id: str = Field(min_length=1, max_length=64)
+    record_id: str = Field(min_length=1, max_length=128)
+    action: str = Field(min_length=1, max_length=32)
+    actor: str = Field(default="", max_length=200)
 
     @field_validator("action")
     @classmethod
@@ -1048,7 +1054,11 @@ async def workflow_stream(
 
 
 @router.get("/records", dependencies=[Depends(require_api_key)])
-async def workflow_records(app_token: str, table_id: str, status: Optional[str] = None):
+async def workflow_records(
+    app_token: str = Query(..., min_length=1, max_length=64),
+    table_id: str = Query(..., min_length=1, max_length=64),
+    status: Optional[str] = Query(None, max_length=50),
+):
     """查看多维表格中的记录（可按状态过滤）。"""
     if status is not None and status not in _VALID_STATUSES:
         raise HTTPException(
