@@ -60,6 +60,66 @@ class TestBuildTaskDescription:
         assert "综合分析" in desc
 
 
+class TestRunTaskPipelineProgress:
+    @pytest.mark.asyncio
+    async def test_emits_agent_level_events(self, monkeypatch):
+        from app.bitable_workflow import workflow_agents
+
+        class FakeAgent:
+            def __init__(self, agent_id: str, agent_name: str):
+                self.agent_id = agent_id
+                self.agent_name = agent_name
+
+        fake_agents = [
+            FakeAgent("data_analyst", "数据分析师"),
+            FakeAgent("content_manager", "内容负责人"),
+            FakeAgent("seo_advisor", "SEO增长顾问"),
+            FakeAgent("product_manager", "产品经理"),
+            FakeAgent("operations_manager", "运营负责人"),
+        ]
+        fake_finance = FakeAgent("finance_advisor", "财务顾问")
+        fake_ceo = FakeAgent("ceo_assistant", "CEO 助理")
+
+        async def fake_safe_analyze(agent, *_args, **_kwargs):
+            return AgentResult(
+                agent_id=agent.agent_id,
+                agent_name=agent.agent_name,
+                sections=[ResultSection(title="结论", content=f"{agent.agent_name} 完成")],
+                action_items=["下一步"],
+                raw_output=f"{agent.agent_name} 完成",
+                confidence_hint=4,
+                structured_evidence=[{"claim": "evidence"}],
+            )
+
+        events = []
+
+        async def agent_event_callback(event):
+            events.append(event)
+
+        monkeypatch.setattr(workflow_agents, "_WAVE1_AGENTS", fake_agents)
+        monkeypatch.setattr(workflow_agents, "_WAVE2_AGENTS", [fake_finance])
+        monkeypatch.setattr(workflow_agents, "_WAVE3_AGENT", fake_ceo)
+        monkeypatch.setattr(workflow_agents, "finance_advisor_agent", fake_finance)
+        monkeypatch.setattr(workflow_agents, "ceo_assistant_agent", fake_ceo)
+        monkeypatch.setattr(workflow_agents, "_safe_analyze", fake_safe_analyze)
+
+        all_results, ceo_result = await workflow_agents.run_task_pipeline(
+            {"任务标题": "可视化事件任务", "分析维度": "综合分析"},
+            agent_event_callback=agent_event_callback,
+            task_id="rec_task",
+        )
+
+        assert len(all_results) == 6
+        assert ceo_result.agent_id == "ceo_assistant"
+        assert [event["event_type"] for event in events].count("agent.started") == 7
+        assert [event["event_type"] for event in events].count("agent.completed") == 7
+        assert {event["wave"] for event in events} == {"Wave 1", "Wave 2", "Wave 3"}
+        completed = [event for event in events if event["event_type"] == "agent.completed"]
+        assert all(event["confidence"] == 4 for event in completed)
+        assert all(event["evidence_count"] == 1 for event in completed)
+        assert any(event["dependency"] == "汇总全部上游结论" for event in completed)
+
+
 class TestFormatSections:
     def test_normal_output(self, ok_result):
         out = _format_sections(ok_result, max_chars=2000)

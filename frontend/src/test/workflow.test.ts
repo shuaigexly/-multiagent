@@ -17,6 +17,9 @@ describe('workflow SSE subscription', () => {
     expect(postSpy).toHaveBeenCalledWith('/api/v1/workflow/stream-token/rec_123');
     expect(EventSourceMock.mock.calls[0][0]).toContain('/api/v1/workflow/stream/rec_123?token=stream-token');
     expect(addEventListener).toHaveBeenCalledWith('task.done', expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith('agent.started', expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith('agent.completed', expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith('agent.failed', expect.any(Function));
 
     unsubscribe();
     expect(close).toHaveBeenCalled();

@@ -204,7 +204,15 @@ export async function confirmTaskWorkflow(
 
 export interface ProgressEvent {
   task_id: string;
-  event_type: 'task.started' | 'wave.completed' | 'task.done' | 'task.error' | 'agent.token';
+  event_type:
+    | 'task.started'
+    | 'wave.completed'
+    | 'task.done'
+    | 'task.error'
+    | 'agent.started'
+    | 'agent.completed'
+    | 'agent.failed'
+    | 'agent.token';
   payload: WorkflowProgressPayload;
   ts: string;
 }
@@ -235,6 +243,15 @@ export interface WorkflowProgressPayload extends Record<string, unknown> {
   chunk?: string;
   agent_id?: string;
   agent_name?: string;
+  wave?: string;
+  dependency?: string;
+  duration_ms?: number | null;
+  confidence?: number;
+  fallback?: boolean;
+  failed?: boolean;
+  summary?: string;
+  evidence_count?: number;
+  action_count?: number;
   step_key?: string;
   step_title?: string;
   step_description?: string;
@@ -278,9 +295,16 @@ export function subscribeTaskProgress(
       es = new EventSource(
         `${BASE_URL}/api/v1/workflow/stream/${encodedRecordId}?token=${encodeURIComponent(resp.data.token)}`,
       );
-      ['task.started', 'wave.completed', 'task.done', 'task.error', 'agent.token'].forEach((evt) =>
-        es?.addEventListener(evt, handler as EventListener),
-      );
+      [
+        'task.started',
+        'wave.completed',
+        'task.done',
+        'task.error',
+        'agent.started',
+        'agent.completed',
+        'agent.failed',
+        'agent.token',
+      ].forEach((evt) => es?.addEventListener(evt, handler as EventListener));
       es.onerror = () => {
         es?.close();
       };

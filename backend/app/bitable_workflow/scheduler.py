@@ -330,11 +330,13 @@ def _build_agent_pipeline_payload(
     progress_pct: int,
     analysis_status: str,
     delivery_status: str,
+    agent_statuses: dict[str, str] | None = None,
 ) -> list[dict]:
+    agent_statuses = agent_statuses or {}
     return [
         {
             **agent,
-            "status": _agent_pipeline_status(
+            "status": agent_statuses.get(agent["key"]) or _agent_pipeline_status(
                 wave=agent["wave"],
                 progress_pct=progress_pct,
                 analysis_status=analysis_status,
@@ -387,6 +389,7 @@ def _build_workflow_progress_payload(
     report_version: str = "",
     delivery_note: str = "",
     error_reason: str = "",
+    agent_statuses: dict[str, str] | None = None,
 ) -> dict:
     analysis_history = [str(item).strip() for item in (analysis_history or []) if str(item).strip()]
     progress_pct = _progress_percent(progress)
@@ -479,6 +482,7 @@ def _build_workflow_progress_payload(
             progress_pct=progress_pct,
             analysis_status=analysis_status,
             delivery_status=delivery_status,
+            agent_statuses=agent_statuses,
         ),
     }
 
@@ -2596,9 +2600,47 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             # 每个 Wave 完成后更新「当前阶段」+「进度」字段，让用户在多维表格实时看到进展
             _wave_progress = iter([0.45, 0.75, 0.95])
             analysis_history = ["Wave1 启动：五岗并行分析中…"]
+            current_progress = 0.1
+            agent_statuses: dict[str, str] = {}
+
+            async def _on_agent_event(event: dict) -> None:
+                nonlocal current_progress
+                agent_id = str(event.get("agent_id") or "").strip()
+                event_type = str(event.get("event_type") or "").strip()
+                if not agent_id:
+                    return
+                if event_type == "agent.started":
+                    agent_statuses[agent_id] = "running"
+                elif event_type == "agent.completed":
+                    agent_statuses[agent_id] = "done"
+                elif event_type == "agent.failed":
+                    agent_statuses[agent_id] = "error"
+                agent_name = str(event.get("agent_name") or agent_id)
+                wave = str(event.get("wave") or "")
+                stage = (
+                    f"{wave} · {agent_name} 开始分析"
+                    if event_type == "agent.started"
+                    else f"{wave} · {agent_name} 分析完成"
+                    if event_type == "agent.completed"
+                    else f"{wave} · {agent_name} 分析异常"
+                )
+                payload = {
+                    **event,
+                    "stage": stage,
+                    "progress": current_progress,
+                    "agent_pipeline": _build_agent_pipeline_payload(
+                        progress_pct=_progress_percent(current_progress),
+                        analysis_status="error" if event_type == "agent.failed" else "running",
+                        delivery_status="pending",
+                        agent_statuses=agent_statuses,
+                    ),
+                }
+                await progress_broker.publish(rid, event_type, payload)
 
             async def _on_wave(stage: str) -> None:
+                nonlocal current_progress
                 progress = next(_wave_progress, 0.95)
+                current_progress = progress
                 analysis_history.append(stage)
                 try:
                     await bitable_ops.update_record(
@@ -2621,6 +2663,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                             delivery_status="pending",
                             current_stage=stage,
                             analysis_history=analysis_history,
+                            agent_statuses=agent_statuses,
                         ),
                     },
                 )
@@ -2628,7 +2671,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             # 执行七岗 DAG 分析流水线（Wave1→Wave2→Wave3）
             # 传入 rid 作为 task_id，启用 Redis 缓存：崩溃重试会跳过已完成的 agent
             all_results, ceo_result = await run_task_pipeline(
-                fields, progress_callback=_on_wave, task_id=rid
+                fields, progress_callback=_on_wave, agent_event_callback=_on_agent_event, task_id=rid
             )
 
             # 先记录历史输出 ID；新输出和报告全部写入成功后再清理旧记录，避免重试失败丢失上次好结果。

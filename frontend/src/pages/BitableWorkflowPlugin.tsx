@@ -194,6 +194,31 @@ function formatDateValue(value: unknown): string {
 
 function buildLiveStepEvent(event: ProgressEvent): LiveStepEvent | null {
   if (event.event_type === "agent.token") return null;
+  if (event.event_type.startsWith("agent.")) {
+    const agentName = textValue(event.payload.agent_name || event.payload.agent_id) || "AI 岗位";
+    const wave = textValue(event.payload.wave);
+    const durationMs = numberValue(event.payload.duration_ms);
+    const status =
+      event.event_type === "agent.completed"
+        ? "done"
+        : event.event_type === "agent.failed"
+          ? "error"
+          : "running";
+    const detail =
+      event.event_type === "agent.started"
+        ? `${agentName} 已进入分析队列`
+        : event.event_type === "agent.completed"
+          ? `${agentName} 输出完成${durationMs ? ` · ${(durationMs / 1000).toFixed(1)}s` : ""}`
+          : textValue(event.payload.reason) || `${agentName} 分析异常`;
+    return {
+      key: `${event.event_type}-${textValue(event.payload.agent_id)}-${event.ts}`,
+      eventType: event.event_type,
+      stage: `${wave ? `${wave} · ` : ""}${agentName}`,
+      status,
+      updatedAt: event.ts,
+      detail,
+    };
+  }
   const status =
     event.payload.step_status === "done" || event.payload.step_status === "error" || event.payload.step_status === "running"
       ? event.payload.step_status

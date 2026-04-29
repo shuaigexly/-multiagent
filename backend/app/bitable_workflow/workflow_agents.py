@@ -445,6 +445,7 @@ async def _safe_analyze(
 async def run_task_pipeline(
     task_fields: dict,
     progress_callback=None,
+    agent_event_callback=None,
     task_id: Optional[str] = None,
 ) -> tuple[list[AgentResult], AgentResult]:
     """
@@ -455,6 +456,9 @@ async def run_task_pipeline(
 
     progress_callback: 可选的异步函数 async(stage: str)，在每个 Wave 完成后调用，
                        用于向主任务表写入「当前阶段」进度。
+    agent_event_callback: 可选的异步函数 async(event: dict)，在每个 Agent
+                          started/completed/failed 时调用，用于嵌入式 workflow UI
+                          精确点亮七岗节点。
     task_id: 任务唯一 ID（通常传 Bitable record_id），用于 Redis 缓存 agent 输出；
              崩溃恢复时已完成的 agent 会直接从缓存读取，避免重跑昂贵的 LLM 调用。
 
@@ -492,12 +496,75 @@ async def run_task_pipeline(
         except Exception as exc:
             logger.warning("Data source parse failed, falling back to no data: %s", exc)
 
+    async def _emit_agent_event(
+        event_type: str,
+        agent,
+        *,
+        wave: str,
+        dependency: str,
+        result: AgentResult | None = None,
+        error: Exception | str | None = None,
+        started_at: datetime | None = None,
+    ) -> None:
+        if not agent_event_callback:
+            return
+        duration_ms = None
+        if started_at:
+            duration_ms = int((datetime.utcnow() - started_at).total_seconds() * 1000)
+        payload = {
+            "event_type": event_type,
+            "agent_id": agent.agent_id,
+            "agent_name": agent.agent_name,
+            "wave": wave,
+            "dependency": dependency,
+            "duration_ms": duration_ms,
+        }
+        if result is not None:
+            payload.update(
+                {
+                    "confidence": result.confidence_hint or 0,
+                    "fallback": _is_fallback_result(result),
+                    "failed": _is_failed_result(result),
+                    "summary": _first_nonempty_paragraph(result.raw_output or "", 180),
+                    "evidence_count": len(result.structured_evidence or []),
+                    "action_count": len(result.action_items or []),
+                }
+            )
+        if error is not None:
+            payload["reason"] = redact_sensitive_text(error, max_chars=220)
+        try:
+            await agent_event_callback(payload)
+        except Exception as cb_exc:
+            logger.debug("agent_event_callback failed: %s", cb_exc)
+
+    async def _run_agent(agent, *, wave: str, dependency: str, upstream=None) -> AgentResult:
+        started_at = datetime.utcnow()
+        await _emit_agent_event("agent.started", agent, wave=wave, dependency=dependency, started_at=started_at)
+        try:
+            result = await _safe_analyze(
+                agent,
+                task_description,
+                upstream=upstream,
+                data_summary=data_summary,
+                task_id=task_id,
+                dimension=dimension,
+            )
+        except Exception as exc:
+            await _emit_agent_event("agent.failed", agent, wave=wave, dependency=dependency, error=exc, started_at=started_at)
+            raise
+        await _emit_agent_event(
+            "agent.failed" if _is_failed_result(result) else "agent.completed",
+            agent,
+            wave=wave,
+            dependency=dependency,
+            result=result,
+            started_at=started_at,
+        )
+        return result
+
     # Wave 1: parallel execution of 5 independent agents
     wave1_coros = [
-        _safe_analyze(
-            agent, task_description,
-            data_summary=data_summary, task_id=task_id, dimension=dimension,
-        )
+        _run_agent(agent, wave="Wave 1", dependency="无上游依赖")
         for agent in _WAVE1_AGENTS
     ]
     wave1_results: list[AgentResult] = list(await asyncio.gather(*wave1_coros))
@@ -514,9 +581,11 @@ async def run_task_pipeline(
     # passes the wrong result to finance_advisor.
     wave1_by_id = {r.agent_id: r for r in wave1_results}
     da_result = wave1_by_id.get("data_analyst") or wave1_results[0]
-    fa_result = await _safe_analyze(
-        finance_advisor_agent, task_description,
-        upstream=[da_result], data_summary=data_summary, task_id=task_id, dimension=dimension,
+    fa_result = await _run_agent(
+        finance_advisor_agent,
+        wave="Wave 2",
+        dependency="依赖数据分析师输出",
+        upstream=[da_result],
     )
     wave2_results = [fa_result]
     _raise_if_failed(wave2_results, "Wave2")
@@ -536,9 +605,11 @@ async def run_task_pipeline(
     from app.agents.peer_qa import clear_peer_pool, set_peer_pool
     peer_token = set_peer_pool(all_upstream)
     try:
-        ceo_result = await _safe_analyze(
-            _WAVE3_AGENT, task_description,
-            upstream=all_upstream, data_summary=data_summary, task_id=task_id, dimension=dimension,
+        ceo_result = await _run_agent(
+            _WAVE3_AGENT,
+            wave="Wave 3",
+            dependency="汇总全部上游结论",
+            upstream=all_upstream,
         )
     finally:
         clear_peer_pool(peer_token)
