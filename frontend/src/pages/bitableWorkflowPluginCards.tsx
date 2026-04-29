@@ -15,7 +15,7 @@ const TRACE_NODE_STYLE: Record<WorkflowTraceNode["tone"], string> = {
 };
 
 export function EmptyState({ text }: { text: string }) {
-  return <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-sm text-slate-500">{text}</div>;
+  return <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-sm text-slate-500">{text}</div>;
 }
 
 export function ResolutionCard({
@@ -27,7 +27,7 @@ export function ResolutionCard({
 }) {
   if (!resolutionDebug) return null;
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
+    <div className="rounded-xl border border-slate-200 bg-white/92 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Traceability</div>
@@ -69,7 +69,7 @@ export function EntryContextCard({
 }) {
   if (!sourceContextItems.length && !relationSummaryItems.length) return null;
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
+    <div className="rounded-xl border border-slate-200 bg-white/92 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Entry Context</div>
@@ -94,7 +94,7 @@ export function EntryContextCard({
 export function TraceChainCard({ nodes }: { nodes: WorkflowTraceNode[] }) {
   if (!nodes.length) return null;
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
+    <div className="rounded-xl border border-slate-200 bg-white/92 p-4">
       <div>
         <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Trace Chain</div>
         <div className="mt-2 text-lg font-semibold text-slate-950">回溯链路</div>
@@ -104,7 +104,7 @@ export function TraceChainCard({ nodes }: { nodes: WorkflowTraceNode[] }) {
           <div key={node.key} className="relative pl-10">
             {index < nodes.length - 1 && <div className="absolute left-[15px] top-9 h-[calc(100%+0.5rem)] w-px bg-slate-200" />}
             <div className={`absolute left-0 top-1 h-8 w-8 rounded-full border ${TRACE_NODE_STYLE[node.tone]}`} />
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-3">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{node.label}</div>
@@ -125,7 +125,7 @@ export function TraceChainCard({ nodes }: { nodes: WorkflowTraceNode[] }) {
 
 export function RelationObjectsCard({ relationSections }: { relationSections: WorkflowRelationSection[] }) {
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-white/92 p-4">
+    <div className="rounded-xl border border-slate-200 bg-white/92 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Related Objects</div>
@@ -137,7 +137,7 @@ export function RelationObjectsCard({ relationSections }: { relationSections: Wo
       </div>
       <div className="mt-4 space-y-4">
         {relationSections.map((section) => (
-          <div key={section.key} className="rounded-[22px] border border-slate-200 bg-slate-50/70 p-3">
+          <div key={section.key} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm font-semibold text-slate-900">{section.label}</div>
               <div className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600">
@@ -149,7 +149,7 @@ export function RelationObjectsCard({ relationSections }: { relationSections: Wo
             ) : (
               <div className="mt-3 space-y-3">
                 {section.items.map((item) => (
-                  <div key={item.key} className="rounded-2xl border border-white/90 bg-white/95 p-3">
+                  <div key={item.key} className="rounded-lg border border-white/90 bg-white/95 p-3">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-slate-950">{item.title}</div>
