@@ -660,6 +660,7 @@ async def _create_extra_views(
         (archive_tid, "⏳ 待拍板归档", "grid", "归档状态", "待拍板"),
         (archive_tid, "📦 归档看板", "kanban", None, None),
         # 自动化日志
+        (automation_log_tid, "▶ 执行中日志", "grid", "执行状态", "执行中"),
         (automation_log_tid, "✅ 成功日志", "grid", "执行状态", "已完成"),
         (automation_log_tid, "🛠 待补完日志", "grid", "执行状态", "待补完"),
         (automation_log_tid, "❌ 失败日志", "grid", "执行状态", "执行失败"),

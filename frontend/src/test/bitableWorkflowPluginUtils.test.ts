@@ -14,13 +14,15 @@ import {
 
 describe("bitable workflow plugin utils", () => {
   it("resolves supported workflow tables by table id", () => {
-    const tableIds = { task: "tbl_task", review: "tbl_review", action: "tbl_action", archive: "tbl_archive" };
+    const tableIds = { task: "tbl_task", review: "tbl_review", action: "tbl_action", archive: "tbl_archive", automation_log: "tbl_log" };
     expect(getWorkflowSourceKind("tbl_task", tableIds)).toBe("task");
     expect(getWorkflowSourceKind("tbl_review", tableIds)).toBe("review");
     expect(getWorkflowSourceKind("tbl_action", tableIds)).toBe("action");
     expect(getWorkflowSourceKind("tbl_archive", tableIds)).toBe("archive");
+    expect(getWorkflowSourceKind("tbl_log", tableIds)).toBe("log");
     expect(getWorkflowSourceKind("tbl_other", tableIds)).toBe("unsupported");
     expect(workflowSourceLabel("archive")).toBe("交付结果归档");
+    expect(workflowSourceLabel("log")).toBe("自动化日志");
   });
 
   it("builds task locator from related-table records with record id priority", () => {
@@ -106,6 +108,13 @@ describe("bitable workflow plugin utils", () => {
     });
     expect(archiveItems.map((item) => item.label)).toContain("归档状态");
     expect(archiveItems.map((item) => item.value)).toContain("待复盘");
+
+    const logItems = buildSourceContextItems("log", {
+      recordId: "rec_log",
+      fields: { 节点名称: "Wave 1 · 数据分析师", 执行状态: "执行中", 触发来源: "agent.started" },
+    });
+    expect(logItems.map((item) => item.label)).toContain("节点名称");
+    expect(logItems.map((item) => item.value)).toContain("执行中");
   });
 
   it("builds related object sections with readable summaries", () => {
@@ -195,5 +204,32 @@ describe("bitable workflow plugin utils", () => {
     );
     expect(unresolved[1].label).toBe("主任务未命中");
     expect(unresolved[1].caption).toContain("关联记录ID");
+  });
+
+  it("adds native automation logs to trace chain when available", () => {
+    const nodes = buildTraceChainItems(
+      "log",
+      { recordId: "rec_log", fields: { 任务标题: "经营诊断", 节点名称: "Wave 1 · 数据分析师" } },
+      { recordId: "rec_task", fields: { 任务标题: "经营诊断" } },
+      null,
+      [],
+      [],
+      {
+        sourceKind: "log",
+        sourceLabel: "自动化日志",
+        selectedRecordId: "rec_log",
+        selectedTaskTitle: "经营诊断",
+        taskRecordIdCandidate: "rec_task",
+        taskTitleCandidate: "经营诊断",
+        resolutionMode: "related-record-id",
+        resolutionLabel: "通过关联记录ID回溯",
+        issues: [],
+      },
+      [{ recordId: "rec_log", fields: { 节点名称: "Wave 1 · 数据分析师", 执行状态: "执行中" } }],
+    );
+
+    expect(nodes.map((item) => item.key)).toEqual(["source", "task", "log"]);
+    expect(nodes[2].label).toContain("原生日志");
+    expect(nodes[2].title).toBe("Wave 1 · 数据分析师");
   });
 });

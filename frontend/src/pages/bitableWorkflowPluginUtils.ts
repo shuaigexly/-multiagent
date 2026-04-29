@@ -1,4 +1,4 @@
-export type WorkflowSourceKind = "task" | "review" | "action" | "archive" | "unsupported";
+export type WorkflowSourceKind = "task" | "review" | "action" | "archive" | "log" | "unsupported";
 
 export interface WorkflowSelectionRecord {
   recordId: string;
@@ -10,6 +10,7 @@ export interface WorkflowTableIds {
   review?: string;
   action?: string;
   archive?: string;
+  automation_log?: string;
 }
 
 export interface WorkflowTaskLocator {
@@ -100,6 +101,7 @@ export function getWorkflowSourceKind(tableId: string | null, tableIds: Workflow
   if (tableId === tableIds.review) return "review";
   if (tableId === tableIds.action) return "action";
   if (tableId === tableIds.archive) return "archive";
+  if (tableId === tableIds.automation_log) return "log";
   return "unsupported";
 }
 
@@ -113,6 +115,8 @@ export function workflowSourceLabel(sourceKind: WorkflowSourceKind): string {
       return "交付动作";
     case "archive":
       return "交付结果归档";
+    case "log":
+      return "自动化日志";
     default:
       return "非工作流表";
   }
@@ -246,6 +250,10 @@ export function buildSourceContextItems(
     items.push(pushIfPresent("归档状态", fields["归档状态"]));
     items.push(pushIfPresent("工作流路由", fields["工作流路由"]));
     items.push(pushIfPresent("最新评审动作", fields["最新评审动作"]));
+  } else if (sourceKind === "log") {
+    items.push(pushIfPresent("节点名称", fields["节点名称"]));
+    items.push(pushIfPresent("执行状态", fields["执行状态"]));
+    items.push(pushIfPresent("触发来源", fields["触发来源"]));
   }
 
   return items.filter((item): item is WorkflowSummaryItem => Boolean(item));
@@ -357,10 +365,15 @@ export function buildTraceChainItems(
   actions: WorkflowSnapshotLike[],
   archives: WorkflowSnapshotLike[],
   resolutionDebug: WorkflowResolutionDebug | null,
+  logs: WorkflowSnapshotLike[] = [],
 ): WorkflowTraceNode[] {
   const nodes: WorkflowTraceNode[] = [];
   const sourceLabel = workflowSourceLabel(sourceKind);
-  const sourceTitle = textValue(selectionRecord?.fields["任务标题"]) || textValue(selectionRecord?.fields["动作类型"]) || "当前入口记录";
+  const sourceTitle =
+    textValue(selectionRecord?.fields["任务标题"]) ||
+    textValue(selectionRecord?.fields["动作类型"]) ||
+    textValue(selectionRecord?.fields["节点名称"]) ||
+    "当前入口记录";
   const selectedRecordId = selectionRecord?.recordId || "缺失";
 
   nodes.push({
@@ -418,6 +431,17 @@ export function buildTraceChainItems(
       label: `结果归档 × ${archives.length}`,
       title: textValue(firstArchive.fields["归档状态"]) || textValue(firstArchive.fields["任务标题"]) || firstArchive.recordId,
       caption: textValue(firstArchive.fields["最新评审动作"]) || "已命中归档记录",
+      tone: "neutral",
+    });
+  }
+
+  if (logs.length) {
+    const firstLog = logs[0];
+    nodes.push({
+      key: "log",
+      label: `原生日志 × ${logs.length}`,
+      title: textValue(firstLog.fields["节点名称"]) || textValue(firstLog.fields["日志标题"]) || firstLog.recordId,
+      caption: textValue(firstLog.fields["执行状态"]) || "已命中自动化日志",
       tone: "neutral",
     });
   }

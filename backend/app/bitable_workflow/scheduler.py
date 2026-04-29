@@ -1583,6 +1583,101 @@ def _agent_event_detail(event: dict) -> str:
     return "\n".join(line for line in lines if line)
 
 
+async def _update_task_native_progress(
+    app_token: str,
+    task_tid: str,
+    record_id: str,
+    *,
+    stage: str,
+    progress: object,
+) -> None:
+    try:
+        await bitable_ops.update_record_optional_fields(
+            app_token,
+            task_tid,
+            record_id,
+            {
+                "当前阶段": stage,
+                "进度": progress,
+                "自动化执行状态": "执行中",
+            },
+            optional_keys=["自动化执行状态"],
+        )
+    except Exception as stage_exc:
+        logger.debug("workflow native progress update skipped: %s", stage_exc)
+
+
+async def _persist_workflow_start_native(
+    app_token: str,
+    task_tid: str,
+    automation_log_tid: str | None,
+    task_title: str,
+    record_id: str,
+    *,
+    stage: str,
+    progress: object,
+) -> None:
+    await asyncio.gather(
+        _update_task_native_progress(
+            app_token,
+            task_tid,
+            record_id,
+            stage=stage,
+            progress=progress,
+        ),
+        _write_automation_log(
+            app_token,
+            automation_log_tid,
+            task_title,
+            "任务领取与编排",
+            "执行中",
+            trigger="task.started",
+            summary="任务已领取，进入七岗 DAG 分析 workflow",
+            detail="\n".join(
+                [
+                    "节点：任务领取与编排",
+                    "状态：Wave1 启动，五岗并行分析中",
+                    f"记录ID：{record_id}",
+                ]
+            ),
+            record_id=record_id,
+        ),
+    )
+
+
+async def _persist_agent_event_native(
+    app_token: str,
+    task_tid: str,
+    automation_log_tid: str | None,
+    task_title: str,
+    record_id: str,
+    event: dict,
+    *,
+    stage: str,
+    progress: object,
+) -> None:
+    await asyncio.gather(
+        _update_task_native_progress(
+            app_token,
+            task_tid,
+            record_id,
+            stage=stage,
+            progress=progress,
+        ),
+        _write_automation_log(
+            app_token,
+            automation_log_tid,
+            task_title,
+            _agent_event_node_name(event),
+            _agent_event_log_status(str(event.get("event_type") or "")),
+            trigger=str(event.get("event_type") or ""),
+            summary=_agent_event_summary(event),
+            detail=_agent_event_detail(event),
+            record_id=record_id,
+        ),
+    )
+
+
 async def _list_related_rows(
     app_token: str,
     table_id: str | None,
@@ -2685,33 +2780,14 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             fields = claimed_record.get("fields") or fields
             fields = await _hydrate_task_dataset_reference(app_token, datasource_tid, fields)
 
-            await bitable_ops.update_record_optional_fields(
+            await _persist_workflow_start_native(
                 app_token,
                 task_tid,
-                rid,
-                {
-                    "当前阶段": "▶ Wave1 启动：五岗并行分析中…",
-                    "进度": 0.1,
-                    "自动化执行状态": "执行中",
-                },
-                optional_keys=["自动化执行状态"],
-            )
-            await _write_automation_log(
-                app_token,
                 automation_log_tid,
                 task_title,
-                "任务领取与编排",
-                "执行中",
-                trigger="task.started",
-                summary="任务已领取，进入七岗 DAG 分析 workflow",
-                detail="\n".join(
-                    [
-                        "节点：任务领取与编排",
-                        "状态：Wave1 启动，五岗并行分析中",
-                        f"记录ID：{rid}",
-                    ]
-                ),
-                record_id=rid,
+                rid,
+                stage="▶ Wave1 启动：五岗并行分析中…",
+                progress=0.1,
             )
 
             from app.bitable_workflow import progress_broker
@@ -2779,30 +2855,15 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     if event_type == "agent.completed"
                     else f"{wave} · {agent_name} 分析异常"
                 )
-                try:
-                    await bitable_ops.update_record_optional_fields(
-                        app_token,
-                        task_tid,
-                        rid,
-                        {
-                            "当前阶段": stage,
-                            "进度": current_progress,
-                            "自动化执行状态": "执行中",
-                        },
-                        optional_keys=["自动化执行状态"],
-                    )
-                except Exception as stage_exc:
-                    logger.debug("agent event task stage update skipped: %s", stage_exc)
-                await _write_automation_log(
+                await _persist_agent_event_native(
                     app_token,
+                    task_tid,
                     automation_log_tid,
                     task_title,
-                    _agent_event_node_name(event),
-                    _agent_event_log_status(event_type),
-                    trigger=event_type,
-                    summary=_agent_event_summary(event),
-                    detail=_agent_event_detail(event),
-                    record_id=rid,
+                    rid,
+                    event,
+                    stage=stage,
+                    progress=current_progress,
                 )
                 payload = {
                     **event,

@@ -62,7 +62,7 @@ interface TaskSnapshot {
 
 interface LiveStepEvent {
   key: string;
-  eventType: ProgressEvent["event_type"];
+  eventType: ProgressEvent["event_type"] | "native.log";
   stage: string;
   status: "running" | "done" | "error";
   updatedAt: string;
@@ -90,6 +90,7 @@ const TASK_TABLE_NAME = "分析任务";
 const REVIEW_TABLE_NAME = "产出评审";
 const ACTION_TABLE_NAME = "交付动作";
 const ARCHIVE_TABLE_NAME = "交付结果归档";
+const AUTOMATION_LOG_TABLE_NAME = "自动化日志";
 
 const WORKFLOW_DETAIL_STATUS_STYLE: Record<StepStatus, string> = {
   done: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -178,7 +179,27 @@ function formatRelativeTime(value: string): string {
   return `${Math.round(hours / 24)} 天前`;
 }
 
+function timestampValue(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    const ms = value < 1_000_000_000_000 ? value * 1000 : value;
+    return new Date(ms).toISOString();
+  }
+  const raw = textValue(value);
+  if (!raw) return "";
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : raw;
+}
+
 function formatDateValue(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return new Intl.DateTimeFormat("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(value < 1_000_000_000_000 ? value * 1000 : value));
+  }
   const raw = textValue(value);
   if (!raw) return "未更新";
   const parsed = Date.parse(raw);
@@ -235,6 +256,51 @@ function buildLiveStepEvent(event: ProgressEvent): LiveStepEvent | null {
     updatedAt: event.ts,
     detail: String(event.payload.step_description || event.payload.reason || event.payload.stage || event.event_type),
   };
+}
+
+function buildAutomationLogEvent(record: TaskSnapshot): LiveStepEvent | null {
+  const statusText = textValue(record.fields["执行状态"]);
+  const nodeName = textValue(record.fields["节点名称"]) || textValue(record.fields["日志标题"]);
+  if (!nodeName && !statusText) return null;
+  const trigger = textValue(record.fields["触发来源"]);
+  const summary = textValue(record.fields["日志摘要"]);
+  const detail = textValue(record.fields["详细结果"]);
+  const timestamp = timestampValue(record.fields["生成时间"]) || new Date().toISOString();
+  const status =
+    statusText.includes("失败") || statusText.includes("异常")
+      ? "error"
+      : statusText.includes("已完成") || statusText.includes("已跳过")
+        ? "done"
+        : "running";
+  return {
+    key: `native-log-${record.recordId}`,
+    eventType: "native.log",
+    stage: nodeName || "自动化日志",
+    status,
+    updatedAt: timestamp,
+    detail: summary || detail || trigger || statusText || "已写入原生 workflow 日志",
+  };
+}
+
+function mergeTimelineEvents(liveHistory: LiveStepEvent[] | undefined, nativeLogs: TaskSnapshot[]): LiveStepEvent[] {
+  const items = [
+    ...(liveHistory || []),
+    ...nativeLogs.map(buildAutomationLogEvent).filter((item): item is LiveStepEvent => Boolean(item)),
+  ];
+  const seen = new Set<string>();
+  return items
+    .filter((item) => {
+      const signature = `${item.stage}-${item.status}-${item.detail}-${item.updatedAt.slice(0, 16)}`;
+      if (seen.has(signature)) return false;
+      seen.add(signature);
+      return true;
+    })
+    .sort((a, b) => {
+      const left = new Date(a.updatedAt).getTime();
+      const right = new Date(b.updatedAt).getTime();
+      return (Number.isFinite(right) ? right : 0) - (Number.isFinite(left) ? left : 0);
+    })
+    .slice(0, 12);
 }
 
 function normalizeWorkflowSteps(steps: unknown): WorkflowStepDetail[] {
@@ -574,6 +640,14 @@ async function resolveTableIdByName(name: string): Promise<string> {
   return table.id;
 }
 
+async function resolveOptionalTableIdByName(name: string): Promise<string> {
+  try {
+    return await resolveTableIdByName(name);
+  } catch {
+    return "";
+  }
+}
+
 async function getTableFieldMap(tableId: string): Promise<Map<string, string>> {
   const table = await bitable.base.getTableById(tableId);
   const metas = await table.getFieldMetaList();
@@ -612,6 +686,7 @@ export default function BitableWorkflowPlugin() {
   const [review, setReview] = useState<TaskSnapshot | null>(null);
   const [actions, setActions] = useState<TaskSnapshot[]>([]);
   const [archives, setArchives] = useState<TaskSnapshot[]>([]);
+  const [automationLogs, setAutomationLogs] = useState<TaskSnapshot[]>([]);
   const [live, setLive] = useState<LiveState | null>(null);
   const [resolutionDebug, setResolutionDebug] = useState<WorkflowResolutionDebug | null>(null);
   const [selectedRecordSnapshot, setSelectedRecordSnapshot] = useState<TaskSnapshot | null>(null);
@@ -702,14 +777,21 @@ export default function BitableWorkflowPlugin() {
 
     async function bootstrap() {
       try {
-        const [taskId, reviewId, actionId, archiveId] = await Promise.all([
+        const [taskId, reviewId, actionId, archiveId, automationLogId] = await Promise.all([
           resolveTableIdByName(TASK_TABLE_NAME),
           resolveTableIdByName(REVIEW_TABLE_NAME),
           resolveTableIdByName(ACTION_TABLE_NAME),
           resolveTableIdByName(ARCHIVE_TABLE_NAME),
+          resolveOptionalTableIdByName(AUTOMATION_LOG_TABLE_NAME),
         ]);
         if (!mounted) return;
-        setTableIds({ task: taskId, review: reviewId, action: actionId, archive: archiveId });
+        setTableIds({
+          task: taskId,
+          review: reviewId,
+          action: actionId,
+          archive: archiveId,
+          ...(automationLogId ? { automation_log: automationLogId } : {}),
+        });
         setSelection(await bitable.base.getSelection());
         const off = bitable.base.onSelectionChange(({ data }) => setSelection(data));
         return off;
@@ -738,6 +820,7 @@ export default function BitableWorkflowPlugin() {
       setReview(null);
       setActions([]);
       setArchives([]);
+      setAutomationLogs([]);
       setLive(null);
       setResolutionDebug(null);
       setSelectedRecordSnapshot(null);
@@ -752,6 +835,7 @@ export default function BitableWorkflowPlugin() {
       setReview(null);
       setActions([]);
       setArchives([]);
+      setAutomationLogs([]);
       setLive(null);
       setResolutionDebug(null);
       setSelectedRecordSnapshot(null);
@@ -791,6 +875,7 @@ export default function BitableWorkflowPlugin() {
         const seededReview = nextSourceKind === "review" && matchesRelatedRecord(selectedRecord, relationLocator) ? [selectedRecord] : [];
         const seededActions = nextSourceKind === "action" && matchesRelatedRecord(selectedRecord, relationLocator) ? [selectedRecord] : [];
         const seededArchives = nextSourceKind === "archive" && matchesRelatedRecord(selectedRecord, relationLocator) ? [selectedRecord] : [];
+        const seededLogs = nextSourceKind === "log" && matchesRelatedRecord(selectedRecord, relationLocator) ? [selectedRecord] : [];
         const recordIdFilter = relationLocator.taskRecordId
           ? await buildExactTextFilter(tableIds.review, "关联记录ID", relationLocator.taskRecordId)
           : null;
@@ -799,6 +884,9 @@ export default function BitableWorkflowPlugin() {
           : null;
         const archiveRecordIdFilter = relationLocator.taskRecordId
           ? await buildExactTextFilter(tableIds.archive, "关联记录ID", relationLocator.taskRecordId)
+          : null;
+        const logRecordIdFilter = tableIds.automation_log && relationLocator.taskRecordId
+          ? await buildExactTextFilter(tableIds.automation_log, "关联记录ID", relationLocator.taskRecordId)
           : null;
         const reviewTitleFilter = !recordIdFilter && relationLocator.taskTitle
           ? await buildExactTextFilter(tableIds.review, "任务标题", relationLocator.taskTitle)
@@ -809,22 +897,30 @@ export default function BitableWorkflowPlugin() {
         const archiveTitleFilter = !archiveRecordIdFilter && relationLocator.taskTitle
           ? await buildExactTextFilter(tableIds.archive, "任务标题", relationLocator.taskTitle)
           : null;
+        const logTitleFilter = tableIds.automation_log && !logRecordIdFilter && relationLocator.taskTitle
+          ? await buildExactTextFilter(tableIds.automation_log, "任务标题", relationLocator.taskTitle)
+          : null;
 
-        const [reviewMatches, actionMatches, archiveMatches] = await Promise.all([
+        const [reviewMatches, actionMatches, archiveMatches, logMatches] = await Promise.all([
           collectMappedRecords(tableIds.review, (item) => matchesRelatedRecord(item, relationLocator), 1, seededReview, recordIdFilter || reviewTitleFilter || undefined),
           collectMappedRecords(tableIds.action, (item) => matchesRelatedRecord(item, relationLocator), 6, seededActions, actionRecordIdFilter || actionTitleFilter || undefined),
           collectMappedRecords(tableIds.archive, (item) => matchesRelatedRecord(item, relationLocator), 3, seededArchives, archiveRecordIdFilter || archiveTitleFilter || undefined),
+          tableIds.automation_log
+            ? collectMappedRecords(tableIds.automation_log, (item) => matchesRelatedRecord(item, relationLocator), 12, seededLogs, logRecordIdFilter || logTitleFilter || undefined)
+            : Promise.resolve([]),
         ]);
         if (!active) return;
 
         const currentReview = reviewMatches[0] || null;
         const currentActions = actionMatches.slice(0, 6);
         const currentArchives = archiveMatches.slice(0, 3);
+        const currentLogs = logMatches.slice(0, 12);
 
         setTask(currentTask);
         setReview(currentReview);
         setActions(currentActions);
         setArchives(currentArchives);
+        setAutomationLogs(currentLogs);
         setResolutionDebug(buildResolutionDebug(nextSourceKind, selectedRecord, locator, currentTask));
 
         if (currentTask?.recordId && getRuntimeApiKey()) {
@@ -866,6 +962,7 @@ export default function BitableWorkflowPlugin() {
         setError(`加载多维表格记录失败：${String(err)}`);
         setResolutionDebug(null);
         setSelectedRecordSnapshot(null);
+        setAutomationLogs([]);
       } finally {
         if (active) setLoading(false);
       }
@@ -902,16 +999,17 @@ export default function BitableWorkflowPlugin() {
       { label: "评审命中", value: review ? "1 条" : "0 条" },
       { label: "动作命中", value: `${actions.length} 条` },
       { label: "归档命中", value: `${archives.length} 条` },
+      { label: "原生日志", value: `${automationLogs.length} 条` },
     ],
-    [actions.length, archives.length, review],
+    [actions.length, archives.length, automationLogs.length, review],
   );
   const relationSections = useMemo<WorkflowRelationSection[]>(
     () => buildRelationSections(review, actions, archives),
     [actions, archives, review],
   );
   const traceChainItems = useMemo(
-    () => buildTraceChainItems(sourceKind, selectedRecordSnapshot, task, review, actions, archives, resolutionDebug),
-    [actions, archives, resolutionDebug, review, selectedRecordSnapshot, sourceKind, task],
+    () => buildTraceChainItems(sourceKind, selectedRecordSnapshot, task, review, actions, archives, resolutionDebug, automationLogs),
+    [actions, archives, automationLogs, resolutionDebug, review, selectedRecordSnapshot, sourceKind, task],
   );
   const taskSignalItems = useMemo<WorkflowSummaryItem[]>(
     () => [
@@ -934,6 +1032,10 @@ export default function BitableWorkflowPlugin() {
   const agentPipeline = useMemo(
     () => normalizeAgentPipeline(live?.agentPipeline, progress, status, live?.status),
     [live?.agentPipeline, live?.status, progress, status],
+  );
+  const timelineEvents = useMemo(
+    () => mergeTimelineEvents(live?.history, automationLogs),
+    [automationLogs, live?.history],
   );
 
   return (
@@ -987,7 +1089,7 @@ export default function BitableWorkflowPlugin() {
             </div>
           ) : !selection.recordId || sourceKind === "unsupported" ? (
             <div className="mt-6">
-              <EmptyState text="请在「分析任务 / 产出评审 / 交付动作 / 交付结果归档」任一工作流表中选中记录。插件会在右侧面板自动回溯并展示对应任务轨道。" />
+              <EmptyState text="请在「分析任务 / 产出评审 / 交付动作 / 交付结果归档 / 自动化日志」任一工作流表中选中记录。插件会在右侧面板自动回溯并展示对应任务轨道。" />
             </div>
           ) : !task ? (
             <div className="mt-6 grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
@@ -1196,23 +1298,30 @@ export default function BitableWorkflowPlugin() {
                 <div className="mt-5 rounded-[24px] border border-slate-200 bg-white/92 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Live Timeline</div>
-                      <div className="mt-2 text-lg font-semibold text-slate-950">阶段时间线</div>
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Workflow Timeline</div>
+                      <div className="mt-2 text-lg font-semibold text-slate-950">原生阶段时间线</div>
                     </div>
                     <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
-                      最近 {live?.history.length || 0} 条
+                      原生日志 {automationLogs.length} 条
                     </div>
                   </div>
-                  {!live?.history.length ? (
-                    <div className="mt-4 text-sm leading-6 text-slate-500">如果当前任务正在分析中，这里会跟着展示 wave 和交付事件。</div>
+                  {!timelineEvents.length ? (
+                    <div className="mt-4 text-sm leading-6 text-slate-500">任务启动后，这里会优先展示自动化日志表沉淀的 workflow 节点；SSE 在线时会同步补充实时事件。</div>
                   ) : (
                     <div className="mt-4 space-y-3">
-                      {live.history.slice(-6).reverse().map((event) => (
+                      {timelineEvents.map((event) => (
                         <div key={event.key} className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3">
                           <div className="flex items-center justify-between gap-3">
                             <div className="text-sm font-medium text-slate-950">{event.stage}</div>
-                            <div className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${STEP_STATUS_STYLE[event.status]}`}>
-                              {event.status === "done" ? "完成" : event.status === "error" ? "异常" : "推进"}
+                            <div className="flex shrink-0 items-center gap-2">
+                              {event.eventType === "native.log" && (
+                                <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                                  Base
+                                </span>
+                              )}
+                              <div className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${STEP_STATUS_STYLE[event.status]}`}>
+                                {event.status === "done" ? "完成" : event.status === "error" ? "异常" : "推进"}
+                              </div>
                             </div>
                           </div>
                           <div className="mt-2 text-sm leading-6 text-slate-600">{event.detail}</div>
