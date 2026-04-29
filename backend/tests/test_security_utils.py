@@ -229,13 +229,16 @@ def test_sensitive_redaction_handles_nested_data_and_text():
 
     text = redact_sensitive_text(
         "access_token=access-secret app_secret='app-secret' x-api-key=api-key-secret "
-        "Authorization: Bearer bearer-secret"
+        "Authorization: Bearer bearer-secret {'refresh_token': 'refresh-secret'} "
+        '{"app_token": "base-secret"}'
     )
     assert "access-secret" not in text
     assert "app-secret" not in text
     assert "api-key-secret" not in text
     assert "bearer-secret" not in text
-    assert text.count("[REDACTED]") >= 3
+    assert "refresh-secret" not in text
+    assert "base-secret" not in text
+    assert text.count("[REDACTED]") >= 5
 
 
 def test_feishu_http_error_helpers_redact_response_bodies():

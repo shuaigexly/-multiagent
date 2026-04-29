@@ -18,10 +18,10 @@ _SENSITIVE_KEY_TOKENS = (
 )
 
 _KEY_VALUE_RE = re.compile(
-    r"(?P<prefix>\b(?:access_token|refresh_token|app_access_token|tenant_access_token|"
-    r"app_secret|api_key|api-key|x-api-key|x_api_key|apikey|authorization|password|"
-    r"passwd|secret|credential|session)"
-    r"\b\s*[:=]\s*)(?P<quote>['\"]?)(?P<value>[^'\"\s,}\]]+)(?P=quote)",
+    r"(?P<prefix>(?P<key_quote>['\"]?)\b(?:access_token|refresh_token|app_access_token|"
+    r"tenant_access_token|app_token|base_token|app_secret|app-secret|api_key|api-key|"
+    r"x-api-key|x_api_key|apikey|authorization|password|passwd|secret|credential|session)"
+    r"\b(?P=key_quote)\s*[:=]\s*)(?P<value_quote>['\"]?)(?P<value>[^'\"\s,}\]]+)(?P=value_quote)",
     re.IGNORECASE,
 )
 _BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
@@ -69,5 +69,8 @@ def redact_sensitive_data(value: Any, depth: int = 0) -> Any:
 def redact_sensitive_text(value: object, max_chars: int | None = None) -> str:
     text = str(value or "")
     text = _BEARER_RE.sub("Bearer [REDACTED]", text)
-    text = _KEY_VALUE_RE.sub(lambda m: f"{m.group('prefix')}{m.group('quote')}[REDACTED]{m.group('quote')}", text)
+    text = _KEY_VALUE_RE.sub(
+        lambda m: f"{m.group('prefix')}{m.group('value_quote')}[REDACTED]{m.group('value_quote')}",
+        text,
+    )
     return text[:max_chars] if max_chars is not None else text

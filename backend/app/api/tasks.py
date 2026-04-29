@@ -357,8 +357,13 @@ async def _update_task_unless_cancelled(db: AsyncSession, task_id: str, **values
         .where(Task.id == task_id, Task.status != "cancelled")
         .values(**values)
     )
+    if result.rowcount == 0:
+        # Avoid flushing unrelated pending ORM objects (e.g. TaskResult rows) after
+        # a concurrent cancel/delete makes the guarded update miss the task.
+        await db.rollback()
+        return False
     await db.commit()
-    return result.rowcount > 0
+    return True
 
 
 async def _execute_task(

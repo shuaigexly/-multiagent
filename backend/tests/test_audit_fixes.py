@@ -1826,3 +1826,33 @@ async def test_delete_task_rejects_running_task_before_hard_delete():
 
     assert exc_info.value.status_code == 409
     assert db.execute_count == 1
+
+
+@pytest.mark.asyncio
+async def test_update_task_unless_cancelled_rolls_back_on_guard_miss():
+    """任务完成前被并发 cancel/delete 时，guarded update rowcount=0。
+    helper 不能 commit 当前 session，否则此前 add 的 TaskResult 会被 flush 成脏结果。"""
+    from app.api import tasks
+
+    class FakeResult:
+        rowcount = 0
+
+    class FakeDB:
+        def __init__(self):
+            self.commits = 0
+            self.rollbacks = 0
+
+        async def execute(self, _stmt):
+            return FakeResult()
+
+        async def commit(self):
+            self.commits += 1
+
+        async def rollback(self):
+            self.rollbacks += 1
+
+    db = FakeDB()
+
+    assert await tasks._update_task_unless_cancelled(db, "task-1", status="done") is False
+    assert db.commits == 0
+    assert db.rollbacks == 1
