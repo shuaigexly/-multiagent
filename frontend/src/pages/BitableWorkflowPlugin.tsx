@@ -145,7 +145,9 @@ function safeProgress(value: unknown): number {
 
 function formatRelativeTime(value: string): string {
   if (!value) return "刚刚更新";
-  const diff = Date.now() - new Date(value).getTime();
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "刚刚更新";
+  const diff = Date.now() - timestamp;
   const minutes = Math.max(0, Math.round(diff / 60000));
   if (minutes < 1) return "刚刚更新";
   if (minutes < 60) return `${minutes} 分钟前`;

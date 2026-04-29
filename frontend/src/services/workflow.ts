@@ -234,6 +234,12 @@ export interface WorkflowProgressPayload extends Record<string, unknown> {
   workflow_steps?: WorkflowStepSnapshot[];
 }
 
+function describeSseError(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name;
+  if (typeof err === 'string') return err;
+  return 'unknown error';
+}
+
 export function subscribeTaskProgress(
   recordId: string,
   onEvent: (e: ProgressEvent) => void,
@@ -269,7 +275,7 @@ export function subscribeTaskProgress(
       };
     })
     .catch((err) => {
-      console.error('[SSE] token error:', err);
+      if (!closed) console.error(`[SSE] token error: ${describeSseError(err)}`);
     });
 
   return () => {

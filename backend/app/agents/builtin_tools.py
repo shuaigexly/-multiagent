@@ -259,6 +259,10 @@ class _SafeCalcValidator(ast.NodeVisitor):
     _allowed_unary = (ast.UAdd, ast.USub)
     _allowed_compare = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE)
     _blocked_math_calls = {"factorial", "comb", "perm", "prod"}
+    _sequence_builders = {
+        "list", "tuple", "set", "dict", "sorted", "reversed",
+        "range", "zip", "map", "filter", "enumerate",
+    }
     _max_sequence_size = 100_000
 
     def __init__(self) -> None:
@@ -399,10 +403,15 @@ class _SafeCalcValidator(ast.NodeVisitor):
 
     def _validate_repeat(self, maybe_count: ast.AST, repeated: ast.AST) -> None:
         if not isinstance(maybe_count, ast.Constant) or not isinstance(maybe_count.value, int):
+            if self._is_potential_sequence(repeated):
+                raise ValueError("dynamic sequence repeat count is not allowed")
             return
+        repeat_count = abs(maybe_count.value)
         if self._estimate_sequence_size(repeated) is None:
+            if self._is_potential_sequence(repeated) and repeat_count > 10:
+                raise ValueError("repeat count too large")
             return
-        if abs(maybe_count.value) > 10_000:
+        if repeat_count > 10_000:
             raise ValueError("repeat count too large")
 
     def _estimate_sequence_size(self, node: ast.AST) -> int | None:
@@ -423,6 +432,13 @@ class _SafeCalcValidator(ast.NodeVisitor):
             if isinstance(node.right, ast.Constant) and isinstance(node.right.value, int) and left_size is not None:
                 return left_size * abs(node.right.value)
         return None
+
+    def _is_potential_sequence(self, node: ast.AST) -> bool:
+        if self._estimate_sequence_size(node) is not None:
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            return node.func.id in self._sequence_builders
+        return False
 
 
 def _validate_calc_expression(expression: str) -> ast.Expression:

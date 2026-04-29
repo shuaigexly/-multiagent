@@ -5,7 +5,11 @@ export const API_KEY_STORAGE_KEY = 'multiagent-lark.api-key';
 
 export function getRuntimeApiKey(): string {
   if (typeof window === 'undefined') return '';
-  return window.localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+  try {
+    return window.localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
 }
 
 export function attachRuntimeApiKeyHeader(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {

@@ -36,6 +36,10 @@ class EventEmitter:
         event_payload = payload or {}
         async with self._db_lock:
             new_seq = await self._next_sequence()
+            if new_seq is None:
+                await self.db.rollback()
+                logger.info("Skip event emission for inactive task %s", self.task_id)
+                return 0
 
             event = TaskEvent(
                 task_id=self.task_id,
@@ -69,17 +73,20 @@ class EventEmitter:
 
         return new_seq
 
-    async def _next_sequence(self) -> int:
-        """Increment last_sequence using optimistic CAS; retry on concurrent modification."""
+    async def _next_sequence(self) -> int | None:
+        """Increment last_sequence using optimistic CAS; skip cancelled/deleted tasks."""
         for _ in range(5):
             result = await self.db.execute(
-                select(Task.last_sequence).where(Task.id == self.task_id)
+                select(Task.last_sequence, Task.status).where(Task.id == self.task_id)
             )
-            current = result.scalar_one_or_none() or 0
+            row = result.first()
+            if row is None or row.status == "cancelled":
+                return None
+            current = row.last_sequence or 0
             new_seq = current + 1
             update_result = await self.db.execute(
                 update(Task)
-                .where(Task.id == self.task_id, Task.last_sequence == current)
+                .where(Task.id == self.task_id, Task.last_sequence == current, Task.status != "cancelled")
                 .values(last_sequence=new_seq, updated_at=datetime.now(timezone.utc))
             )
             if update_result.rowcount == 1:

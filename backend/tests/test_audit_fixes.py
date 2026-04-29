@@ -1856,3 +1856,95 @@ async def test_update_task_unless_cancelled_rolls_back_on_guard_miss():
     assert await tasks._update_task_unless_cancelled(db, "task-1", status="done") is False
     assert db.commits == 0
     assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_event_emitter_skips_cancelled_or_deleted_task_without_writing_events():
+    """取消/删除后的后台 agent 事件不能再落库，避免取消任务继续显示后续步骤。"""
+    from app.core.event_emitter import EventEmitter
+
+    class FakeRow:
+        last_sequence = 3
+        status = "cancelled"
+
+    class FakeResult:
+        rowcount = 0
+
+        def __init__(self, row):
+            self._row = row
+
+        def first(self):
+            return self._row
+
+    class FakeDB:
+        def __init__(self, row):
+            self.row = row
+            self.added = []
+            self.commits = 0
+            self.rollbacks = 0
+
+        async def execute(self, _stmt):
+            return FakeResult(self.row)
+
+        def add(self, item):
+            self.added.append(item)
+
+        async def commit(self):
+            self.commits += 1
+
+        async def rollback(self):
+            self.rollbacks += 1
+
+    for row in (FakeRow(), None):
+        db = FakeDB(row)
+        emitter = EventEmitter(task_id="task-1", db=db)
+
+        assert await emitter.emit("module.completed", agent_id="agent", agent_name="Agent") == 0
+        assert db.added == []
+        assert db.commits == 0
+        assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_event_emitter_still_writes_events_for_active_task():
+    from app.core.event_emitter import EventEmitter
+
+    class FakeRow:
+        last_sequence = 7
+        status = "running"
+
+    class FakeSelectResult:
+        def first(self):
+            return FakeRow()
+
+    class FakeUpdateResult:
+        rowcount = 1
+
+    class FakeDB:
+        def __init__(self):
+            self.calls = 0
+            self.added = []
+            self.commits = 0
+            self.rollbacks = 0
+
+        async def execute(self, _stmt):
+            self.calls += 1
+            return FakeSelectResult() if self.calls == 1 else FakeUpdateResult()
+
+        def add(self, item):
+            self.added.append(item)
+
+        async def commit(self):
+            self.commits += 1
+
+        async def rollback(self):
+            self.rollbacks += 1
+
+    db = FakeDB()
+    emitter = EventEmitter(task_id="task-1", db=db)
+
+    assert await emitter.emit("module.completed", agent_id="agent", agent_name="Agent") == 8
+    assert len(db.added) == 1
+    assert db.added[0].sequence == 8
+    assert db.commits == 1
+    assert db.rollbacks == 0

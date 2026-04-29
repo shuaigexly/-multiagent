@@ -60,10 +60,18 @@ export async function testFeishu(
 
 export function setStoredLLMConfigured(configured: boolean): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(LLM_CONFIGURED_STORAGE_KEY, configured ? 'true' : 'false');
+  try {
+    window.localStorage.setItem(LLM_CONFIGURED_STORAGE_KEY, configured ? 'true' : 'false');
+  } catch {
+    // Embedded containers may block storage; treat it as an optional UI cache.
+  }
 }
 
 export function isStoredLLMConfigured(): boolean {
   if (typeof window === 'undefined') return false;
-  return window.localStorage.getItem(LLM_CONFIGURED_STORAGE_KEY) === 'true';
+  try {
+    return window.localStorage.getItem(LLM_CONFIGURED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
 }

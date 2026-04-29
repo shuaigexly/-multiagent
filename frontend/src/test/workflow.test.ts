@@ -40,6 +40,24 @@ describe('workflow SSE subscription', () => {
     vi.unstubAllGlobals();
   });
 
+  it('does not log raw token request errors that may contain API headers', async () => {
+    const tokenError = Object.assign(new Error('token request failed'), {
+      config: { headers: { 'X-API-Key': 'runtime-secret' } },
+    });
+    const postSpy = vi.spyOn(api, 'post').mockRejectedValue(tokenError);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const unsubscribe = subscribeTaskProgress('rec_123', vi.fn());
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1));
+
+    expect(errorSpy.mock.calls[0]).toEqual(['[SSE] token error: token request failed']);
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('runtime-secret');
+
+    unsubscribe();
+    postSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
   it('encodes task ids before creating task event streams', async () => {
     const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { token: 'task token/with symbols' } });
     const EventSourceMock = vi.fn().mockImplementation(() => ({ close: vi.fn() }));

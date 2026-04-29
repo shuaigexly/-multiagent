@@ -60,6 +60,18 @@ async def test_python_calc_blocks_nested_large_repetition():
 
 
 @pytest.mark.asyncio
+async def test_python_calc_blocks_dynamic_sequence_repetition():
+    from app.agents.tools import dispatch_tool
+
+    _reload_builtin_tools()
+
+    result = await dispatch_tool("python_calc", {"expression": "list(range(10000)) * 1000"})
+
+    assert result.startswith("ERROR:")
+    assert "unsafe expression" in result
+
+
+@pytest.mark.asyncio
 async def test_python_calc_blocks_expensive_math_calls():
     from app.agents.tools import dispatch_tool
 
