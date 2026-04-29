@@ -1,6 +1,9 @@
 import asyncio
+import logging
+import sys
 from unittest.mock import AsyncMock, patch
 
+import httpcore
 import pytest
 from cryptography.fernet import Fernet
 
@@ -54,6 +57,47 @@ def test_public_url_validation_allows_matching_allowlist(monkeypatch):
     assert url_safety.validate_public_http_url("https://assets.example.com/report") == (
         "https://assets.example.com/report"
     )
+
+
+def test_public_url_validation_rejects_confusing_urls():
+    from app.core.url_safety import UnsafeURL, validate_public_http_url
+
+    with pytest.raises(UnsafeURL, match="control characters"):
+        validate_public_http_url("https://example.com/path\nnext")
+    with pytest.raises(UnsafeURL, match="too long"):
+        validate_public_http_url(f"https://example.com/{'x' * 2100}")
+    with pytest.raises(UnsafeURL, match="credentials"):
+        validate_public_http_url("https://user:pass@example.com/path")
+    with pytest.raises(UnsafeURL, match="port"):
+        validate_public_http_url("https://example.com:99999/path")
+
+
+@pytest.mark.asyncio
+async def test_pinned_network_backend_uses_validated_ip():
+    from app.core.url_safety import _PinnedNetworkBackend
+
+    calls = []
+
+    class DummyBackend:
+        async def connect_tcp(self, **kwargs):
+            calls.append(kwargs)
+            return object()
+
+        async def sleep(self, _seconds):
+            return None
+
+    backend = _PinnedNetworkBackend("example.com", "93.184.216.34", backend=DummyBackend())
+
+    await backend.connect_tcp(host="example.com", port=443, timeout=1.0)
+
+    assert calls[0]["host"] == "93.184.216.34"
+    assert calls[0]["port"] == 443
+
+    with pytest.raises(httpcore.ConnectError):
+        await _PinnedNetworkBackend("example.com", "127.0.0.1", backend=DummyBackend()).connect_tcp(
+            host="example.com",
+            port=443,
+        )
 
 
 @pytest.mark.asyncio
@@ -275,6 +319,41 @@ def test_sensitive_redaction_handles_nested_data_and_text():
     assert "doc-secret" not in feishu_resource_text
     assert "sheet-secret" not in feishu_resource_text
     assert "file-secret" not in feishu_resource_text
+
+
+def test_logging_formatters_redact_messages_extra_and_tracebacks():
+    from app.core.observability import _ContextFilter, _JsonFormatter, _PlainFormatter
+
+    try:
+        raise RuntimeError("refresh_token=refresh-secret Authorization: Bearer bearer-secret")
+    except RuntimeError:
+        exc_info = sys.exc_info()
+
+    record = logging.LogRecord(
+        name="audit-test",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="failed with access_token=%s",
+        args=("access-secret",),
+        exc_info=exc_info,
+    )
+    record.payload = {
+        "api_key": "api-key-secret",
+        "url": "https://assets.example.test/report?token=query-secret",
+    }
+    _ContextFilter().filter(record)
+
+    rendered_json = _JsonFormatter().format(record)
+    rendered_plain = _PlainFormatter().format(record)
+    combined = rendered_json + "\n" + rendered_plain
+
+    assert "access-secret" not in combined
+    assert "refresh-secret" not in combined
+    assert "bearer-secret" not in combined
+    assert "api-key-secret" not in combined
+    assert "query-secret" not in combined
+    assert "[REDACTED]" in combined
 
 
 def test_feishu_http_error_helpers_redact_response_bodies():

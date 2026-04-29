@@ -26,6 +26,8 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
+from app.core.redaction import redact_sensitive_data, redact_sensitive_text
+
 # Context variables — 跨 await 边界传播
 _correlation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "correlation_id", default=None
@@ -120,7 +122,7 @@ class _JsonFormatter(logging.Formatter):
             "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%f%z") or time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "level": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
+            "msg": redact_sensitive_text(record.getMessage()),
             "correlation_id": getattr(record, "correlation_id", "-"),
             "task_id": getattr(record, "task_id", "-"),
             "agent_id": getattr(record, "agent_id", "-"),
@@ -136,13 +138,14 @@ class _JsonFormatter(logging.Formatter):
                 "correlation_id", "task_id", "agent_id", "tenant_id",
             }:
                 continue
+            val = redact_sensitive_data(val)
             try:
                 json.dumps(val, default=str)
                 base[key] = val
             except Exception:
-                base[key] = repr(val)
+                base[key] = redact_sensitive_text(repr(val))
         if record.exc_info:
-            base["exc"] = self.formatException(record.exc_info)
+            base["exc"] = redact_sensitive_text(self.formatException(record.exc_info))
         return json.dumps(base, ensure_ascii=False, default=str)
 
 
@@ -154,6 +157,12 @@ class _PlainFormatter(logging.Formatter):
             fmt="%(asctime)s [%(levelname)s] %(name)s [cid=%(correlation_id)s task=%(task_id)s agent=%(agent_id)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_sensitive_text(super().format(record))
+
+    def formatException(self, ei) -> str:
+        return redact_sensitive_text(super().formatException(ei))
 
 
 def configure_logging() -> None:
