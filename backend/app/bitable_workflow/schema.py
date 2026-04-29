@@ -176,6 +176,7 @@ ACTION_STATUS_OPTIONS = [
 ]
 
 AUTOMATION_LOG_STATUS_OPTIONS = [
+    {"name": "执行中", "color": 3},
     {"name": "已完成", "color": 4},
     {"name": "已跳过", "color": 0},
     {"name": "待补完", "color": 2},

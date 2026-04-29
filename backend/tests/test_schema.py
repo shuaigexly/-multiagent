@@ -146,6 +146,11 @@ class TestFieldCompleteness:
         assert "执行状态" in names
         assert "日志摘要" in names
 
+    def test_automation_log_status_supports_running_agent_nodes(self):
+        status_field = next(f for f in AUTOMATION_LOG_FIELDS if f["field_name"] == "执行状态")
+        option_names = {option["name"] for option in status_field["options"]}
+        assert "执行中" in option_names
+
     def test_review_history_required_columns(self):
         names = {f["field_name"] for f in REVIEW_HISTORY_FIELDS}
         assert "复核标题" in names

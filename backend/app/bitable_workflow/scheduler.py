@@ -1358,11 +1358,18 @@ async def _claim_pending_record(
     且让上层直接拿到 fields（含 分析维度/背景说明/数据源/任务图像）给 pipeline。
     """
     claim_stage = f"🔒 已领取：{owner}"
-    await bitable_ops.update_record(
+    claim_fields = {
+        "状态": Status.ANALYZING,
+        "当前阶段": claim_stage,
+        "进度": 0.01,
+        "自动化执行状态": "执行中",
+    }
+    await bitable_ops.update_record_optional_fields(
         app_token,
         task_tid,
         record_id,
-        {"状态": Status.ANALYZING, "当前阶段": claim_stage, "进度": 0.01},
+        claim_fields,
+        optional_keys=["自动化执行状态"],
     )
     claimed = await bitable_ops.get_record(app_token, task_tid, record_id)
     # v8.6.19：飞书 get_record 把 text/title 返回为富文本数组 [{"text":...,"type":"text"}]
@@ -1475,7 +1482,105 @@ async def _write_automation_log(
             optional_keys=["工作流路由", "触发来源", "详细结果", "关联记录ID"],
         )
     except Exception as exc:
+        # 老 Base 里的「执行状态」单选可能还没有新增的「执行中」选项。
+        # 降级成已有的「待补完」，避免 workflow 原生日志因为选项漂移整条丢失。
+        if status == "执行中":
+            fallback_fields = dict(fields)
+            fallback_fields["执行状态"] = "待补完"
+            fallback_fields["详细结果"] = truncate_with_marker(
+                "\n".join(
+                    item
+                    for item in [
+                        detail,
+                        "原执行状态：执行中",
+                        f"降级原因：{redact_sensitive_text(exc, max_chars=220)}",
+                    ]
+                    if item
+                ),
+                1800,
+                "\n...[已截断]",
+            )
+            try:
+                await bitable_ops.create_record_optional_fields(
+                    app_token,
+                    automation_log_tid,
+                    fallback_fields,
+                    optional_keys=["工作流路由", "触发来源", "详细结果", "关联记录ID"],
+                )
+                return
+            except Exception as fallback_exc:
+                logger.warning(
+                    "write automation log fallback failed task=%s node=%s: %s",
+                    task_title,
+                    node_name,
+                    fallback_exc,
+                )
+                return
         logger.warning("write automation log failed task=%s node=%s: %s", task_title, node_name, exc)
+
+
+def _agent_event_node_name(event: dict) -> str:
+    wave = str(event.get("wave") or "").strip()
+    agent_name = str(event.get("agent_name") or event.get("agent_id") or "未知Agent").strip()
+    return f"{wave} · {agent_name}" if wave else agent_name
+
+
+def _agent_event_log_status(event_type: str) -> str:
+    if event_type == "agent.started":
+        return "执行中"
+    if event_type == "agent.completed":
+        return "已完成"
+    if event_type == "agent.failed":
+        return "执行失败"
+    return "待补完"
+
+
+def _agent_event_summary(event: dict) -> str:
+    event_type = str(event.get("event_type") or "").strip()
+    agent_name = str(event.get("agent_name") or event.get("agent_id") or "未知Agent").strip()
+    dependency = str(event.get("dependency") or "").strip()
+    summary = _compact_step_note(event.get("summary"), 260)
+    reason = _compact_step_note(event.get("reason"), 260)
+    if event_type == "agent.started":
+        suffix = f"，依赖：{dependency}" if dependency else ""
+        return f"{agent_name} 已进入分析节点{suffix}"
+    if event_type == "agent.completed":
+        return f"{agent_name} 已完成分析" + (f"：{summary}" if summary else "")
+    if event_type == "agent.failed":
+        return f"{agent_name} 分析异常" + (f"：{reason or summary}" if (reason or summary) else "")
+    return f"{agent_name} 节点事件：{event_type or 'unknown'}"
+
+
+def _agent_event_detail(event: dict) -> str:
+    def _line(label: str, value: object) -> str:
+        if value is None or value == "":
+            return ""
+        return f"{label}：{value}"
+
+    duration_ms = event.get("duration_ms")
+    duration = ""
+    if duration_ms is not None:
+        try:
+            duration = f"{int(duration_ms)}ms"
+        except (TypeError, ValueError):
+            duration = str(duration_ms)
+
+    lines = [
+        _line("事件类型", event.get("event_type")),
+        _line("Agent ID", event.get("agent_id")),
+        _line("Agent 名称", event.get("agent_name")),
+        _line("Wave", event.get("wave")),
+        _line("依赖", event.get("dependency")),
+        _line("耗时", duration),
+        _line("置信度", event.get("confidence")),
+        _line("证据条数", event.get("evidence_count")),
+        _line("行动项数", event.get("action_count")),
+        _line("Fallback", event.get("fallback")),
+        _line("失败标记", event.get("failed")),
+        _line("摘要", _compact_step_note(event.get("summary"), 500)),
+        _line("异常原因", _compact_step_note(event.get("reason"), 500)),
+    ]
+    return "\n".join(line for line in lines if line)
 
 
 async def _list_related_rows(
@@ -2580,9 +2685,33 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             fields = claimed_record.get("fields") or fields
             fields = await _hydrate_task_dataset_reference(app_token, datasource_tid, fields)
 
-            await bitable_ops.update_record(
-                app_token, task_tid, rid,
-                {"当前阶段": "▶ Wave1 启动：五岗并行分析中…", "进度": 0.1}
+            await bitable_ops.update_record_optional_fields(
+                app_token,
+                task_tid,
+                rid,
+                {
+                    "当前阶段": "▶ Wave1 启动：五岗并行分析中…",
+                    "进度": 0.1,
+                    "自动化执行状态": "执行中",
+                },
+                optional_keys=["自动化执行状态"],
+            )
+            await _write_automation_log(
+                app_token,
+                automation_log_tid,
+                task_title,
+                "任务领取与编排",
+                "执行中",
+                trigger="task.started",
+                summary="任务已领取，进入七岗 DAG 分析 workflow",
+                detail="\n".join(
+                    [
+                        "节点：任务领取与编排",
+                        "状态：Wave1 启动，五岗并行分析中",
+                        f"记录ID：{rid}",
+                    ]
+                ),
+                record_id=rid,
             )
 
             from app.bitable_workflow import progress_broker
@@ -2649,6 +2778,31 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     else f"{wave} · {agent_name} 分析完成"
                     if event_type == "agent.completed"
                     else f"{wave} · {agent_name} 分析异常"
+                )
+                try:
+                    await bitable_ops.update_record_optional_fields(
+                        app_token,
+                        task_tid,
+                        rid,
+                        {
+                            "当前阶段": stage,
+                            "进度": current_progress,
+                            "自动化执行状态": "执行中",
+                        },
+                        optional_keys=["自动化执行状态"],
+                    )
+                except Exception as stage_exc:
+                    logger.debug("agent event task stage update skipped: %s", stage_exc)
+                await _write_automation_log(
+                    app_token,
+                    automation_log_tid,
+                    task_title,
+                    _agent_event_node_name(event),
+                    _agent_event_log_status(event_type),
+                    trigger=event_type,
+                    summary=_agent_event_summary(event),
+                    detail=_agent_event_detail(event),
+                    record_id=rid,
                 )
                 payload = {
                     **event,

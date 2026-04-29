@@ -817,6 +817,34 @@ class TestAutomationLog:
         assert fields["执行状态"] == "已完成"
         assert fields["工作流路由"] == "直接汇报"
 
+    @pytest.mark.asyncio
+    async def test_write_automation_log_falls_back_running_status_for_old_base(self):
+        mock_create = AsyncMock(side_effect=[RuntimeError("invalid option"), "rec_log"])
+        with patch(
+            "app.bitable_workflow.scheduler.bitable_ops.create_record_optional_fields",
+            new=mock_create,
+        ):
+            from app.bitable_workflow.scheduler import _write_automation_log
+
+            await _write_automation_log(
+                "app_token",
+                "tbl_automation_log",
+                "增长复盘任务",
+                "Wave 1 · 数据分析师",
+                "执行中",
+                trigger="agent.started",
+                summary="数据分析师已进入分析节点",
+                detail="事件类型：agent.started",
+                record_id="rec_task",
+            )
+
+        assert mock_create.await_count == 2
+        first_fields = mock_create.await_args_list[0].args[2]
+        fallback_fields = mock_create.await_args_list[1].args[2]
+        assert first_fields["执行状态"] == "执行中"
+        assert fallback_fields["执行状态"] == "待补完"
+        assert "原执行状态：执行中" in fallback_fields["详细结果"]
+
 
 class TestTemplateCenter:
     @pytest.mark.asyncio
@@ -1280,7 +1308,16 @@ class TestRunCycleActionRouting:
         assert processed == 1
         assert mock_review_history.await_args.args[1] == "tbl_review_history"
         assert mock_archive.await_args.args[1] == "tbl_archive"
-        assert mock_automation_log.await_count >= 2
+        assert mock_automation_log.await_count >= 4
+        agent_log_calls = [
+            call_item
+            for call_item in mock_automation_log.await_args_list
+            if call_item.args[3] == "Wave 1 · 数据分析师"
+        ]
+        assert [call_item.args[4] for call_item in agent_log_calls[:2]] == ["执行中", "已完成"]
+        assert agent_log_calls[0].kwargs["trigger"] == "agent.started"
+        assert agent_log_calls[1].kwargs["trigger"] == "agent.completed"
+        assert "渠道转化下滑" in agent_log_calls[1].kwargs["summary"]
         assert mock_send.await_args.kwargs["action_tid"] == "tbl_action"
         assert mock_send.await_args.kwargs["automation_log_tid"] == "tbl_automation_log"
         assert mock_send.await_args.kwargs["route"] == "补数复核"
