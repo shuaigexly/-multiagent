@@ -13,6 +13,7 @@ import {
   Sparkles,
   TimerReset,
   Zap,
+  type LucideIcon,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,7 @@ import BitableAgentLauncher from "./BitableAgentLauncher";
 
 type StepStatus = "done" | "running" | "pending" | "error";
 type TimelineFilter = "all" | "base" | "sse" | "error";
+type HealthTone = "success" | "running" | "warning" | "error" | "neutral";
 
 interface WorkflowStepDetail {
   key: string;
@@ -87,6 +89,15 @@ interface LiveState {
 interface BitableRecordValue {
   recordId?: string;
   fields: Record<string, unknown>;
+}
+
+interface RuntimeHealthItem {
+  key: string;
+  label: string;
+  value: string;
+  caption: string;
+  tone: HealthTone;
+  icon: LucideIcon;
 }
 
 const TASK_TABLE_NAME = "分析任务";
@@ -149,6 +160,14 @@ const RESOLUTION_STYLE: Record<WorkflowResolutionDebug["resolutionMode"], string
   "related-record-id": "border-sky-200 bg-sky-50 text-sky-700",
   "task-title-fallback": "border-amber-200 bg-amber-50 text-amber-700",
   unresolved: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+const HEALTH_TONE_STYLE: Record<HealthTone, string> = {
+  success: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  running: "border-sky-200 bg-sky-50 text-sky-700",
+  warning: "border-amber-200 bg-amber-50 text-amber-700",
+  error: "border-rose-200 bg-rose-50 text-rose-700",
+  neutral: "border-slate-200 bg-slate-50 text-slate-600",
 };
 
 function textValue(value: unknown): string {
@@ -524,6 +543,87 @@ function formatDurationMs(value: number | null | undefined): string {
   return `${(value / 1000).toFixed(1)}s`;
 }
 
+function buildRuntimeHealthItems({
+  sourceLabel,
+  resolutionDebug,
+  streamStatus,
+  streamMessage,
+  automationLogCount,
+  agents,
+  activeStep,
+}: {
+  sourceLabel: string;
+  resolutionDebug: WorkflowResolutionDebug | null;
+  streamStatus?: WorkflowStreamStatus;
+  streamMessage?: string;
+  automationLogCount: number;
+  agents: AgentPipelineSnapshot[];
+  activeStep: WorkflowStepDetail | null;
+}): RuntimeHealthItem[] {
+  const errorAgents = agents.filter((agent) => agent.status === "error").length;
+  const runningAgents = agents.filter((agent) => agent.status === "running").length;
+  const doneAgents = agents.filter((agent) => agent.status === "done").length;
+  const sourceTone: HealthTone =
+    resolutionDebug?.resolutionMode === "unresolved"
+      ? "error"
+      : resolutionDebug?.issues.length
+        ? "warning"
+        : "success";
+  const streamTone: HealthTone =
+    streamStatus === "connected"
+      ? "success"
+      : streamStatus === "connecting"
+        ? "running"
+        : streamStatus === "error"
+          ? "warning"
+          : streamStatus === "closed"
+            ? "neutral"
+            : "warning";
+  const agentTone: HealthTone =
+    errorAgents > 0
+      ? "error"
+      : runningAgents > 0
+        ? "running"
+        : doneAgents >= agents.length
+          ? "success"
+          : "neutral";
+
+  return [
+    {
+      key: "source",
+      label: "来源绑定",
+      value: sourceLabel,
+      caption: resolutionDebug?.resolutionLabel || "等待记录定位",
+      tone: sourceTone,
+      icon: GitBranch,
+    },
+    {
+      key: "stream",
+      label: "实时流",
+      value: streamStatus ? STREAM_STATUS_LABEL[streamStatus] : "仅 Base",
+      caption: streamMessage || "以多维表格沉淀状态为准",
+      tone: streamTone,
+      icon: Radio,
+    },
+    {
+      key: "logs",
+      label: "原生日志",
+      value: `${automationLogCount} 条`,
+      caption: automationLogCount > 0 ? "自动化日志表已沉淀事件" : "等待 workflow 节点写入",
+      tone: automationLogCount > 0 ? "success" : "warning",
+      icon: Activity,
+    },
+    {
+      key: "agents",
+      label: "Agent 状态",
+      value: errorAgents > 0 ? `${errorAgents} 异常` : runningAgents > 0 ? `${runningAgents} 运行中` : `${doneAgents}/${agents.length} 完成`,
+      caption: activeStep?.title || "等待调度",
+      tone: agentTone,
+      icon: BrainCircuit,
+    },
+  ];
+}
+
 function WorkflowCommandBar({
   title,
   sourceLabel,
@@ -591,6 +691,27 @@ function WorkflowCommandBar({
           ))}
         </div>
       </div>
+    </section>
+  );
+}
+
+function RuntimeHealthStrip({ items }: { items: RuntimeHealthItem[] }) {
+  return (
+    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {items.map((item) => (
+        <div key={item.key} className={`rounded-xl border p-3 shadow-sm ${HEALTH_TONE_STYLE[item.tone]}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] uppercase tracking-[0.16em] opacity-70">{item.label}</div>
+              <div className="mt-1 truncate text-base font-semibold">{item.value}</div>
+            </div>
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/70">
+              <item.icon className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="mt-2 line-clamp-2 text-xs leading-5 opacity-85">{item.caption}</div>
+        </div>
+      ))}
     </section>
   );
 }
@@ -961,14 +1082,19 @@ function WorkflowTimelineCard({
   filter,
   onFilterChange,
   automationLogCount,
+  selectedEvent,
+  onSelectEvent,
 }: {
   events: LiveStepEvent[];
   filteredEvents: LiveStepEvent[];
   filter: TimelineFilter;
   onFilterChange: (filter: TimelineFilter) => void;
   automationLogCount: number;
+  selectedEvent: LiveStepEvent | null;
+  onSelectEvent: (eventKey: string) => void;
 }) {
   const counts = countTimelineEvents(events);
+  const selectedIsNative = selectedEvent?.eventType === "native.log";
   const emptyText = events.length
     ? "当前筛选条件下暂无事件。"
     : "任务启动后，这里会优先展示自动化日志表沉淀的 workflow 节点；SSE 在线时会同步补充实时事件。";
@@ -1006,46 +1132,89 @@ function WorkflowTimelineCard({
       {!filteredEvents.length ? (
         <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50/80 px-3 py-4 text-sm leading-6 text-slate-500">{emptyText}</div>
       ) : (
-        <div className="mt-4 max-h-[440px] space-y-3 overflow-y-auto pr-1">
-          {filteredEvents.map((event, index) => {
-            const isNative = event.eventType === "native.log";
-            const sourceLabel = isNative ? "Base" : "SSE";
-            return (
-              <div key={event.key} className="relative pl-7">
-                {index < filteredEvents.length - 1 && <div className="absolute left-[6px] top-5 h-[calc(100%+0.75rem)] w-px bg-slate-200" />}
-                <div
-                  className={`absolute left-0 top-3 h-3 w-3 rounded-full border-2 ${
-                    event.status === "error"
-                      ? "border-rose-500 bg-rose-100"
-                      : isNative
-                        ? "border-emerald-500 bg-emerald-100"
-                        : "border-sky-500 bg-sky-100"
-                  }`}
-                />
-                <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-slate-950">{event.stage}</div>
-                      <div className="mt-1 line-clamp-2 text-sm leading-6 text-slate-600">{event.detail}</div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${isNative ? "border-emerald-200 bg-white text-emerald-700" : "border-sky-200 bg-white text-sky-700"}`}>
-                        {sourceLabel}
-                      </span>
-                      <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${STEP_STATUS_STYLE[event.status]}`}>
-                        {event.status === "done" ? "完成" : event.status === "error" ? "异常" : "推进"}
-                      </span>
-                    </div>
+        <>
+          {selectedEvent && (
+            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${selectedIsNative ? "border-emerald-200 bg-white text-emerald-700" : "border-sky-200 bg-white text-sky-700"}`}>
+                      {selectedIsNative ? "Base" : "SSE"}
+                    </span>
+                    <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${STEP_STATUS_STYLE[selectedEvent.status]}`}>
+                      {selectedEvent.status === "done" ? "完成" : selectedEvent.status === "error" ? "异常" : "推进"}
+                    </span>
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                    <span>{formatRelativeTime(event.updatedAt)}</span>
-                    <span>{formatDateValue(event.updatedAt)}</span>
-                  </div>
+                  <div className="mt-2 text-sm font-semibold text-slate-950">{selectedEvent.stage}</div>
+                  <div className="mt-2 text-sm leading-6 text-slate-700">{selectedEvent.detail}</div>
+                </div>
+                <div className="text-right text-xs leading-5 text-slate-500">
+                  <div>{formatRelativeTime(selectedEvent.updatedAt)}</div>
+                  <div>{formatDateValue(selectedEvent.updatedAt)}</div>
                 </div>
               </div>
-            );
-          })}
-        </div>
+              <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+                <div className="rounded-md border border-white bg-white/80 px-3 py-2">
+                  <span className="text-slate-400">事件类型</span>
+                  <span className="ml-2 font-medium text-slate-700">{selectedEvent.eventType}</span>
+                </div>
+                <div className="rounded-md border border-white bg-white/80 px-3 py-2">
+                  <span className="text-slate-400">更新时间</span>
+                  <span className="ml-2 font-medium text-slate-700">{formatDateValue(selectedEvent.updatedAt)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-4 max-h-[440px] space-y-3 overflow-y-auto pr-1">
+            {filteredEvents.map((event, index) => {
+              const isNative = event.eventType === "native.log";
+              const sourceLabel = isNative ? "Base" : "SSE";
+              const isSelected = event.key === selectedEvent?.key;
+              return (
+                <div key={event.key} className="relative pl-7">
+                  {index < filteredEvents.length - 1 && <div className="absolute left-[6px] top-5 h-[calc(100%+0.75rem)] w-px bg-slate-200" />}
+                  <div
+                    className={`absolute left-0 top-3 h-3 w-3 rounded-full border-2 ${
+                      event.status === "error"
+                        ? "border-rose-500 bg-rose-100"
+                        : isNative
+                          ? "border-emerald-500 bg-emerald-100"
+                          : "border-sky-500 bg-sky-100"
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={() => onSelectEvent(event.key)}
+                    className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                      isSelected ? "border-sky-300 bg-white shadow-sm" : "border-slate-200 bg-slate-50/80 hover:border-slate-300 hover:bg-white"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-950">{event.stage}</div>
+                        <div className="mt-1 line-clamp-2 text-sm leading-6 text-slate-600">{event.detail}</div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${isNative ? "border-emerald-200 bg-white text-emerald-700" : "border-sky-200 bg-white text-sky-700"}`}>
+                          {sourceLabel}
+                        </span>
+                        <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${STEP_STATUS_STYLE[event.status]}`}>
+                          {event.status === "done" ? "完成" : event.status === "error" ? "异常" : "推进"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                      <span>{formatRelativeTime(event.updatedAt)}</span>
+                      <span>{formatDateValue(event.updatedAt)}</span>
+                    </div>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );
@@ -1106,6 +1275,7 @@ export default function BitableWorkflowPlugin() {
   const [live, setLive] = useState<LiveState | null>(null);
   const [selectedAgentKey, setSelectedAgentKey] = useState("data_analyst");
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
+  const [selectedTimelineEventKey, setSelectedTimelineEventKey] = useState("");
   const [resolutionDebug, setResolutionDebug] = useState<WorkflowResolutionDebug | null>(null);
   const [selectedRecordSnapshot, setSelectedRecordSnapshot] = useState<TaskSnapshot | null>(null);
   const unsubscribeRef = useRef<null | (() => void)>(null);
@@ -1495,6 +1665,10 @@ export default function BitableWorkflowPlugin() {
     () => filterTimelineEvents(timelineEvents, timelineFilter),
     [timelineEvents, timelineFilter],
   );
+  const selectedTimelineEvent = useMemo(
+    () => filteredTimelineEvents.find((event) => event.key === selectedTimelineEventKey) || filteredTimelineEvents[0] || null,
+    [filteredTimelineEvents, selectedTimelineEventKey],
+  );
   const selectedAgent = useMemo(
     () =>
       agentPipeline.find((agent) => agent.key === selectedAgentKey) ||
@@ -1503,6 +1677,19 @@ export default function BitableWorkflowPlugin() {
       agentPipeline[0] ||
       null,
     [agentPipeline, selectedAgentKey],
+  );
+  const runtimeHealthItems = useMemo(
+    () =>
+      buildRuntimeHealthItems({
+        sourceLabel,
+        resolutionDebug,
+        streamStatus: live?.streamStatus,
+        streamMessage: live?.streamMessage,
+        automationLogCount: automationLogs.length,
+        agents: agentPipeline,
+        activeStep,
+      }),
+    [activeStep, agentPipeline, automationLogs.length, live?.streamMessage, live?.streamStatus, resolutionDebug, sourceLabel],
   );
 
   return (
@@ -1606,6 +1793,9 @@ export default function BitableWorkflowPlugin() {
                   streamStatus={live?.streamStatus}
                 />
               </div>
+              <div className="mt-3">
+                <RuntimeHealthStrip items={runtimeHealthItems} />
+              </div>
               <div className="mt-5 grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
                 <section className="space-y-6">
                   <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1679,6 +1869,8 @@ export default function BitableWorkflowPlugin() {
                     filter={timelineFilter}
                     onFilterChange={setTimelineFilter}
                     automationLogCount={automationLogs.length}
+                    selectedEvent={selectedTimelineEvent}
+                    onSelectEvent={setSelectedTimelineEventKey}
                   />
                 </section>
               </div>
