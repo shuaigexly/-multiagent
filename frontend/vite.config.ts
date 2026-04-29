@@ -82,7 +82,15 @@ export default defineConfig(({ mode }) => {
   const bitableOnly = mode === "bitable";
   // v8.6.20-r15：GitHub Pages 部署 — 仓库名 `-multiagent` → 资源路径 /-multiagent/
   // PUBLIC_BASE_PATH=/-multiagent/ 由 GitHub Actions workflow 注入；本地 build 默认 "/"
-  const publicBase = process.env.PUBLIC_BASE_PATH || "/";
+  const publicBase = process.env.PUBLIC_BASE_PATH || (bitableOnly ? "./" : "/");
+  const input: Record<string, string> = bitableOnly
+    ? {
+        bitable: path.resolve(__dirname, "bitable.html"),
+      }
+    : {
+        main: path.resolve(__dirname, "index.html"),
+        bitable: path.resolve(__dirname, "bitable.html"),
+      };
 
   return {
     base: publicBase,
@@ -97,14 +105,7 @@ export default defineConfig(({ mode }) => {
     build: {
       chunkSizeWarningLimit: 800,
       rollupOptions: {
-        input: bitableOnly
-          ? {
-              bitable: path.resolve(__dirname, "bitable.html"),
-            }
-          : {
-              main: path.resolve(__dirname, "index.html"),
-              bitable: path.resolve(__dirname, "bitable.html"),
-            },
+        input,
         output: {
           manualChunks(id) {
             return resolveVendorChunk(id);

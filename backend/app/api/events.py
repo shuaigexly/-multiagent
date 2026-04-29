@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.auth import issue_stream_token, require_api_key, verify_stream_token
+from app.core.auth import issue_stream_token, require_api_key, stream_audience_from_request, verify_stream_token
 from app.core.env import get_int_env
 from app.models.database import AsyncSessionLocal, Task, TaskEvent
 
@@ -19,7 +19,7 @@ STREAM_TOKEN_TTL_SECONDS = get_int_env("STREAM_TOKEN_TTL_SECONDS", 60, minimum=1
 
 
 @router.post("/{task_id}/events-token", dependencies=[Depends(require_api_key)])
-async def task_events_token(task_id: str):
+async def task_events_token(task_id: str, request: Request):
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Task.id).where(Task.id == task_id))
         if not result.scalar_one_or_none():
@@ -29,6 +29,7 @@ async def task_events_token(task_id: str):
             subject=task_id,
             purpose="task-events",
             ttl_seconds=STREAM_TOKEN_TTL_SECONDS,
+            audience=stream_audience_from_request(request),
         )
     }
 
@@ -40,7 +41,12 @@ async def task_events(
     token: str = Query(""),
 ):
     """SSE 流：推送任务执行进度事件（业务语言，非技术日志）"""
-    verify_stream_token(token, subject=task_id, purpose="task-events")
+    verify_stream_token(
+        token,
+        subject=task_id,
+        purpose="task-events",
+        audience=stream_audience_from_request(request),
+    )
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Task.id).where(Task.id == task_id))

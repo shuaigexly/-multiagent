@@ -7,7 +7,7 @@ import os
 import time
 from hmac import compare_digest
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from app.core.settings import settings
 
@@ -45,6 +45,13 @@ def _hash_audience(audience: str | None) -> str:
     if not audience:
         return ""
     return hashlib.sha256(audience.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+
+def stream_audience_from_request(request: Request) -> str:
+    """Build a stable, non-secret binding value for short-lived SSE tokens."""
+    client_host = request.client.host if request.client else ""
+    user_agent = (request.headers.get("user-agent") or "")[:200]
+    return f"{client_host}|{user_agent}"
 
 
 def issue_stream_token(subject: str, purpose: str, ttl_seconds: int = 60, *, audience: str | None = None) -> str:

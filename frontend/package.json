@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:bitable": "vite build --mode bitable",
     "build:dev": "vite build --mode development",
-    "build:plugin": "cross-env PUBLIC_BASE_PATH=./ vite build && node package-plugin.mjs",
+    "build:plugin": "vite build --mode bitable && node package-plugin.mjs",
     "login:bitable": "opdev login",
     "whoami:bitable": "opdev whoami",
     "upload:bitable": "opdev upload ./dist",

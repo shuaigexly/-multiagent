@@ -5,16 +5,16 @@
  *
  * 关键要求：
  * - dist/ 根必须含 index.html（入口）—— 我们的 bitable.html 要复制成 index.html
- * - dist/ 根必须含 block.json（含 blockTypeID）
- * - dist/ 根必须含 app.json（含 appId，飞书后台注入）
+ * - dist/ 根必须含 index.json（含 blockTypeID）
+ * - dist/ 根必须含 project.config.json（含 appid / blocks）
  * - 所有资源用相对路径（./assets/...）
  *
  * 用法：
  *   cd frontend
- *   PUBLIC_BASE_PATH=./ npm run build    # 相对路径产物
- *   node package-plugin.mjs              # 输出 lark-multiagent-plugin.zip
+ *   npm run build:plugin                 # 输出 lark-multiagent-plugin.zip
  */
-import { createWriteStream, existsSync, copyFileSync } from "node:fs";
+import { createWriteStream, existsSync, copyFileSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,15 +45,42 @@ if (existsSync(BITABLE_HTML)) {
   process.exit(1);
 }
 
-// 用 archiver（如果没装则降级到内置 zlib + 简易 zip）
+const indexHtml = readFileSync(INDEX_HTML, "utf8");
+if (/\b(?:src|href)=["']\/(?!\/)/.test(indexHtml)) {
+  console.error("✗ dist/index.html 含绝对资源路径。请用 npm run build:plugin 或 vite --mode bitable 生成相对路径产物。");
+  process.exit(1);
+}
+
+function packageWithSystemZip() {
+  if (existsSync(OUT_ZIP)) {
+    unlinkSync(OUT_ZIP);
+  }
+  execFileSync("zip", ["-qr", OUT_ZIP, "."], { cwd: DIST, stdio: "inherit" });
+  const sizeKb = (statSync(OUT_ZIP).size / 1024).toFixed(1);
+  console.log(`\n✓ 打包成功`);
+  console.log(`  路径: ${OUT_ZIP}`);
+  console.log(`  大小: ${sizeKb} KB`);
+}
+
+// 用 archiver；若未安装则降级到系统 zip，不在打包脚本里临时 npm install。
 let archiver;
 try {
   archiver = (await import("archiver")).default;
 } catch {
-  console.log("ℹ archiver 未安装，npm install archiver --no-save 中…");
-  const { execSync } = await import("node:child_process");
-  execSync("npm install archiver --no-save --no-audit --no-fund", { stdio: "inherit", cwd: __dirname });
-  archiver = (await import("archiver")).default;
+  try {
+    console.log("ℹ archiver 未安装，改用系统 zip 命令打包");
+    packageWithSystemZip();
+    console.log(`\n下一步：`);
+    console.log(`  1. 在飞书开放平台「多维表格数据表视图」配置页`);
+    console.log(`  2. 点「小组件版本」下拉旁的"上传新版本"，选这个 zip`);
+    console.log(`  3. 上传成功后该下拉会出现版本号；选 v1.0.0 即可`);
+    console.log(`  4. 「更新类型」选「全量更新」（首次发布）`);
+    process.exit(0);
+  } catch (err) {
+    console.error("✗ archiver 未安装，且系统 zip 命令不可用。请安装 archiver 依赖或提供 zip 命令。");
+    console.error(err);
+    process.exit(1);
+  }
 }
 
 const output = createWriteStream(OUT_ZIP);

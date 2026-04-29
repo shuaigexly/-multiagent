@@ -469,7 +469,7 @@ async def inspect_image(image: str, focus: str = "") -> str:
     name="python_calc",
     description=(
         "执行受限的 Python 表达式做数值/统计计算。"
-        "可用 math 模块、列表推导、abs/min/max/sum/round 等。"
+        "可用 math 模块、abs/min/max/sum/round/range 等纯计算能力。"
         "禁止 I/O、文件、网络、import；仅一行表达式。"
         "示例：'sum([100, 98, 112]) / 3' / 'math.sqrt(0.30**2 + 0.20**2)'"
     ),

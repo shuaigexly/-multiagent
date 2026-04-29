@@ -15,6 +15,18 @@ from typing import Any, Optional
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret
 
 logger = logging.getLogger(__name__)
+_MCP_ENV_ALLOWLIST = (
+    "PATH",
+    "HOME",
+    "USER",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "SYSTEMROOT",
+    "COMSPEC",
+)
 
 _lock: asyncio.Lock | None = None
 _proc: Optional[asyncio.subprocess.Process] = None
@@ -39,6 +51,14 @@ def is_mcp_available() -> bool:
     return shutil.which("npx") is not None
 
 
+def _build_mcp_env() -> dict[str, str]:
+    return {
+        key: value
+        for key in _MCP_ENV_ALLOWLIST
+        if (value := os.environ.get(key))
+    }
+
+
 async def _get_proc() -> asyncio.subprocess.Process:
     global _proc
     if _proc is not None and _proc.returncode is None:
@@ -59,6 +79,7 @@ async def _get_proc() -> asyncio.subprocess.Process:
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
+        env=_build_mcp_env(),
     )
     logger.info("lark-mcp subprocess started (pid=%s)", _proc.pid)
     await _send_raw(

@@ -11,31 +11,12 @@ import { useState } from "react";
 import { bitable } from "@lark-base-open/js-sdk";
 import { Loader2, Rocket, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-const DIMENSIONS = [
-  "综合分析",
-  "数据复盘",
-  "内容战略",
-  "增长优化",
-  "产品规划",
-  "风险评估",
-  "财务诊断",
-] as const;
-
-const PRIORITIES = [
-  { value: "P0 紧急", color: "bg-rose-100 text-rose-700 border-rose-200" },
-  { value: "P1 高", color: "bg-orange-100 text-orange-700 border-orange-200" },
-  { value: "P2 中", color: "bg-sky-100 text-sky-700 border-sky-200" },
-  { value: "P3 低", color: "bg-slate-100 text-slate-700 border-slate-200" },
-] as const;
-
-const PURPOSES = [
-  "直接汇报",
-  "等待拍板",
-  "直接执行",
-  "补数复核",
-  "重新分析",
-] as const;
+import {
+  LAUNCHER_DIMENSIONS,
+  LAUNCHER_OUTPUT_PURPOSES,
+  LAUNCHER_PRIORITIES,
+  buildLauncherRecordFields,
+} from "./bitableAgentLauncherSchema";
 
 interface Props {
   onLaunched?: (recordId: string, taskTitle: string) => void;
@@ -44,9 +25,9 @@ interface Props {
 export default function BitableAgentLauncher({ onLaunched }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [dimension, setDimension] = useState<typeof DIMENSIONS[number]>("综合分析");
-  const [priority, setPriority] = useState<typeof PRIORITIES[number]["value"]>("P1 高");
-  const [purpose, setPurpose] = useState<typeof PURPOSES[number]>("直接汇报");
+  const [dimension, setDimension] = useState<typeof LAUNCHER_DIMENSIONS[number]>("综合分析");
+  const [priority, setPriority] = useState<typeof LAUNCHER_PRIORITIES[number]["value"]>("P1 高");
+  const [outputPurpose, setOutputPurpose] = useState<typeof LAUNCHER_OUTPUT_PURPOSES[number]>("经营诊断");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<{ recordId: string; title: string } | null>(null);
@@ -63,31 +44,25 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
       // 1. 找到「分析任务」表
       const table = await bitable.base.getTableByName("分析任务");
       const fields = await table.getFieldMetaList();
-      const fieldByName = new Map(fields.map((f: { id: string; name: string }) => [f.name, f.id]));
 
-      // 2. 构造写入字段（仅用 schema 已有的字段）
-      const cellPayload: Record<string, unknown> = {};
-      const setIfExists = (name: string, value: unknown) => {
-        const fid = fieldByName.get(name);
-        if (fid) cellPayload[fid] = value;
-      };
-      setIfExists("任务标题", title.trim());
-      setIfExists("分析维度", dimension);
-      setIfExists("优先级", priority);
-      setIfExists("输出目的", purpose);
-      setIfExists("背景说明", description.trim() || `用户在 plugin 内提交：${title.trim()}`);
-      setIfExists("状态", "待分析");
-      setIfExists("当前阶段", "🆕 用户从插件提交");
-      setIfExists("进度", 0);
-      setIfExists("任务来源", "插件提交");
-      setIfExists("创建时间", new Date().toISOString().slice(0, 16).replace("T", " "));
+      // 2. 构造写入字段（仅写 schema 里允许编辑的字段，避开自动创建时间等只读字段）
+      const cellPayload = buildLauncherRecordFields(fields, {
+        title,
+        description,
+        dimension,
+        priority,
+        outputPurpose,
+      });
 
       // 3. 写入 record
       const recordId = await table.addRecord({ fields: cellPayload });
 
       // 4. 选中该 record，让主面板自动绑定
       try {
-        await bitable.base.setSelection({ tableId: table.id, recordId });
+        const baseWithSelection = bitable.base as typeof bitable.base & {
+          setSelection?: (selection: { tableId: string; recordId: string }) => Promise<unknown>;
+        };
+        await baseWithSelection.setSelection?.({ tableId: table.id, recordId });
       } catch {
         // 部分 SDK 版本没有 setSelection，忽略
       }
@@ -153,10 +128,10 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
             <select
               className="mt-1 block w-full rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
               value={dimension}
-              onChange={(e) => setDimension(e.target.value as typeof DIMENSIONS[number])}
+              onChange={(e) => setDimension(e.target.value as typeof LAUNCHER_DIMENSIONS[number])}
               disabled={submitting}
             >
-              {DIMENSIONS.map((d) => (
+              {LAUNCHER_DIMENSIONS.map((d) => (
                 <option key={d} value={d}>{d}</option>
               ))}
             </select>
@@ -166,10 +141,10 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
             <select
               className="mt-1 block w-full rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
               value={priority}
-              onChange={(e) => setPriority(e.target.value as typeof PRIORITIES[number]["value"])}
+              onChange={(e) => setPriority(e.target.value as typeof LAUNCHER_PRIORITIES[number]["value"])}
               disabled={submitting}
             >
-              {PRIORITIES.map((p) => (
+              {LAUNCHER_PRIORITIES.map((p) => (
                 <option key={p.value} value={p.value}>{p.value}</option>
               ))}
             </select>
@@ -178,11 +153,11 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
             输出目的
             <select
               className="mt-1 block w-full rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
-              value={purpose}
-              onChange={(e) => setPurpose(e.target.value as typeof PURPOSES[number])}
+              value={outputPurpose}
+              onChange={(e) => setOutputPurpose(e.target.value as typeof LAUNCHER_OUTPUT_PURPOSES[number])}
               disabled={submitting}
             >
-              {PURPOSES.map((p) => (
+              {LAUNCHER_OUTPUT_PURPOSES.map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>

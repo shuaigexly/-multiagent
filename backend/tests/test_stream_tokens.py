@@ -34,6 +34,18 @@ def test_stream_token_rejects_tamper_and_wrong_scope(monkeypatch):
         verify_stream_token(f"{token}x", "task-1", "task-events")
 
 
+def test_stream_token_rejects_wrong_audience(monkeypatch):
+    from app.core.auth import issue_stream_token, verify_stream_token
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "api_key", "test-secret")
+    token = issue_stream_token("task-1", "task-events", ttl_seconds=60, audience="ip-a|ua")
+
+    verify_stream_token(token, "task-1", "task-events", audience="ip-a|ua")
+    with pytest.raises(HTTPException):
+        verify_stream_token(token, "task-1", "task-events", audience="ip-b|ua")
+
+
 def test_stream_token_rejects_expired_tokens(monkeypatch):
     from app.core.auth import issue_stream_token, verify_stream_token
     from app.core.settings import settings

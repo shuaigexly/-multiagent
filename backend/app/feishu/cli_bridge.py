@@ -12,6 +12,18 @@ from app.core.text_utils import truncate_with_marker
 logger = logging.getLogger(__name__)
 CLI_AVAILABLE: Optional[bool] = None
 _LARK_CLI_VERSION = os.getenv("LARK_CLI_VERSION", "1.1.0")
+_CLI_ENV_ALLOWLIST = (
+    "PATH",
+    "HOME",
+    "USER",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "SYSTEMROOT",
+    "COMSPEC",
+)
 
 
 import threading as _threading
@@ -82,11 +94,7 @@ async def cli_base(shortcut: str, *args: str) -> dict:
 
 
 async def _run_cli(args: list[str]) -> dict:
-    env = {
-        **os.environ,
-        "FEISHU_APP_ID": get_feishu_app_id() or "",
-        "FEISHU_APP_SECRET": get_feishu_app_secret() or "",
-    }
+    env = _build_cli_env()
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
@@ -115,3 +123,15 @@ async def _run_cli(args: list[str]) -> dict:
         return json.loads(stdout.decode())
     except json.JSONDecodeError:
         return {"raw": truncate_with_marker(stdout.decode(), 200)}
+
+
+def _build_cli_env() -> dict[str, str]:
+    """Pass only operational env plus the Feishu credentials required by lark-cli."""
+    env = {
+        key: value
+        for key in _CLI_ENV_ALLOWLIST
+        if (value := os.environ.get(key))
+    }
+    env["FEISHU_APP_ID"] = get_feishu_app_id() or ""
+    env["FEISHU_APP_SECRET"] = get_feishu_app_secret() or ""
+    return env

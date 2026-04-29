@@ -182,6 +182,27 @@ def test_token_encryption_round_trips_with_fernet_key(monkeypatch):
     assert token_crypto.decrypt_token(encrypted) == "secret-token"
 
 
+def test_lark_cli_env_does_not_inherit_unrelated_secrets(monkeypatch):
+    from app.feishu import cli_bridge, mcp_client
+
+    monkeypatch.setenv("PATH", "/bin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "should-not-leak")
+    monkeypatch.setenv("POSTHOG_API_KEY", "should-not-leak")
+    monkeypatch.setattr(cli_bridge, "get_feishu_app_id", lambda: "app-id")
+    monkeypatch.setattr(cli_bridge, "get_feishu_app_secret", lambda: "app-secret")
+
+    cli_env = cli_bridge._build_cli_env()
+    mcp_env = mcp_client._build_mcp_env()
+
+    assert cli_env["PATH"] == "/bin"
+    assert cli_env["FEISHU_APP_ID"] == "app-id"
+    assert cli_env["FEISHU_APP_SECRET"] == "app-secret"
+    assert "AWS_SECRET_ACCESS_KEY" not in cli_env
+    assert "POSTHOG_API_KEY" not in cli_env
+    assert "AWS_SECRET_ACCESS_KEY" not in mcp_env
+    assert "POSTHOG_API_KEY" not in mcp_env
+
+
 @pytest.mark.asyncio
 async def test_workflow_lock_requires_redis_in_production(monkeypatch):
     import builtins

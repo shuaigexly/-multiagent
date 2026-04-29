@@ -672,7 +672,11 @@ export default function BitableWorkflowPlugin() {
           {!getRuntimeApiKey() && (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm leading-6 text-amber-800">
               当前域名下未检测到 API Key，插件仍可读取多维表格里的任务数据，但不会订阅后端 SSE 实时流。
-              需要实时步骤流时，请先在同域站点写入 `localStorage["{API_KEY_STORAGE_KEY}"]`。
+              需要实时步骤流时，请先在同域站点写入{" "}
+              <code className="rounded border border-amber-200 bg-white/70 px-1.5 py-0.5">
+                localStorage["{API_KEY_STORAGE_KEY}"]
+              </code>
+              。
             </div>
           )}
 

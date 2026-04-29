@@ -21,7 +21,7 @@ from app.bitable_workflow.native_installer import (
 from app.bitable_workflow.scheduler import _base_route_transition_fields, _build_route_transition_fields, _derive_native_bitable_contract
 from app.bitable_workflow.schema import ALL_STATUSES, ANALYSIS_DIMENSIONS, Status
 from app.core.audit import record_audit
-from app.core.auth import issue_stream_token, require_api_key, verify_stream_token
+from app.core.auth import issue_stream_token, require_api_key, stream_audience_from_request, verify_stream_token
 from app.core.env import get_int_env
 
 _VALID_DIMENSIONS: list[str] = ANALYSIS_DIMENSIONS
@@ -994,12 +994,13 @@ async def workflow_confirm(req: ConfirmRequest):
 
 
 @router.post("/stream-token/{task_record_id}", dependencies=[Depends(require_api_key)])
-async def workflow_stream_token(task_record_id: str):
+async def workflow_stream_token(task_record_id: str, request: Request):
     return {
         "token": issue_stream_token(
             subject=task_record_id,
             purpose="workflow-stream",
             ttl_seconds=60,
+            audience=stream_audience_from_request(request),
         )
     }
 
@@ -1025,7 +1026,12 @@ async def workflow_stream(
     订阅后立即接收 task.started / wave.completed / task.done / task.error 等事件。
     前端使用 EventSource 即可订阅；连接保持到 task.done/task.error 或客户端断开。
     """
-    verify_stream_token(token, subject=task_record_id, purpose="workflow-stream")
+    verify_stream_token(
+        token,
+        subject=task_record_id,
+        purpose="workflow-stream",
+        audience=stream_audience_from_request(request),
+    )
     return EventSourceResponse(
         _workflow_stream_generator(task_record_id, request),
         media_type="text/event-stream",
