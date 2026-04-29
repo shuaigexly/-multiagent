@@ -234,6 +234,13 @@ export interface AgentPipelineSnapshot {
   dependency: string;
   summary: string;
   status: 'done' | 'running' | 'pending' | 'error';
+  duration_ms?: number | null;
+  confidence?: number;
+  fallback?: boolean;
+  failed?: boolean;
+  reason?: string;
+  evidence_count?: number;
+  action_count?: number;
 }
 
 export interface WorkflowProgressPayload extends Record<string, unknown> {

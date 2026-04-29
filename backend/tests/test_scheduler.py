@@ -1150,6 +1150,36 @@ class TestRunCycleActionRouting:
                 return [pending_record]
             return []
 
+        async def fake_run_task_pipeline(*_args, agent_event_callback=None, **_kwargs):
+            if agent_event_callback:
+                await agent_event_callback(
+                    {
+                        "event_type": "agent.started",
+                        "agent_id": "data_analyst",
+                        "agent_name": "数据分析师",
+                        "wave": "Wave 1",
+                        "dependency": "无上游依赖",
+                        "duration_ms": 0,
+                    }
+                )
+                await agent_event_callback(
+                    {
+                        "event_type": "agent.completed",
+                        "agent_id": "data_analyst",
+                        "agent_name": "数据分析师",
+                        "wave": "Wave 1",
+                        "dependency": "无上游依赖",
+                        "duration_ms": 1234,
+                        "confidence": 4,
+                        "summary": "渠道转化下滑",
+                        "evidence_count": 2,
+                        "action_count": 1,
+                        "fallback": False,
+                        "failed": False,
+                    }
+                )
+            return [analyst], ceo
+
         with ExitStack() as stack:
             stack.enter_context(patch("app.bitable_workflow.scheduler.USE_RECORDS_SEARCH", False))
             stack.enter_context(patch("app.bitable_workflow.scheduler.USE_BATCH_RECORDS", False))
@@ -1169,7 +1199,7 @@ class TestRunCycleActionRouting:
                 )
             )
             stack.enter_context(
-                patch("app.bitable_workflow.scheduler.run_task_pipeline", new=AsyncMock(return_value=([analyst], ceo)))
+                patch("app.bitable_workflow.scheduler.run_task_pipeline", new=fake_run_task_pipeline)
             )
             stack.enter_context(
                 patch("app.bitable_workflow.scheduler.collect_prior_task_output_ids", new=AsyncMock(return_value=[]))
@@ -1287,6 +1317,11 @@ class TestRunCycleActionRouting:
         assert done_payload["workflow_steps"][2]["status"] == "done"
         assert done_payload["workflow_steps"][3]["status"] == "done"
         assert all(item["status"] == "done" for item in done_payload["agent_pipeline"])
+        data_node = next(item for item in done_payload["agent_pipeline"] if item["key"] == "data_analyst")
+        assert data_node["duration_ms"] == 1234
+        assert data_node["confidence"] == 4
+        assert data_node["summary"] == "渠道转化下滑"
+        assert data_node["evidence_count"] == 2
         assert any("证据条数" in item for item in done_payload["workflow_steps"][3]["items"])
 
     @pytest.mark.asyncio

@@ -331,20 +331,26 @@ def _build_agent_pipeline_payload(
     analysis_status: str,
     delivery_status: str,
     agent_statuses: dict[str, str] | None = None,
+    agent_details: dict[str, dict] | None = None,
 ) -> list[dict]:
     agent_statuses = agent_statuses or {}
-    return [
-        {
-            **agent,
-            "status": agent_statuses.get(agent["key"]) or _agent_pipeline_status(
-                wave=agent["wave"],
-                progress_pct=progress_pct,
-                analysis_status=analysis_status,
-                delivery_status=delivery_status,
-            ),
-        }
-        for agent in _AGENT_PIPELINE_META
-    ]
+    agent_details = agent_details or {}
+    payload: list[dict] = []
+    for agent in _AGENT_PIPELINE_META:
+        details = dict(agent_details.get(agent["key"]) or {})
+        payload.append(
+            {
+                **agent,
+                **details,
+                "status": agent_statuses.get(agent["key"]) or details.get("status") or _agent_pipeline_status(
+                    wave=agent["wave"],
+                    progress_pct=progress_pct,
+                    analysis_status=analysis_status,
+                    delivery_status=delivery_status,
+                ),
+            }
+        )
+    return payload
 
 
 def _compact_step_note(value: object, limit: int = 220) -> str:
@@ -390,6 +396,7 @@ def _build_workflow_progress_payload(
     delivery_note: str = "",
     error_reason: str = "",
     agent_statuses: dict[str, str] | None = None,
+    agent_details: dict[str, dict] | None = None,
 ) -> dict:
     analysis_history = [str(item).strip() for item in (analysis_history or []) if str(item).strip()]
     progress_pct = _progress_percent(progress)
@@ -483,6 +490,7 @@ def _build_workflow_progress_payload(
             analysis_status=analysis_status,
             delivery_status=delivery_status,
             agent_statuses=agent_statuses,
+            agent_details=agent_details,
         ),
     }
 
@@ -2602,6 +2610,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             analysis_history = ["Wave1 启动：五岗并行分析中…"]
             current_progress = 0.1
             agent_statuses: dict[str, str] = {}
+            agent_details: dict[str, dict] = {}
 
             async def _on_agent_event(event: dict) -> None:
                 nonlocal current_progress
@@ -2615,6 +2624,23 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     agent_statuses[agent_id] = "done"
                 elif event_type == "agent.failed":
                     agent_statuses[agent_id] = "error"
+                details = agent_details.setdefault(agent_id, {})
+                details["status"] = agent_statuses.get(agent_id, "pending")
+                for key in (
+                    "agent_name",
+                    "wave",
+                    "dependency",
+                    "duration_ms",
+                    "confidence",
+                    "fallback",
+                    "failed",
+                    "summary",
+                    "evidence_count",
+                    "action_count",
+                    "reason",
+                ):
+                    if key in event:
+                        details[key] = event.get(key)
                 agent_name = str(event.get("agent_name") or agent_id)
                 wave = str(event.get("wave") or "")
                 stage = (
@@ -2633,6 +2659,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                         analysis_status="error" if event_type == "agent.failed" else "running",
                         delivery_status="pending",
                         agent_statuses=agent_statuses,
+                        agent_details=agent_details,
                     ),
                 }
                 await progress_broker.publish(rid, event_type, payload)
@@ -2664,6 +2691,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                             current_stage=stage,
                             analysis_history=analysis_history,
                             agent_statuses=agent_statuses,
+                            agent_details=agent_details,
                         ),
                     },
                 )
@@ -2928,6 +2956,8 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                         archive_status=str((archive_payload or {}).get("archive_status") or ""),
                         report_version=str((archive_payload or {}).get("version") or "v1"),
                         delivery_note=str(delivery_snapshot.get("工作流消息包") or ""),
+                        agent_statuses=agent_statuses,
+                        agent_details=agent_details,
                     ),
                 },
             )
@@ -3024,6 +3054,8 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                             current_stage="分析异常：已回滚为待分析并等待下轮重试",
                             analysis_history=analysis_history if 'analysis_history' in locals() else [],
                             error_reason=truncate_with_marker(safe_error, 200, "...[截断]"),
+                            agent_statuses=agent_statuses if 'agent_statuses' in locals() else None,
+                            agent_details=agent_details if 'agent_details' in locals() else None,
                         ),
                     },
                 )

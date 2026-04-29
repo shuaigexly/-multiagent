@@ -350,6 +350,20 @@ function makeAgentSnapshot(
   };
 }
 
+function mergeAgentRuntimeDetails(target: AgentPipelineSnapshot, source: AgentPipelineSnapshot): AgentPipelineSnapshot {
+  return {
+    ...target,
+    summary: source.summary || target.summary,
+    duration_ms: source.duration_ms ?? target.duration_ms,
+    confidence: source.confidence ?? target.confidence,
+    fallback: source.fallback ?? target.fallback,
+    failed: source.failed ?? target.failed,
+    reason: source.reason || target.reason,
+    evidence_count: source.evidence_count ?? target.evidence_count,
+    action_count: source.action_count ?? target.action_count,
+  };
+}
+
 function waveStatus(
   wave: AgentPipelineSnapshot["wave"],
   progress: number,
@@ -381,7 +395,7 @@ function normalizeAgentPipeline(
       const current = pipeline.find((item) => item.key === fallback.key);
       if (!current) return makeAgentSnapshot(fallback, waveStatus(fallback.wave, progress, taskStatus, liveStatus));
       const persona = AGENT_PERSONAS[current.key];
-      return {
+      return mergeAgentRuntimeDetails({
         key: current.key,
         name: current.name || persona?.name || current.key,
         role: current.role || persona?.title || "AI 岗位",
@@ -391,10 +405,16 @@ function normalizeAgentPipeline(
         status: ["done", "running", "pending", "error"].includes(current.status)
           ? current.status
           : waveStatus(current.wave || fallback.wave, progress, taskStatus, liveStatus),
-      };
+      }, current);
     });
   }
   return AGENT_FLOW_BLUEPRINT.map((item) => makeAgentSnapshot(item, waveStatus(item.wave, progress, taskStatus, liveStatus)));
+}
+
+function formatDurationMs(value: number | null | undefined): string {
+  if (!value || !Number.isFinite(value)) return "-";
+  if (value < 1000) return `${Math.max(1, Math.round(value))}ms`;
+  return `${(value / 1000).toFixed(1)}s`;
 }
 
 function AgentFlowDashboard({
@@ -516,8 +536,27 @@ function AgentFlowDashboard({
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         <span className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-medium">{AGENT_STATUS_LABEL[agent.status]}</span>
                         <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] text-slate-500">{agent.dependency}</span>
+                        {agent.fallback && (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">兜底输出</span>
+                        )}
                       </div>
-                      <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">{agent.summary}</div>
+                      <div className="mt-2 grid grid-cols-3 gap-1.5 text-[11px] text-slate-500">
+                        <div className="rounded-lg bg-white/70 px-2 py-1">
+                          <span className="block text-slate-400">耗时</span>
+                          <span className="font-medium text-slate-700">{formatDurationMs(agent.duration_ms)}</span>
+                        </div>
+                        <div className="rounded-lg bg-white/70 px-2 py-1">
+                          <span className="block text-slate-400">置信</span>
+                          <span className="font-medium text-slate-700">{agent.confidence ? `${agent.confidence}/5` : "-"}</span>
+                        </div>
+                        <div className="rounded-lg bg-white/70 px-2 py-1">
+                          <span className="block text-slate-400">证据</span>
+                          <span className="font-medium text-slate-700">{agent.evidence_count ?? "-"}</span>
+                        </div>
+                      </div>
+                      <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                        {agent.status === "error" ? agent.reason || agent.summary : agent.summary}
+                      </div>
                     </div>
                   );
                 })}
