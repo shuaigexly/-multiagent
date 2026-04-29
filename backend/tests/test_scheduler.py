@@ -846,6 +846,33 @@ class TestAutomationLog:
         assert "原执行状态：执行中" in fallback_fields["详细结果"]
 
 
+class TestNativeEventQueue:
+    @pytest.mark.asyncio
+    async def test_native_event_queue_preserves_enqueue_order(self):
+        from app.bitable_workflow.scheduler import (
+            _drain_native_event_queue,
+            _enqueue_native_event,
+            _start_native_event_queue,
+        )
+
+        seen: list[str] = []
+        queue, worker = _start_native_event_queue("test-order")
+
+        async def slow_first():
+            await asyncio.sleep(0.02)
+            seen.append("start")
+
+        async def fast_second():
+            seen.append("done")
+
+        _enqueue_native_event(queue, "start", slow_first)
+        _enqueue_native_event(queue, "done", fast_second)
+
+        await _drain_native_event_queue(queue, worker, label="test-order")
+
+        assert seen == ["start", "done"]
+
+
 class TestTemplateCenter:
     @pytest.mark.asyncio
     async def test_apply_template_config_overrides_packages_and_defaults(self, ceo_result):

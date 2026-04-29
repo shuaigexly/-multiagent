@@ -1678,33 +1678,44 @@ async def _persist_agent_event_native(
     )
 
 
-def _track_native_event_task(tasks: set[asyncio.Task], coro, label: str) -> None:
-    task = asyncio.create_task(coro)
-    tasks.add(task)
-
-    def _on_done(done: asyncio.Task) -> None:
-        tasks.discard(done)
-        if done.cancelled():
-            return
+async def _native_event_queue_worker(queue: asyncio.Queue, *, label: str) -> None:
+    while True:
+        item = await queue.get()
         try:
-            exc = done.exception()
-        except Exception as task_exc:
-            logger.debug("native workflow event task inspect failed label=%s: %s", label, task_exc)
+            if item is None:
+                return
+            event_label, factory = item
+            try:
+                await factory()
+            except Exception as exc:
+                logger.warning("native workflow event failed queue=%s event=%s: %s", label, event_label, exc)
+        finally:
+            queue.task_done()
+
+
+def _start_native_event_queue(label: str) -> tuple[asyncio.Queue, asyncio.Task]:
+    queue: asyncio.Queue = asyncio.Queue()
+    worker = asyncio.create_task(_native_event_queue_worker(queue, label=label))
+    return queue, worker
+
+
+def _enqueue_native_event(queue: asyncio.Queue, label: str, factory) -> None:
+    queue.put_nowait((label, factory))
+
+
+async def _drain_native_event_queue(queue: asyncio.Queue, worker: asyncio.Task, *, label: str) -> None:
+    await queue.join()
+    if not worker.done():
+        queue.put_nowait(None)
+        await worker
+    elif not worker.cancelled():
+        try:
+            exc = worker.exception()
+        except Exception as inspect_exc:
+            logger.debug("native workflow queue inspect failed label=%s: %s", label, inspect_exc)
             return
         if exc:
-            logger.warning("native workflow event task failed label=%s: %s", label, exc)
-
-    task.add_done_callback(_on_done)
-
-
-async def _drain_native_event_tasks(tasks: set[asyncio.Task], *, label: str) -> None:
-    if not tasks:
-        return
-    pending = tuple(tasks)
-    results = await asyncio.gather(*pending, return_exceptions=True)
-    for result in results:
-        if isinstance(result, Exception):
-            logger.warning("native workflow event drain saw failure label=%s: %s", label, result)
+            logger.warning("native workflow queue failed label=%s: %s", label, exc)
 
 
 async def _list_related_rows(
@@ -2781,7 +2792,6 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
 
         # 绑定 task_id 上下文 — 此后所有 logger.* 调用自动带上 task_id，便于聚合查询
         set_task_context(task_id=rid)
-        native_event_tasks: set[asyncio.Task] = set()
 
         # 任务依赖检查：「依赖任务编号」中的所有任务必须 已完成 才能启动
         unmet_deps = _unmet_dependencies(fields.get("依赖任务编号"), dep_index)
@@ -2797,6 +2807,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             clear_task_context(task_id=True, agent_id=True)
             continue
 
+        native_event_queue, native_event_worker = _start_native_event_queue(f"{rid}:native-events")
         try:
             # v8.6.19：claim 返回 dict|None — 成功的 record 含完整 fields（含
             # 分析维度 / 背景说明 / 数据源 / 任务图像），避免 search 字段子集不够而
@@ -2829,9 +2840,10 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     ),
                 },
             )
-            _track_native_event_task(
-                native_event_tasks,
-                _persist_workflow_start_native(
+            _enqueue_native_event(
+                native_event_queue,
+                f"{rid}:task.started",
+                lambda: _persist_workflow_start_native(
                     app_token,
                     task_tid,
                     automation_log_tid,
@@ -2840,7 +2852,6 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     stage="▶ Wave1 启动：五岗并行分析中…",
                     progress=0.1,
                 ),
-                f"{rid}:task.started",
             )
 
             # 每个 Wave 完成后更新「当前阶段」+「进度」字段，让用户在多维表格实时看到进展
@@ -2901,19 +2912,20 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     ),
                 }
                 await progress_broker.publish(rid, event_type, payload)
-                _track_native_event_task(
-                    native_event_tasks,
-                    _persist_agent_event_native(
+                event_snapshot = dict(event)
+                _enqueue_native_event(
+                    native_event_queue,
+                    f"{rid}:{event_type}:{agent_id}",
+                    lambda event_snapshot=event_snapshot, stage=stage, progress=current_progress: _persist_agent_event_native(
                         app_token,
                         task_tid,
                         automation_log_tid,
                         task_title,
                         rid,
-                        event,
+                        event_snapshot,
                         stage=stage,
-                        progress=current_progress,
+                        progress=progress,
                     ),
-                    f"{rid}:{event_type}:{agent_id}",
                 )
 
             async def _on_wave(stage: str) -> None:
@@ -2953,7 +2965,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             all_results, ceo_result = await run_task_pipeline(
                 fields, progress_callback=_on_wave, agent_event_callback=_on_agent_event, task_id=rid
             )
-            await _drain_native_event_tasks(native_event_tasks, label=f"{rid}:pipeline")
+            await _drain_native_event_queue(native_event_queue, native_event_worker, label=f"{rid}:pipeline")
 
             # 先记录历史输出 ID；新输出和报告全部写入成功后再清理旧记录，避免重试失败丢失上次好结果。
             prior_output_ids = await collect_prior_task_output_ids(
@@ -3253,7 +3265,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
         except Exception as exc:
             safe_error = redact_sensitive_text(exc, max_chars=500)
             logger.error("Pipeline failed for task=%s record=%s: %s", task_title, rid, safe_error)
-            await _drain_native_event_tasks(native_event_tasks, label=f"{rid}:failure")
+            await _drain_native_event_queue(native_event_queue, native_event_worker, label=f"{rid}:failure")
             try:
                 failure_stage = f"❌ 执行失败，将重试：{truncate_with_marker(safe_error, 100, '...[截断]')}"
                 reset_fields = {
@@ -3316,7 +3328,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             except Exception:
                 pass
         finally:
-            await _drain_native_event_tasks(native_event_tasks, label=f"{rid}:final")
+            await _drain_native_event_queue(native_event_queue, native_event_worker, label=f"{rid}:final")
             clear_task_context(task_id=True, agent_id=True)
 
     return processed
