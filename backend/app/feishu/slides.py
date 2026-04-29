@@ -17,6 +17,7 @@ from app.feishu.doc import (
     build_ordered_block,
     create_structured_document,
 )
+from app.core.redaction import redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -49,12 +50,18 @@ async def create_presentation(
                 "type": "slides",
             }
         except Exception as exc:
-            logger.warning("lark-cli slides creation failed: %s, trying REST API", exc)
+            logger.warning(
+                "lark-cli slides creation failed: %s, trying REST API",
+                redact_sensitive_text(exc, max_chars=500),
+            )
 
     try:
         return await _create_via_presentation_api(title, agent_results, client, folder_token)
     except Exception as exc:
-        logger.warning("Presentation API failed: %s, falling back to doc", exc)
+        logger.warning(
+            "Presentation API failed: %s, falling back to doc",
+            redact_sensitive_text(exc, max_chars=500),
+        )
         return await _create_slides_as_doc(title, agent_results, client, folder_token)
 
 
@@ -83,7 +90,8 @@ async def _create_via_presentation_api(
     response = await client.arequest(create_req)
     if not response.success():
         raise RuntimeError(
-            f"Presentation v1 create failed: {response.msg} (code={response.code})"
+            f"Presentation v1 create failed: {redact_sensitive_text(response.msg, max_chars=500)} "
+            f"(code={response.code})"
         )
 
     raw = json.loads(response.raw.content or b"{}")
@@ -117,7 +125,9 @@ async def _populate_presentation(
         .build()
     )
     if not slides_resp.success():
-        raise RuntimeError(f"Could not list slides: {slides_resp.msg}")
+        raise RuntimeError(
+            f"Could not list slides: {redact_sensitive_text(slides_resp.msg, max_chars=500)}"
+        )
 
     slides_data = json.loads(slides_resp.raw.content or b"{}")
     existing_ids: list[str] = slides_data.get("data", {}).get("slide_ids", [])
@@ -138,7 +148,11 @@ async def _populate_presentation(
                 .build()
             )
             if not new_slide_resp.success():
-                logger.warning("Slide %d creation failed: %s", idx, new_slide_resp.msg)
+                logger.warning(
+                    "Slide %d creation failed: %s",
+                    idx,
+                    redact_sensitive_text(new_slide_resp.msg, max_chars=500),
+                )
                 continue
             slide_data = json.loads(new_slide_resp.raw.content or b"{}")
             slide_id = slide_data.get("data", {}).get("slide", {}).get("slide_id", "")
@@ -188,7 +202,7 @@ async def _populate_presentation(
         if not add_resp.success():
             logger.warning(
                 "Elements not added to slide %s (%s): %s",
-                slide_id, agent_name, add_resp.msg,
+                slide_id, agent_name, redact_sensitive_text(add_resp.msg, max_chars=500),
             )
 
 

@@ -14,4 +14,10 @@ describe('getSafeExternalUrl', () => {
     expect(getSafeExternalUrl('/relative/path')).toBe('');
     expect(getSafeExternalUrl('')).toBe('');
   });
+
+  it('rejects confusing external URLs with credentials, control chars, or excessive length', () => {
+    expect(getSafeExternalUrl('https://user:pass@example.com/path')).toBe('');
+    expect(getSafeExternalUrl('https://example.com/path\nnext')).toBe('');
+    expect(getSafeExternalUrl(`https://example.com/${'x'.repeat(2100)}`)).toBe('');
+  });
 });

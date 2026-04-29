@@ -25,7 +25,7 @@ from typing import Optional
 
 import httpx
 
-from app.core.redaction import redact_sensitive_data
+from app.core.redaction import redact_sensitive_data, redact_sensitive_text
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret
 from app.core.text_utils import truncate_with_marker
 from app.feishu.client import get_feishu_base_url, get_feishu_region
@@ -148,11 +148,14 @@ async def call_aily(
         r.raise_for_status()
         d = r.json()
         if d.get("code") != 0:
-            raise RuntimeError(f"Aily 创建会话失败: code={d.get('code')} msg={d.get('msg')}")
+            raise RuntimeError(
+                f"Aily 创建会话失败: code={d.get('code')} "
+                f"msg={redact_sensitive_text(d.get('msg'), max_chars=500)}"
+            )
         try:
             session_id = d["data"]["session"]["id"]
         except (KeyError, TypeError) as exc:
-            raise RuntimeError(f"Aily 会话响应结构异常: {d}") from exc
+            raise RuntimeError(f"Aily 会话响应结构异常: {redact_sensitive_data(d)}") from exc
         logger.debug("Aily session created: %s", session_id)
 
         # Step 2: 创建运行
@@ -181,11 +184,14 @@ async def call_aily(
         r.raise_for_status()
         d = r.json()
         if d.get("code") != 0:
-            raise RuntimeError(f"Aily 创建运行失败: code={d.get('code')} msg={d.get('msg')}")
+            raise RuntimeError(
+                f"Aily 创建运行失败: code={d.get('code')} "
+                f"msg={redact_sensitive_text(d.get('msg'), max_chars=500)}"
+            )
         try:
             run_id = d["data"]["run"]["id"]
         except (KeyError, TypeError) as exc:
-            raise RuntimeError(f"Aily 运行响应结构异常: {d}") from exc
+            raise RuntimeError(f"Aily 运行响应结构异常: {redact_sensitive_data(d)}") from exc
         logger.debug("Aily run created: %s", run_id)
 
     # Step 3: 轮询等待完成
@@ -207,12 +213,15 @@ async def call_aily(
             r.raise_for_status()
             d = r.json()
             if d.get("code") != 0:
-                raise RuntimeError(f"Aily 查询状态失败: code={d.get('code')} msg={d.get('msg')}")
+                raise RuntimeError(
+                    f"Aily 查询状态失败: code={d.get('code')} "
+                    f"msg={redact_sensitive_text(d.get('msg'), max_chars=500)}"
+                )
 
             try:
                 run_status = d["data"]["run"]["status"]
             except (KeyError, TypeError) as exc:
-                raise RuntimeError(f"Aily 轮询响应结构异常: {d}") from exc
+                raise RuntimeError(f"Aily 轮询响应结构异常: {redact_sensitive_data(d)}") from exc
             logger.debug("Aily run %s status: %s", run_id, run_status)
 
             if run_status == "COMPLETED":

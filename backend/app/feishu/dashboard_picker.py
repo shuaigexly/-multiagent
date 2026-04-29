@@ -13,6 +13,7 @@ from typing import Optional
 
 import httpx
 
+from app.core.redaction import redact_sensitive_text
 from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 from app.bitable_workflow.bitable_ops import _safe_json
 
@@ -43,7 +44,7 @@ async def list_dashboards(
             if r.status_code != 200 or body.get("code") != 0:
                 raise RuntimeError(
                     f"list dashboards failed: status={r.status_code} "
-                    f"code={body.get('code')} msg={body.get('msg')}"
+                    f"code={body.get('code')} msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
                 )
             data = body.get("data") or {}
             for d in data.get("dashboards") or []:

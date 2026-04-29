@@ -1,5 +1,7 @@
 """结果查询 API"""
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +17,10 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["results"])
     response_model=TaskResultsResponse,
     dependencies=[Depends(require_api_key)],
 )
-async def get_results(task_id: str, db: AsyncSession = Depends(get_db)):
+async def get_results(
+    task_id: Annotated[str, Path(min_length=1, max_length=128)],
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:

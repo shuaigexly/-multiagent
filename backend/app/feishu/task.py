@@ -14,6 +14,7 @@ from lark_oapi.api.task.v2 import (
 
 from app.feishu.client import get_applink_base_url, get_feishu_client
 from app.feishu.retry import with_retry
+from app.core.redaction import redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -102,11 +103,11 @@ async def _create_task_impl(title: str, notes: Optional[str] = None, due_ms: Opt
         )
 
     if not resp.success():
-        raise RuntimeError(f"创建任务失败: {resp.msg}")
+        raise RuntimeError(f"创建任务失败: {redact_sensitive_text(resp.msg, max_chars=500)}")
 
     task_guid = resp.data.task.guid
     url = f"{get_applink_base_url()}/client/todo/detail?guid={task_guid}"
-    logger.info(f"飞书任务创建成功: {task_guid} (用户token={'有' if user_token else '无'})")
+    logger.info("飞书任务创建成功 (user_token=%s)", "present" if user_token else "absent")
     return {"task_guid": task_guid, "url": url, "title": title}
 
 
@@ -133,8 +134,10 @@ async def _batch_create_tasks_impl(items: list[str]) -> list[dict]:
                 result["assignee_hint"] = parsed["assignee_hint"]
             results.append(result)
         except Exception as e:
-            logger.warning(f"创建任务失败: {item} - {e}")
-            errors.append(f"{item}: {e}")
+            safe_item = truncate_with_marker(item, 120)
+            safe_error = redact_sensitive_text(e, max_chars=500)
+            logger.warning("创建任务失败 item=%r err=%s", safe_item, safe_error)
+            errors.append(f"{safe_item}: {safe_error}")
     if errors:
         raise RuntimeError("部分飞书任务创建失败: " + "；".join(errors[:3]))
     return results

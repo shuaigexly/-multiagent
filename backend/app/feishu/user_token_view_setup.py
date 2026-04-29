@@ -82,7 +82,8 @@ async def configure_view_groups(
             body = _safe_json(resp)
             if resp.status_code != 200 or body.get("code") != 0:
                 raise RuntimeError(
-                    f"paged list failed: status={resp.status_code} code={body.get('code')} msg={body.get('msg')}"
+                    f"paged list failed: status={resp.status_code} code={body.get('code')} "
+                    f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
                 )
             data = body.get("data") or {}
             items.extend(data.get("items") or [])

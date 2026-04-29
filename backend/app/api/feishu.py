@@ -1,7 +1,9 @@
 """飞书发布 API"""
 import logging
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Path
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 class CreateTaskRequest(BaseModel):
-    summary: str
-    source_task_id: str | None = None
+    summary: str = Field(..., min_length=1, max_length=500)
+    source_task_id: str | None = Field(None, max_length=128)
 
 
 @router.post(
@@ -27,7 +29,7 @@ class CreateTaskRequest(BaseModel):
     dependencies=[Depends(require_api_key)],
 )
 async def publish_task(
-    task_id: str,
+    task_id: Annotated[str, Path(min_length=1, max_length=128)],
     body: PublishRequest,
     db: AsyncSession = Depends(get_db),
 ):

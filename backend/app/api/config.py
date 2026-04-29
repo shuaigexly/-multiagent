@@ -6,7 +6,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends
 from openai import AsyncOpenAI
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,8 +87,8 @@ class ConfigStatus(BaseModel):
 
 
 class ConfigItem(BaseModel):
-    key: str
-    value: str | None = None
+    key: str = Field(..., min_length=1, max_length=64)
+    value: str | None = Field(None, max_length=4096)
 
     @field_validator("key")
     @classmethod
@@ -97,9 +97,9 @@ class ConfigItem(BaseModel):
 
 
 class SaveConfigRequest(BaseModel):
-    key: str | None = None
-    value: str | None = None
-    configs: list[ConfigItem] | None = None
+    key: str | None = Field(None, max_length=64)
+    value: str | None = Field(None, max_length=4096)
+    configs: list[ConfigItem] | None = Field(None, max_length=32)
 
     @field_validator("key")
     @classmethod
@@ -125,14 +125,14 @@ class SaveConfigRequest(BaseModel):
 
 
 class LLMTestRequest(BaseModel):
-    api_key: str | None = None
-    base_url: str | None = None
-    model: str | None = None
+    api_key: str | None = Field(None, max_length=4096)
+    base_url: str | None = Field(None, max_length=1024)
+    model: str | None = Field(None, max_length=256)
 
 
 class FeishuTestRequest(BaseModel):
-    app_id: str | None = None
-    app_secret: str | None = None
+    app_id: str | None = Field(None, max_length=128)
+    app_secret: str | None = Field(None, max_length=512)
     region: Literal["cn", "intl"] | None = None
 
 
@@ -197,7 +197,7 @@ async def _test_feishu_credentials(app_id: str, app_secret: str, region: str):
     )
     response = await client.auth.v3.tenant_access_token.ainternal(request)
     if response.code != 0:
-        raise RuntimeError(response.msg or "获取 tenant_access_token 失败")
+        raise RuntimeError(redact_sensitive_text(response.msg or "获取 tenant_access_token 失败", max_chars=500))
 
 
 @router.get("", response_model=dict[str, ConfigStatus], dependencies=[Depends(require_api_key)])

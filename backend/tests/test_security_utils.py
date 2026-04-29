@@ -261,6 +261,21 @@ def test_sensitive_redaction_handles_nested_data_and_text():
     assert "redis://[REDACTED]@localhost:6379/0" in generic_url_text
     assert "token=[REDACTED]" in generic_url_text
 
+    oauth_url_text = redact_sensitive_text(
+        "https://service.test/oauth/callback?code=oauth-secret&state=state-secret"
+    )
+    assert "oauth-secret" not in oauth_url_text
+    assert "state-secret" not in oauth_url_text
+
+    feishu_resource_text = redact_sensitive_text(
+        "GET https://open.feishu.test/open-apis/docx/v1/documents/doc-secret/raw_content "
+        "https://open.feishu.test/open-apis/sheets/v3/spreadsheets/sheet-secret/sheets/query "
+        "https://open.feishu.test/open-apis/drive/v1/files/file-secret"
+    )
+    assert "doc-secret" not in feishu_resource_text
+    assert "sheet-secret" not in feishu_resource_text
+    assert "file-secret" not in feishu_resource_text
+
 
 def test_feishu_http_error_helpers_redact_response_bodies():
     import httpx
@@ -281,6 +296,26 @@ def test_feishu_http_error_helpers_redact_response_bodies():
     assert "access-secret" not in message
     assert "bearer-secret" not in message
     assert "[REDACTED]" in message
+
+
+def test_feishu_reader_errors_redact_sensitive_messages():
+    from app.feishu.reader import _response_error, _wrap_reader_exception
+
+    class FakeResponse:
+        msg = (
+            "access_token=access-secret Authorization: Bearer bearer-secret "
+            "https://open.feishu.test/open-apis/bitable/v1/apps/base-secret/tables/tbl"
+        )
+        code = 999
+
+    response_error = str(_response_error("read", FakeResponse()))
+    wrapped_error = str(_wrap_reader_exception("read", RuntimeError(FakeResponse.msg)))
+
+    for text in (response_error, wrapped_error):
+        assert "access-secret" not in text
+        assert "bearer-secret" not in text
+        assert "base-secret" not in text
+        assert "[REDACTED]" in text
 
 
 @pytest.mark.asyncio

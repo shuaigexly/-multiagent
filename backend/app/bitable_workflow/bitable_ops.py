@@ -76,7 +76,8 @@ async def _fetch_field_names(app_token: str, table_id: str) -> set[str]:
     body = _safe_json(r)
     if r.status_code != 200 or body.get("code") != 0:
         raise RuntimeError(
-            f"list fields failed: status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+            f"list fields failed: status={r.status_code} code={body.get('code')} "
+            f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
         )
     items = (body.get("data") or {}).get("items") or []
     names = {f.get("field_name") for f in items if f.get("field_name")}
@@ -230,7 +231,10 @@ async def _list_records_impl(
         # v8.6.20-r8（审计 #3）：用 _safe_json 兜底飞书偶发 200 OK + 非 JSON 网关响应
         data = _safe_json(resp)
         if data.get("code") != 0:
-            raise RuntimeError(f"list records failed: code={data.get('code')} msg={data.get('msg')}")
+            raise RuntimeError(
+                f"list records failed: code={data.get('code')} "
+                f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
+            )
 
         page_data = data.get("data", {})
         all_items.extend(page_data.get("items") or [])
@@ -308,7 +312,10 @@ async def _update_record_impl(app_token: str, table_id: str, record_id: str, fie
     resp.raise_for_status()
     data = _safe_json(resp)
     if data.get("code") != 0:
-        raise RuntimeError(f"update record failed: code={data.get('code')} msg={data.get('msg')}")
+        raise RuntimeError(
+            f"update record failed: code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
+        )
 
 
 async def delete_record(app_token: str, table_id: str, record_id: str) -> None:
@@ -323,7 +330,10 @@ async def _delete_record_impl(app_token: str, table_id: str, record_id: str) -> 
     resp.raise_for_status()
     data = _safe_json(resp)
     if data.get("code") != 0:
-        raise RuntimeError(f"delete record failed: code={data.get('code')} msg={data.get('msg')}")
+        raise RuntimeError(
+            f"delete record failed: code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
+        )
 
 
 # ===== v8.6.19 Phase B — search_records + batch_update + batch_delete =====
@@ -483,7 +493,8 @@ async def _try_batch_update_chunk(app_token: str, table_id: str, chunk: list[dic
     data = _safe_json(resp)
     if data.get("code") != 0:
         raise RuntimeError(
-            f"batch_update chunk failed: status={resp.status_code} code={data.get('code')} msg={data.get('msg')}"
+            f"batch_update chunk failed: status={resp.status_code} code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
         )
     returned = (data.get("data") or {}).get("records") or []
     return len(returned) if returned else len(chunk)
@@ -511,7 +522,7 @@ async def _batch_delete_records_impl(app_token: str, table_id: str, record_ids: 
         except Exception as exc:
             logger.warning(
                 "batch_delete chunk failed (size=%d), falling back to serial: %s",
-                len(chunk), exc,
+                len(chunk), redact_sensitive_text(exc, max_chars=500),
             )
             for rid in chunk:
                 if not rid:
@@ -520,7 +531,11 @@ async def _batch_delete_records_impl(app_token: str, table_id: str, record_ids: 
                     await delete_record(app_token, table_id, rid)
                     success += 1
                 except Exception as inner:
-                    logger.error("serial delete failed rid=%s: %s", rid, inner)
+                    logger.error(
+                        "serial delete failed rid=%s: %s",
+                        rid,
+                        redact_sensitive_text(inner, max_chars=500),
+                    )
                     failed_ids.append(rid)
     if failed_ids:
         raise RuntimeError(f"batch_delete_records partial failure: {failed_ids[:5]} (total {len(failed_ids)})")
@@ -541,7 +556,8 @@ async def _try_batch_delete_chunk(app_token: str, table_id: str, chunk: list[str
     data = _safe_json(resp)
     if data.get("code") != 0:
         raise RuntimeError(
-            f"batch_delete chunk failed: status={resp.status_code} code={data.get('code')} msg={data.get('msg')}"
+            f"batch_delete chunk failed: status={resp.status_code} code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
         )
     return len(chunk)
 

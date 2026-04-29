@@ -200,8 +200,8 @@ async def refresh_oauth_token():
 
 @router.get("/oauth/url", dependencies=[Depends(require_api_key)])
 async def get_oauth_url(
-    backend_origin: str | None = Query(None),
-    frontend_origin: str = Query("http://localhost:5173"),
+    backend_origin: str | None = Query(None, max_length=256),
+    frontend_origin: str = Query("http://localhost:5173", max_length=256),
 ):
     """生成飞书 OAuth 授权 URL"""
     if not _is_allowed_origin(frontend_origin):
@@ -246,8 +246,8 @@ def _safe_error_message(value: object, max_chars: int = 200) -> str:
 
 @router.get("/oauth/callback")
 async def oauth_callback(
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str = Query(..., min_length=1, max_length=2048),
+    state: str = Query(..., min_length=1, max_length=1024),
     db: AsyncSession = Depends(get_db),
 ):
     """接收飞书 OAuth 回调，交换 user_access_token 并存入数据库"""
@@ -332,7 +332,7 @@ async def oauth_callback(
 
 @router.get("/oauth/list-bases", dependencies=[Depends(require_api_key)])
 async def list_user_bases_endpoint(
-    folder_token: str | None = Query(None, description="optional folder token"),
+    folder_token: str | None = Query(None, max_length=128, description="optional folder token"),
 ):
     try:
         from app.feishu.base_picker import list_user_bases
@@ -348,7 +348,9 @@ async def list_user_bases_endpoint(
 
 
 @router.get("/oauth/list-tables", dependencies=[Depends(require_api_key)])
-async def list_tables_endpoint(app_token: str = Query(..., description="bitable app_token")):
+async def list_tables_endpoint(
+    app_token: str = Query(..., min_length=1, max_length=128, description="bitable app_token"),
+):
     try:
         from app.feishu.base_picker import list_tables, list_fields
 
@@ -381,7 +383,7 @@ async def list_tables_endpoint(app_token: str = Query(..., description="bitable 
 
 
 @router.get("/oauth/list-dashboards", dependencies=[Depends(require_api_key)])
-async def list_dashboards_endpoint(app_token: str = Query(...)):
+async def list_dashboards_endpoint(app_token: str = Query(..., min_length=1, max_length=128)):
     """v8.6.19：列出 base 已有 Dashboards。
 
     优先 user_access_token（走 _with_user_token_retry，过期自动 refresh 一次），
@@ -407,7 +409,9 @@ async def list_dashboards_endpoint(app_token: str = Query(...)):
 
 
 @router.post("/oauth/apply-view-config", dependencies=[Depends(require_api_key)])
-async def apply_view_config(app_token: str = Query(..., description="bitable app_token")):
+async def apply_view_config(
+    app_token: str = Query(..., min_length=1, max_length=128, description="bitable app_token"),
+):
     try:
         from app.feishu.user_token_view_setup import configure_view_groups
 

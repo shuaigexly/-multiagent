@@ -5,11 +5,11 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from pathlib import Path
-from typing import Optional
+from pathlib import Path as FilePath
+from typing import Annotated, Optional
 
 import aiofiles
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path as ApiPath, Query, Request, UploadFile
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,11 +81,11 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _resolve_upload_file_path(path: str | None) -> Path | None:
+def _resolve_upload_file_path(path: str | None) -> FilePath | None:
     if not path:
         return None
-    upload_root = Path(settings.upload_dir).resolve()
-    target = Path(path).resolve(strict=False)
+    upload_root = FilePath(settings.upload_dir).resolve()
+    target = FilePath(path).resolve(strict=False)
     try:
         target.relative_to(upload_root)
     except ValueError:
@@ -264,7 +264,7 @@ async def create_task(
 
 @router.post("/{task_id}/confirm", dependencies=[Depends(require_api_key)])
 async def confirm_task(
-    task_id: str,
+    task_id: Annotated[str, ApiPath(min_length=1, max_length=128)],
     body: TaskConfirm,
     request: Request,
     background_tasks: BackgroundTasks,
@@ -315,8 +315,8 @@ async def list_tasks(
     request: Request,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    status: str | None = Query(None),
-    search: str | None = Query(None),
+    status: str | None = Query(None, max_length=50),
+    search: str | None = Query(None, max_length=200),
     db: AsyncSession = Depends(get_db),
 ):
     status = (status or "").strip() or None
@@ -349,7 +349,10 @@ async def list_tasks(
 
 
 @router.get("/{task_id}/status", dependencies=[Depends(require_api_key)])
-async def get_task_status(task_id: str, db: AsyncSession = Depends(get_db)):
+async def get_task_status(
+    task_id: Annotated[str, ApiPath(min_length=1, max_length=128)],
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(Task.status).where(Task.id == task_id))
     status = result.scalar_one_or_none()
     if status is None:
@@ -359,8 +362,8 @@ async def get_task_status(task_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.delete("/{task_id}", dependencies=[Depends(require_api_key)])
 async def delete_task(
-    task_id: str,
-    action: str | None = Query(None),
+    task_id: Annotated[str, ApiPath(min_length=1, max_length=128)],
+    action: str | None = Query(None, max_length=16),
     db: AsyncSession = Depends(get_db),
 ):
     if action == "cancel":

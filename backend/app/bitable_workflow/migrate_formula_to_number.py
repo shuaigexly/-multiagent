@@ -29,6 +29,7 @@ import httpx
 from app.bitable_workflow import bitable_ops
 from app.bitable_workflow.bitable_ops import _safe_json, _invalidate_field_cache
 from app.bitable_workflow.schema import priority_score, health_score
+from app.core.redaction import redact_sensitive_text
 from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,10 @@ async def _delete_field(http: httpx.AsyncClient, app_token: str, table_id: str, 
     )
     body = _safe_json(r)
     if r.status_code != 200 or body.get("code") not in (0, None):
-        raise RuntimeError(f"DELETE field {field_id} 失败 status={r.status_code} code={body.get('code')} msg={body.get('msg')}")
+        raise RuntimeError(
+            f"DELETE field {field_id} 失败 status={r.status_code} code={body.get('code')} "
+            f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
+        )
 
 
 async def _rename_field(http: httpx.AsyncClient, app_token: str, table_id: str, field_id: str, new_name: str) -> str | None:
@@ -96,7 +100,8 @@ async def _rename_field(http: httpx.AsyncClient, app_token: str, table_id: str, 
     body = _safe_json(r)
     if r.status_code != 200 or body.get("code") not in (0, None):
         raise RuntimeError(
-            f"PUT field {field_id} 重命名失败 status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+            f"PUT field {field_id} 重命名失败 status={r.status_code} code={body.get('code')} "
+            f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
         )
     return field_id
 
@@ -117,7 +122,10 @@ async def _create_number_field(http: httpx.AsyncClient, app_token: str, table_id
     )
     body = _safe_json(r)
     if r.status_code != 200 or body.get("code") not in (0, None):
-        raise RuntimeError(f"CREATE Number field {field_name!r} 失败 status={r.status_code} code={body.get('code')} msg={body.get('msg')}")
+        raise RuntimeError(
+            f"CREATE Number field {field_name!r} 失败 status={r.status_code} code={body.get('code')} "
+            f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
+        )
     return ((body.get("data") or {}).get("field") or {}).get("field_id", "")
 
 

@@ -179,7 +179,10 @@ async def _send_card_to_chat_impl(chat_id: str, title: str, results: list[AgentR
 
     data = _parse_json_response(resp, "CardKit send failed")
     if data.get("code", 0) != 0:
-        raise RuntimeError(f"CardKit send failed: {data.get('msg')} (code={data.get('code')})")
+        raise RuntimeError(
+            f"CardKit send failed: {redact_sensitive_text(data.get('msg'), max_chars=500)} "
+            f"(code={data.get('code')})"
+        )
     msg_id = data.get("data", {}).get("message_id", "")
     return {"message_id": msg_id, "url": f"{user_base_url}/im/chat/{chat_id}/message/{msg_id}"}
 
@@ -210,7 +213,10 @@ async def _send_card_to_user_impl(open_id: str, title: str, results: list[AgentR
 
     data = _parse_json_response(resp, "CardKit DM send failed")
     if data.get("code", 0) != 0:
-        raise RuntimeError(f"CardKit DM send failed: {data.get('msg')} (code={data.get('code')})")
+        raise RuntimeError(
+            f"CardKit DM send failed: {redact_sensitive_text(data.get('msg'), max_chars=500)} "
+            f"(code={data.get('code')})"
+        )
 
     resp_data = data.get("data", {})
     msg_id = resp_data.get("message_id", "")
@@ -238,7 +244,8 @@ async def _get_tenant_access_token() -> str:
     data = _parse_json_response(resp, "Failed to fetch Feishu tenant access token")
     if data.get("code", 0) != 0:
         raise RuntimeError(
-            f"Failed to fetch Feishu tenant access token: {data.get('msg')} "
+            f"Failed to fetch Feishu tenant access token: "
+            f"{redact_sensitive_text(data.get('msg'), max_chars=500)} "
             f"(code={data.get('code')})"
         )
     token = data.get("tenant_access_token")

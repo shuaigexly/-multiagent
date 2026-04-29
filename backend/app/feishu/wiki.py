@@ -46,7 +46,7 @@ async def _create_wiki_node_impl(
         timeout=30.0,
     )
     if not resp.success():
-        raise RuntimeError(f"创建知识库节点失败: {resp.msg}")
+        raise RuntimeError(f"创建知识库节点失败: {redact_sensitive_text(resp.msg, max_chars=500)}")
 
     node_token = resp.data.node.node_token
     url = f"{get_feishu_base_url()}/wiki/{node_token}"

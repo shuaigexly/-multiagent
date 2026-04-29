@@ -16,6 +16,7 @@ from typing import Optional
 
 import httpx
 
+from app.core.redaction import redact_sensitive_text
 from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 
 
@@ -24,7 +25,10 @@ async def _fetch(http: httpx.AsyncClient, url: str, token: str) -> dict:
     r.raise_for_status()
     data = r.json()
     if data.get("code") not in (None, 0):
-        raise RuntimeError(f"Feishu API failed: code={data.get('code')} msg={data.get('msg')}")
+        raise RuntimeError(
+            f"Feishu API failed: code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
+        )
     return data
 
 
@@ -45,7 +49,10 @@ async def _fetch_items(
         r.raise_for_status()
         data = r.json()
         if data.get("code") not in (None, 0):
-            raise RuntimeError(f"Feishu API failed: code={data.get('code')} msg={data.get('msg')}")
+            raise RuntimeError(
+                f"Feishu API failed: code={data.get('code')} "
+                f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
+            )
         payload = data.get("data") or {}
         items.extend(payload.get("items") or [])
         if not payload.get("has_more"):

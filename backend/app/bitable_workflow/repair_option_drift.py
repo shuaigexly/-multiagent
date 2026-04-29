@@ -30,6 +30,7 @@ import httpx
 
 from app.bitable_workflow import bitable_ops
 from app.bitable_workflow.bitable_ops import _safe_json
+from app.core.redaction import redact_sensitive_text
 from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 
 logger = logging.getLogger(__name__)
@@ -125,7 +126,10 @@ async def prune_hidden_options(
         body = _safe_json(r)
         if r.status_code != 200 or body.get("code") != 0:
             return {"removed": [], "kept": [o.get("name") for o in keep],
-                    "issues": [f"PUT field 失败 status={r.status_code} code={body.get('code')} msg={body.get('msg')}"]}
+                    "issues": [
+                        f"PUT field 失败 status={r.status_code} code={body.get('code')} "
+                        f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
+                    ]}
     return {
         "removed": [o.get("name") for o in drop],
         "kept": [o.get("name") for o in keep],

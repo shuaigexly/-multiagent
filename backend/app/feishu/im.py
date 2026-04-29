@@ -13,6 +13,7 @@ from lark_oapi.api.im.v1 import (
 from app.feishu.client import get_feishu_client
 from app.feishu.retry import with_retry
 from app.core.settings import settings
+from app.core.redaction import redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ async def _send_message_impl(
         timeout=30.0,
     )
     if not resp.success():
-        raise RuntimeError(f"发送消息失败: {resp.msg}")
+        raise RuntimeError(f"发送消息失败: {redact_sensitive_text(resp.msg, max_chars=500)}")
     return {"message_id": resp.data.message_id}
 
 
@@ -60,7 +61,7 @@ async def _send_group_message_impl(text: str, chat_id: Optional[str] = None) -> 
         "text",
         json.dumps({"text": text}, ensure_ascii=False),
     )
-    logger.info(f"群消息发送成功: {result['message_id']}")
+    logger.info("群消息发送成功")
     return result
 
 

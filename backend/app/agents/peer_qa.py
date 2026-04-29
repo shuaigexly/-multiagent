@@ -16,6 +16,7 @@ from typing import Optional
 
 from app.agents.base_agent import AgentResult
 from app.agents.tools import register_tool
+from app.core.redaction import redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,7 @@ async def ask_peer(agent_id: str, question: str) -> str:
             max_tokens=400,
         )
     except Exception as exc:
-        logger.warning("ask_peer LLM failed: agent=%s err=%s", agent_id, exc)
-        return f"ERROR: peer '{agent_id}' failed to answer: {exc}"
+        safe_error = redact_sensitive_text(exc, max_chars=500)
+        logger.warning("ask_peer LLM failed: agent=%s err=%s", agent_id, safe_error)
+        return f"ERROR: peer '{agent_id}' failed to answer: {safe_error}"
     return truncate_with_marker(answer.strip(), 800)

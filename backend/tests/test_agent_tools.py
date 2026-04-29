@@ -73,6 +73,28 @@ async def test_dispatch_handler_exception_caught():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_handler_exception_is_redacted():
+    @register_tool(
+        name="secret_boom",
+        description="Raises sensitive error",
+        parameters={"type": "object", "properties": {}},
+    )
+    async def secret_boom() -> str:
+        raise RuntimeError(
+            "access_token=access-secret Authorization: Bearer bearer-secret "
+            "https://open.feishu.test/open-apis/bitable/v1/apps/base-secret/tables/tbl"
+        )
+
+    result = await dispatch_tool("secret_boom", {})
+
+    assert result.startswith("ERROR:")
+    assert "access-secret" not in result
+    assert "bearer-secret" not in result
+    assert "base-secret" not in result
+    assert "[REDACTED]" in result
+
+
+@pytest.mark.asyncio
 async def test_openai_schema_format():
     @register_tool(
         name="t1",

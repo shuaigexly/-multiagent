@@ -4,9 +4,9 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
@@ -1009,7 +1009,10 @@ async def workflow_confirm(req: ConfirmRequest):
 
 
 @router.post("/stream-token/{task_record_id}", dependencies=[Depends(require_api_key)])
-async def workflow_stream_token(task_record_id: str, request: Request):
+async def workflow_stream_token(
+    task_record_id: Annotated[str, Path(min_length=1, max_length=128)],
+    request: Request,
+):
     return {
         "token": issue_stream_token(
             subject=task_record_id,
@@ -1032,9 +1035,9 @@ async def _workflow_stream_generator(task_record_id: str, request: Request):
 
 @router.get("/stream/{task_record_id}")
 async def workflow_stream(
-    task_record_id: str,
+    task_record_id: Annotated[str, Path(min_length=1, max_length=128)],
     request: Request,
-    token: str = Query(""),
+    token: Annotated[str, Query(max_length=4096)] = "",
 ):
     """SSE 流：实时推送 Bitable 工作流的 Wave 进度事件。
 

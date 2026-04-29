@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from lark_oapi.api.im.v1 import ReplyMessageRequest, ReplyMessageRequestBody
 
+from app.core.redaction import redact_sensitive_text
 from app.feishu.client import get_feishu_client
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,14 @@ async def reply_text_in_thread(message_id: str, text: str) -> None:
             timeout=30.0,
         )
         if not response.success():
-            logger.warning("Bot 回帖失败 message_id=%s: %s", message_id, response.msg)
+            logger.warning(
+                "Bot 回帖失败 message_id=%s: %s",
+                message_id,
+                redact_sensitive_text(response.msg, max_chars=500),
+            )
     except Exception as exc:
-        logger.warning("Bot 回帖异常 message_id=%s: %s", message_id, exc)
+        logger.warning(
+            "Bot 回帖异常 message_id=%s: %s",
+            message_id,
+            redact_sensitive_text(exc, max_chars=500),
+        )

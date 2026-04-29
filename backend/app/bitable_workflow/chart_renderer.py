@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 import httpx
 
+from app.core.redaction import redact_sensitive_text
 from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 
 logger = logging.getLogger(__name__)
@@ -182,7 +183,10 @@ async def upload_chart_to_bitable(
     try:
         token = await get_tenant_access_token()
     except Exception as exc:
-        logger.warning("chart upload skipped: feishu auth failed: %s", exc)
+        logger.warning(
+            "chart upload skipped: feishu auth failed: %s",
+            redact_sensitive_text(exc, max_chars=500),
+        )
         return None
 
     base = get_feishu_open_base_url()
@@ -218,11 +222,15 @@ async def upload_chart_to_bitable(
         resp.raise_for_status()
         body = resp.json()
         if body.get("code") != 0:
-            logger.warning("chart upload non-zero: code=%s msg=%s", body.get("code"), body.get("msg"))
+            logger.warning(
+                "chart upload non-zero: code=%s msg=%s",
+                body.get("code"),
+                redact_sensitive_text(body.get("msg"), max_chars=500),
+            )
             return None
         return body.get("data", {}).get("file_token")
     except Exception as exc:
-        logger.warning("chart upload exception: %s", exc)
+        logger.warning("chart upload exception: %s", redact_sensitive_text(exc, max_chars=500))
         return None
     finally:
         if tmp_path and os.path.exists(tmp_path):

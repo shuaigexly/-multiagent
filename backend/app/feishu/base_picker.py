@@ -63,7 +63,10 @@ async def _paged_items(
         r = await h.get(url, headers=auth, params=params)
         body = _safe_json(r)
         if r.status_code != 200 or body.get("code") != 0:
-            raise RuntimeError(f"paged request failed: code={body.get('code')} msg={body.get('msg')}")
+            raise RuntimeError(
+                f"paged request failed: code={body.get('code')} "
+                f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
+            )
         data = body.get("data") or {}
         items.extend(data.get(item_key) or [])
         if not data.get("has_more"):
@@ -107,7 +110,7 @@ async def list_user_bases(
             if r.status_code != 200 or body.get("code") != 0:
                 raise RuntimeError(
                     f"list files failed: status={r.status_code} code={body.get('code')} "
-                    f"msg={body.get('msg')}"
+                    f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
                 )
             data = body.get("data") or {}
             for f in data.get("files") or []:

@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from app.agents.tools import register_tool
+from app.core.redaction import redact_sensitive_text
 from app.core.url_safety import UnsafeURL, fetch_public_url_bytes
 
 logger = logging.getLogger(__name__)
@@ -86,9 +87,9 @@ async def fetch_url(url: str) -> str:
             body = _strip_html(body)
         return body[:8000]
     except UnsafeURL as exc:
-        return f"ERROR: unsafe url: {exc}"
+        return f"ERROR: unsafe url: {redact_sensitive_text(exc, max_chars=500)}"
     except httpx.HTTPError as exc:
-        return f"ERROR: fetch failed: {exc}"
+        return f"ERROR: fetch failed: {redact_sensitive_text(exc, max_chars=500)}"
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ async def bitable_query(app_token: str, table_id: str, filter: str = "", max_rec
             max_records=max(1, min(int(max_records), 50)),
         )
     except Exception as exc:
-        return f"ERROR: bitable query failed: {exc}"
+        return f"ERROR: bitable query failed: {redact_sensitive_text(exc, max_chars=500)}"
 
     # 简化输出：只保留 record_id + fields
     return [
@@ -181,7 +182,7 @@ async def feishu_sheet(url: str, max_rows: int = 100) -> str:
     try:
         token = await get_tenant_access_token()
     except Exception as exc:
-        return f"ERROR: feishu auth failed: {exc}"
+        return f"ERROR: feishu auth failed: {redact_sensitive_text(exc, max_chars=500)}"
 
     base = get_feishu_open_base_url()
     # Sheets v3 metainfo 拿到首个 sheet_id（如未指定）
@@ -199,7 +200,7 @@ async def feishu_sheet(url: str, max_rows: int = 100) -> str:
                     return "ERROR: no sheets in spreadsheet"
                 sheet_id = sheets[0].get("sheet_id")
             except httpx.HTTPError as exc:
-                return f"ERROR: sheet meta failed: {exc}"
+                return f"ERROR: sheet meta failed: {redact_sensitive_text(exc, max_chars=500)}"
 
         # 读取 A1:Z<max_rows> 区域
         rows_to_read = max(1, min(int(max_rows), 500))
@@ -211,7 +212,7 @@ async def feishu_sheet(url: str, max_rows: int = 100) -> str:
             )
             r.raise_for_status()
         except httpx.HTTPError as exc:
-            return f"ERROR: sheet read failed: {exc}"
+            return f"ERROR: sheet read failed: {redact_sensitive_text(exc, max_chars=500)}"
 
     data = r.json().get("data", {}).get("valueRange", {}).get("values") or []
     if not data:

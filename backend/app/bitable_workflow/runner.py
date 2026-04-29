@@ -462,7 +462,7 @@ async def _delete_base_best_effort(app_token: str) -> None:
             if r.status_code >= 400 or body.get("code", 0) != 0:
                 logger.warning(
                     "rollback DELETE base failed: status=%s code=%s msg=%s",
-                    r.status_code, body.get("code"), body.get("msg"),
+                    r.status_code, body.get("code"), redact_sensitive_text(body.get("msg"), max_chars=500),
                 )
             else:
                 logger.info(
@@ -1010,7 +1010,8 @@ async def _create_formula_fields(app_token: str, task_tid: str, output_tid: str)
             body = _safe_json(r)
             if r.status_code != 200 or body.get("code") != 0:
                 raise RuntimeError(
-                    f"list fields failed: status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+                    f"list fields failed: status={r.status_code} code={body.get('code')} "
+                    f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
                 )
             items = (body.get("data") or {}).get("items") or []
             return {f["field_name"]: f["field_id"] for f in items if f.get("field_name")}
@@ -1029,7 +1030,8 @@ async def _create_formula_fields(app_token: str, task_tid: str, output_tid: str)
             if r.status_code != 200 or body.get("code") != 0:
                 raise RuntimeError(
                     f"create formula field {field_name!r} failed: "
-                    f"status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+                    f"status={r.status_code} code={body.get('code')} "
+                    f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
                 )
         logger.info("Formula field %r created on table %s", field_name, tid)
 
@@ -1046,7 +1048,7 @@ async def _create_formula_fields(app_token: str, task_tid: str, output_tid: str)
         )
         await _create_formula(task_tid, "综合评分", expr)
     except Exception as exc:
-        logger.warning("综合评分 公式字段创建失败 (non-fatal): %s", exc)
+        logger.warning("综合评分 公式字段创建失败 (non-fatal): %s", redact_sensitive_text(exc, max_chars=500))
     finally:
         _invalidate_field_cache(app_token, task_tid)
 
@@ -1063,7 +1065,7 @@ async def _create_formula_fields(app_token: str, task_tid: str, output_tid: str)
         )
         await _create_formula(output_tid, "健康度数值", expr)
     except Exception as exc:
-        logger.warning("健康度数值 公式字段创建失败 (non-fatal): %s", exc)
+        logger.warning("健康度数值 公式字段创建失败 (non-fatal): %s", redact_sensitive_text(exc, max_chars=500))
     finally:
         _invalidate_field_cache(app_token, output_tid)
 
@@ -1089,7 +1091,7 @@ async def _share_form_view(app_token: str, table_id: str, view_id: str) -> str |
             if r.status_code != 200 or body.get("code") != 0:
                 logger.warning(
                     "PATCH form metadata failed: status=%s code=%s msg=%s",
-                    r.status_code, body.get("code"), body.get("msg"),
+                    r.status_code, body.get("code"), redact_sensitive_text(body.get("msg"), max_chars=500),
                 )
                 return None
             # 部分接口在 PATCH 响应里就有 shared_url，部分需要再 GET
@@ -1105,7 +1107,7 @@ async def _share_form_view(app_token: str, table_id: str, view_id: str) -> str |
             if r2.status_code != 200 or body2.get("code") != 0:
                 logger.warning(
                     "GET form metadata after share failed: status=%s code=%s msg=%s",
-                    r2.status_code, body2.get("code"), body2.get("msg"),
+                    r2.status_code, body2.get("code"), redact_sensitive_text(body2.get("msg"), max_chars=500),
                 )
                 return None
             form_data = (body2.get("data") or {}).get("form") or {}

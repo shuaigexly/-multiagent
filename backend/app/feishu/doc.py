@@ -100,7 +100,10 @@ async def create_doc_from_markdown(
                 **({"raw": cli_result["raw"]} if "raw" in cli_result else {}),
             }
         except Exception as exc:
-            logger.warning("lark-cli markdown doc creation failed: %s, falling back to plain doc", exc)
+            logger.warning(
+                "lark-cli markdown doc creation failed: %s, falling back to plain doc",
+                redact_sensitive_text(exc, max_chars=500),
+            )
 
     return await create_document(title, markdown, folder_token)
 
@@ -182,7 +185,9 @@ async def _create_document_shell(
         timeout=30.0,
     )
     if not resp.success():
-        raise RuntimeError(f"创建飞书文档失败: {resp.msg} (code={resp.code})")
+        raise RuntimeError(
+            f"创建飞书文档失败: {redact_sensitive_text(resp.msg, max_chars=500)} (code={resp.code})"
+        )
 
     doc_token = resp.data.document.document_id
     logger.info("飞书文档创建成功: %s", redact_sensitive_text(f"doc_token={doc_token}"))
@@ -250,7 +255,9 @@ async def _append_block_chunk(
         timeout=30.0,
     )
     if not resp.success():
-        raise RuntimeError(f"追加文档内容失败: {resp.msg} (code={resp.code})")
+        raise RuntimeError(
+            f"追加文档内容失败: {redact_sensitive_text(resp.msg, max_chars=500)} (code={resp.code})"
+        )
     return list((resp.data.children or []) if resp.data else [])
 
 
@@ -302,7 +309,9 @@ async def _append_child_blocks(
             timeout=30.0,
         )
         if not resp.success():
-            raise RuntimeError(f"追加 callout 子块失败: {resp.msg} (code={resp.code})")
+            raise RuntimeError(
+                f"追加 callout 子块失败: {redact_sensitive_text(resp.msg, max_chars=500)} (code={resp.code})"
+            )
         insert_index += len(chunk)
 
 

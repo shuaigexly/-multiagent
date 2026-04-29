@@ -61,4 +61,25 @@ describe('http service', () => {
     expect(setRuntimeApiKey('runtime-secret')).toBe(false);
     expect(setRuntimeApiKey('')).toBe(false);
   });
+
+  it('rejects oversized runtime API keys', () => {
+    const oversized = 'x'.repeat(4097);
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem: () => oversized,
+          setItem: () => {
+            throw new Error('setItem should not be called');
+          },
+          removeItem: () => {
+            throw new Error('removeItem should not be called');
+          },
+        },
+      },
+    });
+
+    expect(getRuntimeApiKey()).toBe('');
+    expect(setRuntimeApiKey(oversized)).toBe(false);
+  });
 });

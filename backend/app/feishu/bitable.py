@@ -66,7 +66,7 @@ async def create_bitable(name: str) -> dict:
     try:
         await _grant_initial_permissions(result["app_token"])
     except Exception as exc:
-        logger.warning("grant initial bitable permissions failed: %s", exc)
+        logger.warning("grant initial bitable permissions failed: %s", redact_sensitive_text(exc, max_chars=500))
     return result
 
 
@@ -90,14 +90,13 @@ async def _grant_initial_permissions(app_token: str) -> None:
     if not owner_open_id and owner_mobile:
         owner_open_id = await _resolve_contact_to_open_id(base, token, mobile=owner_mobile) or ""
         if not owner_open_id:
-            logger.warning("owner mobile %r not found in Feishu tenant", owner_mobile)
+            logger.warning("owner mobile not found in Feishu tenant")
     if not owner_open_id and owner_email:
         owner_open_id = await _resolve_contact_to_open_id(base, token, email=owner_email) or ""
         if not owner_open_id:
             logger.warning(
-                "owner email %r not found in Feishu tenant — 用户必须是该飞书租户成员才能加协作者；"
+                "owner email not found in Feishu tenant — 用户必须是该飞书租户成员才能加协作者；"
                 "请改填 FEISHU_BASE_OWNER_OPEN_ID 或 FEISHU_BASE_OWNER_MOBILE",
-                owner_email,
             )
     if owner_open_id:
         try:
@@ -106,7 +105,7 @@ async def _grant_initial_permissions(app_token: str) -> None:
                 member_type="openid", member_id=owner_open_id, perm="full_access",
             )
         except Exception as exc:
-            logger.warning("add owner failed: %s", exc)
+            logger.warning("add owner failed: %s", redact_sensitive_text(exc, max_chars=500))
 
     # 2. 附加只读成员
     extras = [v.strip() for v in (settings.feishu_base_extra_viewers or "").split(",") if v.strip()]
@@ -118,7 +117,7 @@ async def _grant_initial_permissions(app_token: str) -> None:
             oid = await _resolve_contact_to_open_id(base, token, mobile=v) or ""
         if "@" in v or (v.isdigit() and len(v) >= 7):
             if not oid:
-                logger.warning("extra viewer %r not in tenant", v)
+                logger.warning("extra viewer not in tenant")
                 continue
         try:
             await _add_bitable_member(
@@ -126,14 +125,14 @@ async def _grant_initial_permissions(app_token: str) -> None:
                 member_type="openid", member_id=oid, perm="view",
             )
         except Exception as exc:
-            logger.warning("add extra viewer %s failed: %s", v, exc)
+            logger.warning("add extra viewer failed: %s", redact_sensitive_text(exc, max_chars=500))
 
     # 3. 打开「组织内任何人可查看」链接分享
     if settings.feishu_base_public_link_share:
         try:
             await _patch_public_link_share(base=base, token=token, app_token=app_token)
         except Exception as exc:
-            logger.warning("public link share patch failed: %s", exc)
+            logger.warning("public link share patch failed: %s", redact_sensitive_text(exc, max_chars=500))
 
 
 async def _resolve_contact_to_open_id(
@@ -167,7 +166,7 @@ async def _resolve_contact_to_open_id(
     if r.status_code >= 400 or body.get("code", 0) != 0:
         logger.warning(
             "contact→open_id lookup failed: status=%s code=%s msg=%s",
-            r.status_code, body.get("code"), body.get("msg"),
+            r.status_code, body.get("code"), redact_sensitive_text(body.get("msg"), max_chars=500),
         )
         return None
     items = (body.get("data") or {}).get("user_list") or []
@@ -203,13 +202,12 @@ async def _add_bitable_member(
     if r.status_code >= 400 or body.get("code", 0) != 0:
         raise RuntimeError(
             f"add member failed status={r.status_code} code={body.get('code')} "
-            f"msg={body.get('msg')} member={member_type}:{member_id} perm={perm}"
+            f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)} member_type={member_type} perm={perm}"
         )
     logger.info(
-        "Granted %s to %s:%s on bitable %s",
+        "Granted %s to %s member on bitable %s",
         perm,
         member_type,
-        member_id,
         redact_sensitive_text(f"app_token={app_token}"),
     )
 
@@ -239,7 +237,8 @@ async def _patch_public_link_share(*, base: str, token: str, app_token: str) -> 
         pass
     if r.status_code >= 400 or body.get("code", 0) != 0:
         raise RuntimeError(
-            f"public link share failed status={r.status_code} code={body.get('code')} msg={body.get('msg')}"
+            f"public link share failed status={r.status_code} code={body.get('code')} "
+            f"msg={redact_sensitive_text(body.get('msg'), max_chars=500)}"
         )
     logger.info(
         "Enabled tenant_readable link share on bitable %s",
@@ -395,9 +394,9 @@ async def _patch_view_filter(
     if r.status_code >= 400 or body.get("code", 0) != 0:
         logger.warning(
             "view filter patch failed status=%s code=%s msg=%s body=%s view_type=%s payload=%s",
-            r.status_code, body.get("code"), body.get("msg"),
-            json.dumps(body, ensure_ascii=False)[:400], view_type,
-            json.dumps(payload, ensure_ascii=False)[:400],
+            r.status_code, body.get("code"), redact_sensitive_text(body.get("msg"), max_chars=500),
+            redact_sensitive_text(json.dumps(body, ensure_ascii=False), max_chars=400), view_type,
+            redact_sensitive_text(json.dumps(payload, ensure_ascii=False), max_chars=400),
         )
     else:
         logger.info(
@@ -483,7 +482,7 @@ async def _create_bitable_impl(name: str, client=None) -> dict:
         timeout=30.0,
     )
     if not resp.success():
-        raise RuntimeError(f"创建多维表格失败: {resp.msg}")
+        raise RuntimeError(f"创建多维表格失败: {redact_sensitive_text(resp.msg, max_chars=500)}")
     app_token = resp.data.app.app_token
     url = f"{get_feishu_base_url()}/base/{app_token}"
     logger.info("多维表格创建成功: %s", redact_sensitive_text(f"app_token={app_token}"))
@@ -505,7 +504,7 @@ async def _create_table_impl(
         timeout=30.0,
     )
     if not resp.success():
-        raise RuntimeError(f"创建表格失败: {resp.msg}")
+        raise RuntimeError(f"创建表格失败: {redact_sensitive_text(resp.msg, max_chars=500)}")
     if not resp.data:
         raise RuntimeError(f"创建表格成功但响应数据为空，无法获取 table_id")
 
@@ -741,7 +740,7 @@ async def _batch_add_records_impl(
             timeout=30.0,
         )
         if not resp.success():
-            raise RuntimeError(f"批量添加记录失败: {resp.msg}")
+            raise RuntimeError(f"批量添加记录失败: {redact_sensitive_text(resp.msg, max_chars=500)}")
         created_count = len(resp.data.records or []) if resp.data else 0
         if created_count != len(chunk):
             raise RuntimeError(

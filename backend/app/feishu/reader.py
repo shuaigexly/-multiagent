@@ -10,6 +10,7 @@ from lark_oapi.api.im.v1 import ListChatRequest, ListMessageRequest
 from lark_oapi.api.task.v2 import ListTaskRequest
 from lark_oapi.api.wiki.v2 import ListSpaceNodeRequest, ListSpaceRequest
 
+from app.core.redaction import redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -20,13 +21,14 @@ class FeishuReaderError(RuntimeError):
 
 
 def _response_error(action: str, resp) -> FeishuReaderError:
-    return FeishuReaderError(f"{action}失败: {getattr(resp, 'msg', '')} (code={getattr(resp, 'code', '')})")
+    msg = redact_sensitive_text(getattr(resp, "msg", ""), max_chars=500)
+    return FeishuReaderError(f"{action}失败: {msg} (code={getattr(resp, 'code', '')})")
 
 
 def _wrap_reader_exception(action: str, exc: Exception) -> FeishuReaderError:
     if isinstance(exc, FeishuReaderError):
         return exc
-    return FeishuReaderError(f"{action}异常: {exc}")
+    return FeishuReaderError(f"{action}异常: {redact_sensitive_text(exc, max_chars=500)}")
 
 
 def _ts_to_readable(ts) -> str | None:
@@ -82,7 +84,12 @@ async def _list_all_pages(
         else:
             resp = await asyncio.wait_for(asyncio.to_thread(call, req, option), timeout=timeout)
         if not resp.success():
-            logger.error("%s failed: %s (code=%s)", action, resp.msg, resp.code)
+            logger.error(
+                "%s failed: %s (code=%s)",
+                action,
+                redact_sensitive_text(resp.msg, max_chars=500),
+                resp.code,
+            )
             raise _response_error(action, resp)
         data = resp.data
         items.extend(getattr(data, item_attr, None) or [])
@@ -134,7 +141,7 @@ async def list_drive_files(page_size: int = 20) -> list[dict]:
             for item in files
         ]
     except Exception as e:
-        logger.error("read drive files failed: %s", e, exc_info=True)
+        logger.error("read drive files failed: %s", redact_sensitive_text(e, max_chars=500))
         raise _wrap_reader_exception("read drive files", e) from e
 
 
@@ -161,7 +168,7 @@ async def list_wiki_spaces(page_size: int = 20) -> list[dict]:
             for item in spaces
         ]
     except Exception as e:
-        logger.error("read wiki spaces failed: %s", e, exc_info=True)
+        logger.error("read wiki spaces failed: %s", redact_sensitive_text(e, max_chars=500))
         raise _wrap_reader_exception("read wiki spaces", e) from e
 
 
@@ -191,7 +198,11 @@ async def list_wiki_nodes(space_id: str, page_size: int = 50) -> list[dict]:
             for item in nodes
         ]
     except Exception as e:
-        logger.error("read wiki nodes failed space_id=%s: %s", space_id, e, exc_info=True)
+        logger.error(
+            "read wiki nodes failed space_id=%s: %s",
+            space_id,
+            redact_sensitive_text(e, max_chars=500),
+        )
         raise _wrap_reader_exception("read wiki nodes", e) from e
 
 
@@ -219,7 +230,7 @@ async def list_chats(page_size: int = 20) -> list[dict]:
             for item in chats
         ]
     except Exception as e:
-        logger.error("read chats failed: %s", e, exc_info=True)
+        logger.error("read chats failed: %s", redact_sensitive_text(e, max_chars=500))
         raise _wrap_reader_exception("read chats", e) from e
 
 
@@ -254,7 +265,11 @@ async def list_chat_messages(chat_id: str, page_size: int = 20) -> list[dict]:
             for item in messages
         ]
     except Exception as e:
-        logger.error("read chat messages failed chat_id=%s: %s", chat_id, e, exc_info=True)
+        logger.error(
+            "read chat messages failed chat_id=%s: %s",
+            chat_id,
+            redact_sensitive_text(e, max_chars=500),
+        )
         raise _wrap_reader_exception("read chat messages", e) from e
 
 
@@ -297,7 +312,7 @@ async def list_calendar_events(start_time: str, end_time: str, page_size: int = 
             for item in events
         ]
     except Exception as e:
-        logger.error("read calendar events failed: %s", e, exc_info=True)
+        logger.error("read calendar events failed: %s", redact_sensitive_text(e, max_chars=500))
         raise _wrap_reader_exception("read calendar events", e) from e
 
 
@@ -343,7 +358,7 @@ async def list_tasks(page_size: int = 50) -> list[dict]:
             for item in tasks
         ]
     except Exception as e:
-        logger.error("read tasks failed: %s", e, exc_info=True)
+        logger.error("read tasks failed: %s", redact_sensitive_text(e, max_chars=500))
         raise _wrap_reader_exception("read tasks", e) from e
 
 
@@ -368,9 +383,17 @@ async def read_doc_content(document_id: str) -> str:
                 timeout=30.0,
             )
         if not resp.success():
-            logger.error(f"读取文档内容失败: {resp.msg} (code={resp.code})")
+            logger.error(
+                "读取文档内容失败: %s (code=%s)",
+                redact_sensitive_text(resp.msg, max_chars=500),
+                resp.code,
+            )
             raise _response_error("读取文档内容", resp)
         return resp.data.content if resp.data and resp.data.content else ""
     except Exception as e:
-        logger.error(f"读取文档内容异常(document_id={document_id}): {e}", exc_info=True)
+        logger.error(
+            "读取文档内容异常(%s): %s",
+            redact_sensitive_text(f"document_token={document_id}"),
+            redact_sensitive_text(e, max_chars=500),
+        )
         raise _wrap_reader_exception("读取文档内容", e) from e

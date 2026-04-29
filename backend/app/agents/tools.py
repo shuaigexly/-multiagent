@@ -21,6 +21,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from app.core.redaction import redact_sensitive_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +87,7 @@ async def dispatch_tool(name: str, raw_args: str | dict[str, Any]) -> str:
         try:
             args = json.loads(raw_args) if raw_args.strip() else {}
         except json.JSONDecodeError as exc:
-            return f"ERROR: tool args not valid JSON: {exc}"
+            return f"ERROR: tool args not valid JSON: {redact_sensitive_text(exc, max_chars=500)}"
     else:
         args = dict(raw_args or {})
 
@@ -93,10 +95,11 @@ async def dispatch_tool(name: str, raw_args: str | dict[str, Any]) -> str:
         logger.info("tool.invoke", extra={"tool": name, "args_keys": list(args.keys())})
         result = await spec.handler(**args)
     except TypeError as exc:
-        return f"ERROR: invalid arguments for tool '{name}': {exc}"
+        return f"ERROR: invalid arguments for tool '{name}': {redact_sensitive_text(exc, max_chars=500)}"
     except Exception as exc:
-        logger.warning("tool.failed name=%s err=%s", name, exc)
-        return f"ERROR: tool '{name}' raised: {exc}"
+        safe_error = redact_sensitive_text(exc, max_chars=500)
+        logger.warning("tool.failed name=%s err=%s", name, safe_error)
+        return f"ERROR: tool '{name}' raised: {safe_error}"
 
     if isinstance(result, (dict, list)):
         try:

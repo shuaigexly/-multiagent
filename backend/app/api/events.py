@@ -3,8 +3,9 @@ import asyncio
 import json
 import logging
 import time
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
@@ -19,7 +20,10 @@ STREAM_TOKEN_TTL_SECONDS = get_int_env("STREAM_TOKEN_TTL_SECONDS", 60, minimum=1
 
 
 @router.post("/{task_id}/events-token", dependencies=[Depends(require_api_key)])
-async def task_events_token(task_id: str, request: Request):
+async def task_events_token(
+    task_id: Annotated[str, Path(min_length=1, max_length=128)],
+    request: Request,
+):
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Task.id).where(Task.id == task_id))
         if not result.scalar_one_or_none():
@@ -36,9 +40,9 @@ async def task_events_token(task_id: str, request: Request):
 
 @router.get("/{task_id}/events")
 async def task_events(
-    task_id: str,
+    task_id: Annotated[str, Path(min_length=1, max_length=128)],
     request: Request,
-    token: str = Query(""),
+    token: Annotated[str, Query(max_length=4096)] = "",
 ):
     """SSE 流：推送任务执行进度事件（业务语言，非技术日志）"""
     verify_stream_token(
