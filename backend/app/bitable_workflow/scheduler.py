@@ -226,6 +226,65 @@ _WORKFLOW_STEP_META = {
     },
 }
 
+_AGENT_PIPELINE_META = [
+    {
+        "key": "data_analyst",
+        "name": "陈晓明",
+        "role": "数据分析师",
+        "wave": "Wave 1",
+        "dependency": "无上游依赖",
+        "summary": "指标、趋势、异常和数据可信度",
+    },
+    {
+        "key": "content_manager",
+        "name": "林诗雨",
+        "role": "内容总监",
+        "wave": "Wave 1",
+        "dependency": "无上游依赖",
+        "summary": "内容资产、表达策略和传播角度",
+    },
+    {
+        "key": "seo_advisor",
+        "name": "王浩然",
+        "role": "增长黑客",
+        "wave": "Wave 1",
+        "dependency": "无上游依赖",
+        "summary": "关键词机会、流量入口和实验方向",
+    },
+    {
+        "key": "product_manager",
+        "name": "张志远",
+        "role": "产品经理",
+        "wave": "Wave 1",
+        "dependency": "无上游依赖",
+        "summary": "用户痛点、功能机会和路线优先级",
+    },
+    {
+        "key": "operations_manager",
+        "name": "赵小雅",
+        "role": "运营总监",
+        "wave": "Wave 1",
+        "dependency": "无上游依赖",
+        "summary": "执行拆解、资源协调和落地节奏",
+    },
+    {
+        "key": "finance_advisor",
+        "name": "李婷婷",
+        "role": "CFO · 财务顾问",
+        "wave": "Wave 2",
+        "dependency": "依赖数据分析师输出",
+        "summary": "现金流、成本收益和财务风险",
+    },
+    {
+        "key": "ceo_assistant",
+        "name": "吴思远",
+        "role": "CEO 助理",
+        "wave": "Wave 3",
+        "dependency": "汇总全部上游结论",
+        "summary": "管理摘要、决策建议和行动优先级",
+    },
+]
+
 
 def _progress_percent(value: object) -> int:
     raw = 0.0
@@ -236,6 +295,54 @@ def _progress_percent(value: object) -> int:
     if raw <= 1:
         raw *= 100
     return max(0, min(100, int(round(raw))))
+
+
+def _agent_pipeline_status(
+    *,
+    wave: str,
+    progress_pct: int,
+    analysis_status: str,
+    delivery_status: str,
+) -> str:
+    if analysis_status == "error":
+        if progress_pct >= 75:
+            return "done" if wave in {"Wave 1", "Wave 2"} else "error"
+        if progress_pct >= 45:
+            return "done" if wave == "Wave 1" else ("error" if wave == "Wave 2" else "pending")
+        return "error" if wave == "Wave 1" else "pending"
+    if delivery_status == "done" or progress_pct >= 100:
+        return "done"
+    if wave == "Wave 1":
+        if progress_pct >= 45:
+            return "done"
+        return "running" if progress_pct > 0 else "pending"
+    if wave == "Wave 2":
+        if progress_pct >= 75:
+            return "done"
+        return "running" if progress_pct >= 45 else "pending"
+    if progress_pct >= 95:
+        return "done"
+    return "running" if progress_pct >= 75 else "pending"
+
+
+def _build_agent_pipeline_payload(
+    *,
+    progress_pct: int,
+    analysis_status: str,
+    delivery_status: str,
+) -> list[dict]:
+    return [
+        {
+            **agent,
+            "status": _agent_pipeline_status(
+                wave=agent["wave"],
+                progress_pct=progress_pct,
+                analysis_status=analysis_status,
+                delivery_status=delivery_status,
+            ),
+        }
+        for agent in _AGENT_PIPELINE_META
+    ]
 
 
 def _compact_step_note(value: object, limit: int = 220) -> str:
@@ -368,6 +475,11 @@ def _build_workflow_progress_payload(
         "step_items": current_step["items"],
         "step_note": current_step.get("note") or "",
         "workflow_steps": steps,
+        "agent_pipeline": _build_agent_pipeline_payload(
+            progress_pct=progress_pct,
+            analysis_status=analysis_status,
+            delivery_status=delivery_status,
+        ),
     }
 
 

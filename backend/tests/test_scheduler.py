@@ -1268,12 +1268,25 @@ class TestRunCycleActionRouting:
         assert started_payload["workflow_steps"][0]["status"] == "done"
         assert started_payload["workflow_steps"][1]["status"] == "running"
         assert started_payload["workflow_steps"][2]["status"] == "pending"
+        assert len(started_payload["agent_pipeline"]) == 7
+        assert {item["wave"] for item in started_payload["agent_pipeline"]} == {"Wave 1", "Wave 2", "Wave 3"}
+        assert all(
+            item["status"] == "running"
+            for item in started_payload["agent_pipeline"]
+            if item["wave"] == "Wave 1"
+        )
+        assert all(
+            item["status"] == "pending"
+            for item in started_payload["agent_pipeline"]
+            if item["wave"] in {"Wave 2", "Wave 3"}
+        )
         assert publish_mock.await_args_list[-1].args[1] == "task.done"
         assert done_payload["step_key"] == "delivery"
         assert done_payload["route"] == "补数复核"
         assert done_payload["workflow_steps"][1]["status"] == "done"
         assert done_payload["workflow_steps"][2]["status"] == "done"
         assert done_payload["workflow_steps"][3]["status"] == "done"
+        assert all(item["status"] == "done" for item in done_payload["agent_pipeline"])
         assert any("证据条数" in item for item in done_payload["workflow_steps"][3]["items"])
 
     @pytest.mark.asyncio
@@ -1366,4 +1379,5 @@ class TestRunCycleActionRouting:
         assert error_payload["step_key"] == "analysis"
         assert error_payload["step_status"] == "error"
         assert error_payload["workflow_steps"][1]["status"] == "error"
+        assert any(item["status"] == "error" for item in error_payload["agent_pipeline"])
         assert "LLM timeout while generating report" in error_payload["reason"]

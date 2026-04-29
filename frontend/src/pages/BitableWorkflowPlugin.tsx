@@ -2,16 +2,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilterConjunction, FilterOperator, bitable, type IGetRecordsFilterInfo } from "@lark-base-open/js-sdk";
 import {
   Activity,
+  BrainCircuit,
   CheckCircle2,
+  CircleDotDashed,
   Clock3,
+  GitBranch,
   Loader2,
+  Radio,
   ShieldAlert,
   Sparkles,
+  TimerReset,
+  Zap,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
+import { AGENT_PERSONAS } from "@/components/agentPersonas";
 import { API_KEY_STORAGE_KEY, getRuntimeApiKey } from "@/services/http";
-import { subscribeTaskProgress, type ProgressEvent } from "@/services/workflow";
+import { subscribeTaskProgress, type AgentPipelineSnapshot, type ProgressEvent } from "@/services/workflow";
 import {
   buildTraceChainItems,
   buildRelationSections,
@@ -71,6 +78,7 @@ interface LiveState {
   activeAgent?: string;
   history: LiveStepEvent[];
   workflowSteps?: WorkflowStepDetail[];
+  agentPipeline?: AgentPipelineSnapshot[];
 }
 
 interface BitableRecordValue {
@@ -94,6 +102,20 @@ const STEP_STATUS_STYLE: Record<LiveStepEvent["status"], string> = {
   running: "border-sky-200 bg-sky-50 text-sky-700",
   done: "border-emerald-200 bg-emerald-50 text-emerald-700",
   error: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+const AGENT_NODE_STYLE: Record<AgentPipelineSnapshot["status"], string> = {
+  running: "border-sky-300 bg-sky-50 text-sky-700 shadow-[0_0_0_4px_rgba(14,165,233,0.10)]",
+  done: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  pending: "border-slate-200 bg-white text-slate-500",
+  error: "border-rose-200 bg-rose-50 text-rose-700 shadow-[0_0_0_4px_rgba(244,63,94,0.10)]",
+};
+
+const AGENT_STATUS_LABEL: Record<AgentPipelineSnapshot["status"], string> = {
+  running: "运行中",
+  done: "已完成",
+  pending: "待接力",
+  error: "异常",
 };
 
 const RESOLUTION_STYLE: Record<WorkflowResolutionDebug["resolutionMode"], string> = {
@@ -278,6 +300,209 @@ function buildWorkflowDetails(
           : undefined,
     },
   ];
+}
+
+const AGENT_FLOW_BLUEPRINT: Array<Pick<AgentPipelineSnapshot, "key" | "wave" | "dependency" | "summary">> = [
+  { key: "data_analyst", wave: "Wave 1", dependency: "无上游依赖", summary: "指标、趋势、异常和数据可信度" },
+  { key: "content_manager", wave: "Wave 1", dependency: "无上游依赖", summary: "内容资产、表达策略和传播角度" },
+  { key: "seo_advisor", wave: "Wave 1", dependency: "无上游依赖", summary: "关键词机会、流量入口和实验方向" },
+  { key: "product_manager", wave: "Wave 1", dependency: "无上游依赖", summary: "用户痛点、功能机会和路线优先级" },
+  { key: "operations_manager", wave: "Wave 1", dependency: "无上游依赖", summary: "执行拆解、资源协调和落地节奏" },
+  { key: "finance_advisor", wave: "Wave 2", dependency: "依赖数据分析师输出", summary: "现金流、成本收益和财务风险" },
+  { key: "ceo_assistant", wave: "Wave 3", dependency: "汇总全部上游结论", summary: "管理摘要、决策建议和行动优先级" },
+];
+
+function makeAgentSnapshot(
+  item: Pick<AgentPipelineSnapshot, "key" | "wave" | "dependency" | "summary">,
+  status: AgentPipelineSnapshot["status"],
+): AgentPipelineSnapshot {
+  const persona = AGENT_PERSONAS[item.key];
+  return {
+    ...item,
+    name: persona?.name || item.key,
+    role: persona?.title || "AI 岗位",
+    status,
+  };
+}
+
+function waveStatus(
+  wave: AgentPipelineSnapshot["wave"],
+  progress: number,
+  taskStatus: string,
+  liveStatus?: LiveState["status"],
+): AgentPipelineSnapshot["status"] {
+  const text = `${taskStatus} ${liveStatus || ""}`.toLowerCase();
+  const failed = liveStatus === "error" || text.includes("失败") || text.includes("error");
+  const done = liveStatus === "done" || progress >= 100 || text.includes("已完成") || text.includes("done");
+  if (done) return "done";
+  if (failed) {
+    if (progress >= 75) return wave === "Wave 3" ? "error" : "done";
+    if (progress >= 45) return wave === "Wave 1" ? "done" : wave === "Wave 2" ? "error" : "pending";
+    return wave === "Wave 1" ? "error" : "pending";
+  }
+  if (wave === "Wave 1") return progress >= 45 ? "done" : progress > 0 ? "running" : "pending";
+  if (wave === "Wave 2") return progress >= 75 ? "done" : progress >= 45 ? "running" : "pending";
+  return progress >= 95 ? "done" : progress >= 75 ? "running" : "pending";
+}
+
+function normalizeAgentPipeline(
+  pipeline: AgentPipelineSnapshot[] | undefined,
+  progress: number,
+  taskStatus: string,
+  liveStatus?: LiveState["status"],
+): AgentPipelineSnapshot[] {
+  if (pipeline?.length) {
+    return AGENT_FLOW_BLUEPRINT.map((fallback) => {
+      const current = pipeline.find((item) => item.key === fallback.key);
+      if (!current) return makeAgentSnapshot(fallback, waveStatus(fallback.wave, progress, taskStatus, liveStatus));
+      const persona = AGENT_PERSONAS[current.key];
+      return {
+        key: current.key,
+        name: current.name || persona?.name || current.key,
+        role: current.role || persona?.title || "AI 岗位",
+        wave: current.wave || fallback.wave,
+        dependency: current.dependency || fallback.dependency,
+        summary: current.summary || fallback.summary,
+        status: ["done", "running", "pending", "error"].includes(current.status)
+          ? current.status
+          : waveStatus(current.wave || fallback.wave, progress, taskStatus, liveStatus),
+      };
+    });
+  }
+  return AGENT_FLOW_BLUEPRINT.map((item) => makeAgentSnapshot(item, waveStatus(item.wave, progress, taskStatus, liveStatus)));
+}
+
+function AgentFlowDashboard({
+  agents,
+  progress,
+  stage,
+  route,
+  reviewAction,
+  evidenceCount,
+  pendingDataCount,
+}: {
+  agents: AgentPipelineSnapshot[];
+  progress: number;
+  stage: string;
+  route: string;
+  reviewAction: string;
+  evidenceCount: number;
+  pendingDataCount: number;
+}) {
+  const doneCount = agents.filter((agent) => agent.status === "done").length;
+  const runningCount = agents.filter((agent) => agent.status === "running").length;
+  const errorCount = agents.filter((agent) => agent.status === "error").length;
+  const waves = ["Wave 1", "Wave 2", "Wave 3"];
+  const waveCaptions: Record<string, string> = {
+    "Wave 1": "五岗并行",
+    "Wave 2": "财务接力",
+    "Wave 3": "CEO 汇总",
+  };
+
+  return (
+    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 bg-[linear-gradient(135deg,rgba(2,132,199,0.08),rgba(255,255,255,0.96)_44%,rgba(16,185,129,0.08))] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-slate-500">
+              <BrainCircuit className="h-4 w-4 text-sky-600" />
+              Agent Command Deck
+            </div>
+            <div className="mt-2 text-2xl font-semibold leading-tight text-slate-950">七岗 AI 运行驾驶舱</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <span className="rounded-full border border-slate-200 bg-white/80 px-3 py-1">{doneCount}/7 已完成</span>
+              <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-sky-700">{runningCount || 0} 个运行中</span>
+              {errorCount > 0 && <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">{errorCount} 个异常</span>}
+            </div>
+          </div>
+          <div className="min-w-40 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 text-right shadow-sm">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Live Progress</div>
+            <div className="mt-1 text-3xl font-semibold tabular-nums text-slate-950">{progress.toFixed(0)}%</div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-4">
+          {[
+            { icon: Radio, label: "当前阶段", value: stage || "等待调度" },
+            { icon: GitBranch, label: "路由", value: route || "待生成" },
+            { icon: Zap, label: "评审动作", value: reviewAction || "待评审" },
+            { icon: TimerReset, label: "证据 / 补数", value: `${evidenceCount} / ${pendingDataCount}` },
+          ].map((item) => (
+            <div key={item.label} className="rounded-2xl border border-white/80 bg-white/88 px-3 py-3 shadow-sm">
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                <item.icon className="h-3.5 w-3.5 text-slate-500" />
+                {item.label}
+              </div>
+              <div className="mt-2 line-clamp-2 text-sm font-medium leading-5 text-slate-800">{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-0 lg:grid-cols-[1.15fr_0.78fr_0.78fr]">
+        {waves.map((wave, waveIndex) => {
+          const waveAgents = agents.filter((agent) => agent.wave === wave);
+          const waveDone = waveAgents.every((agent) => agent.status === "done");
+          const waveRunning = waveAgents.some((agent) => agent.status === "running");
+          const waveError = waveAgents.some((agent) => agent.status === "error");
+          return (
+            <div key={wave} className={`relative border-slate-200 p-4 ${waveIndex > 0 ? "border-t lg:border-l lg:border-t-0" : ""}`}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{wave}</div>
+                  <div className="mt-1 text-base font-semibold text-slate-950">{waveCaptions[wave]}</div>
+                </div>
+                <div className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                  waveError ? AGENT_NODE_STYLE.error : waveDone ? AGENT_NODE_STYLE.done : waveRunning ? AGENT_NODE_STYLE.running : AGENT_NODE_STYLE.pending
+                }`}>
+                  {waveError ? "异常" : waveDone ? "完成" : waveRunning ? "运行中" : "排队"}
+                </div>
+              </div>
+              <div className={wave === "Wave 1" ? "grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2" : "grid gap-2"}>
+                {waveAgents.map((agent) => {
+                  const persona = AGENT_PERSONAS[agent.key];
+                  return (
+                    <div key={agent.key} className={`rounded-2xl border px-3 py-3 transition-all ${AGENT_NODE_STYLE[agent.status]}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <div
+                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold text-white ${agent.status === "running" ? "animate-pulse" : ""}`}
+                            style={{ backgroundColor: persona?.color || "#64748b" }}
+                          >
+                            {persona?.avatar || agent.name.slice(0, 1)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-slate-950">{agent.role}</div>
+                            <div className="truncate text-xs text-slate-500">{agent.name}</div>
+                          </div>
+                        </div>
+                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/80">
+                          {agent.status === "done" ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                          ) : agent.status === "error" ? (
+                            <ShieldAlert className="h-3.5 w-3.5 text-rose-600" />
+                          ) : agent.status === "running" ? (
+                            <Sparkles className="h-3.5 w-3.5 text-sky-600" />
+                          ) : (
+                            <CircleDotDashed className="h-3.5 w-3.5 text-slate-400" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-medium">{AGENT_STATUS_LABEL[agent.status]}</span>
+                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] text-slate-500">{agent.dependency}</span>
+                      </div>
+                      <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">{agent.summary}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 async function resolveTableIdByName(name: string): Promise<string> {
@@ -565,6 +790,7 @@ export default function BitableWorkflowPlugin() {
                 workflowSteps: event.payload.workflow_steps
                   ? normalizeWorkflowSteps(event.payload.workflow_steps)
                   : prev?.workflowSteps,
+                agentPipeline: event.payload.agent_pipeline || prev?.agentPipeline,
               };
             });
           });
@@ -640,6 +866,10 @@ export default function BitableWorkflowPlugin() {
       { label: "需补数条数", value: `${numberValue(task?.fields["需补数条数"])} 条` },
     ],
     [task],
+  );
+  const agentPipeline = useMemo(
+    () => normalizeAgentPipeline(live?.agentPipeline, progress, status, live?.status),
+    [live?.agentPipeline, live?.status, progress, status],
   );
 
   return (
@@ -802,6 +1032,18 @@ export default function BitableWorkflowPlugin() {
                   <div className={`rounded-full px-3 py-1 text-xs font-medium ${live?.status === "done" ? "bg-emerald-100 text-emerald-700" : live?.status === "error" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}>
                     {live?.status === "done" ? "已完成" : live?.status === "error" ? "异常待重试" : "执行中"}
                   </div>
+                </div>
+
+                <div className="mt-5">
+                  <AgentFlowDashboard
+                    agents={agentPipeline}
+                    progress={progress}
+                    stage={live?.stage || textValue(task.fields["当前阶段"]) || "等待调度"}
+                    route={textValue(task.fields["工作流路由"]) || "待生成"}
+                    reviewAction={reviewAction}
+                    evidenceCount={numberValue(task.fields["证据条数"])}
+                    pendingDataCount={numberValue(task.fields["需补数条数"])}
+                  />
                 </div>
 
                 <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">

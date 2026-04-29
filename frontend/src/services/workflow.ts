@@ -218,6 +218,16 @@ export interface WorkflowStepSnapshot {
   note?: string;
 }
 
+export interface AgentPipelineSnapshot {
+  key: string;
+  name: string;
+  role: string;
+  wave: 'Wave 1' | 'Wave 2' | 'Wave 3' | string;
+  dependency: string;
+  summary: string;
+  status: 'done' | 'running' | 'pending' | 'error';
+}
+
 export interface WorkflowProgressPayload extends Record<string, unknown> {
   stage?: string;
   progress?: number;
@@ -232,6 +242,7 @@ export interface WorkflowProgressPayload extends Record<string, unknown> {
   step_items?: string[];
   step_note?: string;
   workflow_steps?: WorkflowStepSnapshot[];
+  agent_pipeline?: AgentPipelineSnapshot[];
 }
 
 function describeSseError(err: unknown): string {
