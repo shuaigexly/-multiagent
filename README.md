@@ -876,8 +876,8 @@ Explore agent 审计 v8.6.4→v8.6.16 发现 base_picker / user_token_view_setup
 
 **🔒 `python_calc` AST 白名单沙箱**
 - 之前是 token blacklist（"import" / "open(" 等关键词检测），可被 `__class__` / `getattr` 绕过
-- 升级为 `ast.parse` + `NodeVisitor` 白名单：仅允许 `BinOp` / `Compare` / `Call`(白名单函数) / `Subscript` / 字面量
-- 阻断 DoS：大指数（`9**99**99`）/ 大重复（`"a"*10**8`）/ comprehension / 危险调用
+- 升级为 `ast.parse` + `NodeVisitor` 白名单：仅允许基础算术 / 比较 / 白名单函数调用 / 字面量容器
+- 阻断 DoS：大指数（`9**99**99`）/ 大重复（`"a"*10**8`）/ 动态序列重复 / comprehension / 危险调用
 
 **🩺 持久化路径 prompt injection 全链路消毒**
 - `store_memory` 写入前消毒 task_text + summary，injection 命中即拒写
@@ -1239,7 +1239,7 @@ Explore agent 审计 v8.6.4→v8.6.16 发现 base_picker / user_token_view_setup
 | `fetch_url(url)` | 抓取公开网页（行业基准、新闻、文档） | 文本（HTML 自动去标签，前 8000 字） |
 | `bitable_query(app_token, table_id, filter)` | 查询任何多维表格记录 | JSON 数组（最多 50 条） |
 | `feishu_sheet(url)` | 读取**真实飞书电子表格** | 前 100 行 CSV |
-| `python_calc(expression)` | 受限 Python 数值计算（math 库 + 列表推导） | 字符串结果（禁 I/O / import / `__`） |
+| `python_calc(expression)` | 受限 Python 数值计算（math 库 + 字面量列表/元组） | 字符串结果（禁 I/O / import / `__` / comprehension） |
 
 **📥 真实数据源升级**
 - v6.0 仅支持把 CSV 文本粘到「数据源」字段
