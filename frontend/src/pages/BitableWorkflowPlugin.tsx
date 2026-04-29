@@ -18,7 +18,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { AGENT_PERSONAS } from "@/components/agentPersonas";
 import { API_KEY_STORAGE_KEY, getRuntimeApiKey } from "@/services/http";
-import { subscribeTaskProgress, type AgentPipelineSnapshot, type ProgressEvent } from "@/services/workflow";
+import { subscribeTaskProgress, type AgentPipelineSnapshot, type ProgressEvent, type WorkflowStreamStatus } from "@/services/workflow";
 import {
   buildTraceChainItems,
   buildRelationSections,
@@ -74,6 +74,8 @@ interface LiveState {
   progress: number;
   status: "running" | "done" | "error";
   updatedAt: string;
+  streamStatus?: WorkflowStreamStatus;
+  streamMessage?: string;
   tokenPreview?: string;
   activeAgent?: string;
   history: LiveStepEvent[];
@@ -103,6 +105,20 @@ const STEP_STATUS_STYLE: Record<LiveStepEvent["status"], string> = {
   running: "border-sky-200 bg-sky-50 text-sky-700",
   done: "border-emerald-200 bg-emerald-50 text-emerald-700",
   error: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+const STREAM_STATUS_STYLE: Record<WorkflowStreamStatus, string> = {
+  connecting: "border-amber-200 bg-amber-50 text-amber-700",
+  connected: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  closed: "border-slate-200 bg-slate-100 text-slate-600",
+  error: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+const STREAM_STATUS_LABEL: Record<WorkflowStreamStatus, string> = {
+  connecting: "连接中",
+  connected: "实时在线",
+  closed: "已关闭",
+  error: "Base 回退",
 };
 
 const AGENT_NODE_STYLE: Record<AgentPipelineSnapshot["status"], string> = {
@@ -491,6 +507,8 @@ function AgentFlowDashboard({
   reviewAction,
   evidenceCount,
   pendingDataCount,
+  selectedAgentKey,
+  onSelectAgent,
 }: {
   agents: AgentPipelineSnapshot[];
   progress: number;
@@ -499,6 +517,8 @@ function AgentFlowDashboard({
   reviewAction: string;
   evidenceCount: number;
   pendingDataCount: number;
+  selectedAgentKey?: string;
+  onSelectAgent?: (agentKey: string) => void;
 }) {
   const doneCount = agents.filter((agent) => agent.status === "done").length;
   const runningCount = agents.filter((agent) => agent.status === "running").length;
@@ -573,7 +593,14 @@ function AgentFlowDashboard({
                 {waveAgents.map((agent) => {
                   const persona = AGENT_PERSONAS[agent.key];
                   return (
-                    <div key={agent.key} className={`rounded-2xl border px-3 py-3 transition-all ${AGENT_NODE_STYLE[agent.status]}`}>
+                    <button
+                      key={agent.key}
+                      type="button"
+                      onClick={() => onSelectAgent?.(agent.key)}
+                      className={`w-full rounded-2xl border px-3 py-3 text-left transition-all ${AGENT_NODE_STYLE[agent.status]} ${
+                        selectedAgentKey === agent.key ? "ring-2 ring-sky-300 ring-offset-2" : "hover:-translate-y-0.5 hover:shadow-sm"
+                      }`}
+                    >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex min-w-0 items-center gap-2.5">
                           <div
@@ -623,13 +650,119 @@ function AgentFlowDashboard({
                       <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
                         {agent.status === "error" ? agent.reason || agent.summary : agent.summary}
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function AgentRunInspector({
+  agent,
+  timeline,
+  streamStatus,
+  streamMessage,
+}: {
+  agent: AgentPipelineSnapshot | null;
+  timeline: LiveStepEvent[];
+  streamStatus?: WorkflowStreamStatus;
+  streamMessage?: string;
+}) {
+  if (!agent) return null;
+  const persona = AGENT_PERSONAS[agent.key];
+  const agentEvents = timeline
+    .filter((event) => {
+      const haystack = `${event.stage} ${event.detail}`;
+      return haystack.includes(agent.name) || haystack.includes(agent.role) || haystack.includes(agent.key);
+    })
+    .slice(0, 4);
+  const metrics = [
+    { label: "耗时", value: formatDurationMs(agent.duration_ms) },
+    { label: "置信度", value: agent.confidence ? `${agent.confidence}/5` : "-" },
+    { label: "证据", value: agent.evidence_count ?? "-" },
+    { label: "行动项", value: agent.action_count ?? "-" },
+  ];
+
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <div
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-base font-semibold text-white"
+            style={{ backgroundColor: persona?.color || "#64748b" }}
+          >
+            {persona?.avatar || agent.name.slice(0, 1)}
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Selected Agent</div>
+            <div className="mt-1 truncate text-lg font-semibold text-slate-950">{agent.role}</div>
+            <div className="mt-1 text-sm text-slate-500">{agent.wave} · {agent.name}</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <span className={`rounded-full border px-3 py-1 text-xs font-medium ${AGENT_NODE_STYLE[agent.status]}`}>
+            {AGENT_STATUS_LABEL[agent.status]}
+          </span>
+          {streamStatus && (
+            <span className={`rounded-full border px-3 py-1 text-xs font-medium ${STREAM_STATUS_STYLE[streamStatus]}`}>
+              {STREAM_STATUS_LABEL[streamStatus]}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        {metrics.map((item) => (
+          <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{item.label}</div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">{item.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3">
+        <div className="text-xs uppercase tracking-[0.16em] text-slate-500">输出摘要</div>
+        <div className="mt-2 text-sm leading-6 text-slate-700">
+          {agent.status === "error" ? agent.reason || agent.summary : agent.summary || "等待该岗位输出。"}
+        </div>
+        {agent.fallback && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            当前为兜底输出，需要在综合报告前复核证据完整度。
+          </div>
+        )}
+        {streamMessage && (
+          <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-500">
+            {streamMessage}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <div className="text-xs uppercase tracking-[0.16em] text-slate-500">关联事件</div>
+        {!agentEvents.length ? (
+          <div className="mt-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-3 text-sm text-slate-500">
+            还没有命中该岗位的原生或实时事件。
+          </div>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {agentEvents.map((event) => (
+              <div key={event.key} className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-slate-900">{event.stage}</div>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${STEP_STATUS_STYLE[event.status]}`}>
+                    {event.eventType === "native.log" ? "Base" : "SSE"}
+                  </span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{event.detail}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -688,6 +821,7 @@ export default function BitableWorkflowPlugin() {
   const [archives, setArchives] = useState<TaskSnapshot[]>([]);
   const [automationLogs, setAutomationLogs] = useState<TaskSnapshot[]>([]);
   const [live, setLive] = useState<LiveState | null>(null);
+  const [selectedAgentKey, setSelectedAgentKey] = useState("data_analyst");
   const [resolutionDebug, setResolutionDebug] = useState<WorkflowResolutionDebug | null>(null);
   const [selectedRecordSnapshot, setSelectedRecordSnapshot] = useState<TaskSnapshot | null>(null);
   const unsubscribeRef = useRef<null | (() => void)>(null);
@@ -924,36 +1058,72 @@ export default function BitableWorkflowPlugin() {
         setResolutionDebug(buildResolutionDebug(nextSourceKind, selectedRecord, locator, currentTask));
 
         if (currentTask?.recordId && getRuntimeApiKey()) {
-          unsubscribeRef.current = subscribeTaskProgress(currentTask.recordId, (event: ProgressEvent) => {
-            setLive((prev) => {
-              const nextStep = buildLiveStepEvent(event);
-              const nextHistory = nextStep ? [...(prev?.history || []), nextStep].slice(-10) : prev?.history || [];
-              return {
-                stage: String(event.payload.stage || prev?.stage || "等待调度"),
-                progress: safeProgress(event.payload.progress ?? prev?.progress ?? 0),
-                status:
-                  event.event_type === "task.done"
-                    ? "done"
-                    : event.event_type === "task.error"
-                      ? "error"
-                      : prev?.status || "running",
-                updatedAt: event.ts,
-                tokenPreview:
-                  event.event_type === "agent.token"
-                    ? textValue(event.payload.chunk) || prev?.tokenPreview
-                    : prev?.tokenPreview,
-                activeAgent:
-                  event.event_type === "agent.token"
-                    ? textValue(event.payload.agent_name || event.payload.agent_id) || prev?.activeAgent
-                    : prev?.activeAgent,
-                history: nextHistory,
-                workflowSteps: event.payload.workflow_steps
-                  ? normalizeWorkflowSteps(event.payload.workflow_steps)
-                  : prev?.workflowSteps,
-                agentPipeline: event.payload.agent_pipeline || prev?.agentPipeline,
-              };
-            });
-          });
+          const initialProgress = safeProgress(currentTask.fields["进度"]);
+          setLive((prev) => ({
+            stage: prev?.stage || textValue(currentTask.fields["当前阶段"]) || "等待实时流连接",
+            progress: Math.max(prev?.progress || 0, initialProgress),
+            status: prev?.status || "running",
+            updatedAt: new Date().toISOString(),
+            streamStatus: "connecting",
+            streamMessage: "正在连接后端实时流",
+            tokenPreview: prev?.tokenPreview,
+            activeAgent: prev?.activeAgent,
+            history: prev?.history || [],
+            workflowSteps: prev?.workflowSteps,
+            agentPipeline: prev?.agentPipeline,
+          }));
+          unsubscribeRef.current = subscribeTaskProgress(
+            currentTask.recordId,
+            (event: ProgressEvent) => {
+              if (!active) return;
+              setLive((prev) => {
+                const nextStep = buildLiveStepEvent(event);
+                const nextHistory = nextStep ? [...(prev?.history || []), nextStep].slice(-10) : prev?.history || [];
+                return {
+                  stage: String(event.payload.stage || prev?.stage || "等待调度"),
+                  progress: safeProgress(event.payload.progress ?? prev?.progress ?? 0),
+                  status:
+                    event.event_type === "task.done"
+                      ? "done"
+                      : event.event_type === "task.error"
+                        ? "error"
+                        : prev?.status || "running",
+                  updatedAt: event.ts,
+                  streamStatus: prev?.streamStatus || "connecting",
+                  streamMessage: prev?.streamMessage,
+                  tokenPreview:
+                    event.event_type === "agent.token"
+                      ? textValue(event.payload.chunk) || prev?.tokenPreview
+                      : prev?.tokenPreview,
+                  activeAgent:
+                    event.event_type === "agent.token"
+                      ? textValue(event.payload.agent_name || event.payload.agent_id) || prev?.activeAgent
+                      : prev?.activeAgent,
+                  history: nextHistory,
+                  workflowSteps: event.payload.workflow_steps
+                    ? normalizeWorkflowSteps(event.payload.workflow_steps)
+                    : prev?.workflowSteps,
+                  agentPipeline: event.payload.agent_pipeline || prev?.agentPipeline,
+                };
+              });
+            },
+            (streamStatus, message) => {
+              if (!active) return;
+              setLive((prev) => ({
+                stage: prev?.stage || textValue(currentTask.fields["当前阶段"]) || "等待调度",
+                progress: prev?.progress ?? initialProgress,
+                status: prev?.status || "running",
+                updatedAt: new Date().toISOString(),
+                streamStatus,
+                streamMessage: message,
+                tokenPreview: prev?.tokenPreview,
+                activeAgent: prev?.activeAgent,
+                history: prev?.history || [],
+                workflowSteps: prev?.workflowSteps,
+                agentPipeline: prev?.agentPipeline,
+              }));
+            },
+          );
         } else {
           setLive(null);
         }
@@ -1036,6 +1206,15 @@ export default function BitableWorkflowPlugin() {
   const timelineEvents = useMemo(
     () => mergeTimelineEvents(live?.history, automationLogs),
     [automationLogs, live?.history],
+  );
+  const selectedAgent = useMemo(
+    () =>
+      agentPipeline.find((agent) => agent.key === selectedAgentKey) ||
+      agentPipeline.find((agent) => agent.status === "running") ||
+      agentPipeline.find((agent) => agent.status === "error") ||
+      agentPipeline[0] ||
+      null,
+    [agentPipeline, selectedAgentKey],
   );
 
   return (
@@ -1209,6 +1388,17 @@ export default function BitableWorkflowPlugin() {
                     reviewAction={reviewAction}
                     evidenceCount={numberValue(task.fields["证据条数"])}
                     pendingDataCount={numberValue(task.fields["需补数条数"])}
+                    selectedAgentKey={selectedAgent?.key}
+                    onSelectAgent={setSelectedAgentKey}
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <AgentRunInspector
+                    agent={selectedAgent}
+                    timeline={timelineEvents}
+                    streamStatus={live?.streamStatus}
+                    streamMessage={live?.streamMessage}
                   />
                 </div>
 

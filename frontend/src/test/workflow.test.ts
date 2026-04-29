@@ -11,9 +11,11 @@ describe('workflow SSE subscription', () => {
     const EventSourceMock = vi.fn().mockImplementation(() => ({ addEventListener, close }));
     vi.stubGlobal('EventSource', EventSourceMock);
 
-    const unsubscribe = subscribeTaskProgress('rec_123', vi.fn());
+    const statusSpy = vi.fn();
+    const unsubscribe = subscribeTaskProgress('rec_123', vi.fn(), statusSpy);
     await vi.waitFor(() => expect(EventSourceMock).toHaveBeenCalledTimes(1));
 
+    expect(statusSpy).toHaveBeenCalledWith('connecting');
     expect(postSpy).toHaveBeenCalledWith('/api/v1/workflow/stream-token/rec_123');
     expect(EventSourceMock.mock.calls[0][0]).toContain('/api/v1/workflow/stream/rec_123?token=stream-token');
     expect(addEventListener).toHaveBeenCalledWith('task.done', expect.any(Function));
@@ -22,6 +24,7 @@ describe('workflow SSE subscription', () => {
     expect(addEventListener).toHaveBeenCalledWith('agent.failed', expect.any(Function));
 
     unsubscribe();
+    expect(statusSpy).toHaveBeenCalledWith('closed');
     expect(close).toHaveBeenCalled();
     postSpy.mockRestore();
     vi.unstubAllGlobals();
@@ -50,9 +53,11 @@ describe('workflow SSE subscription', () => {
     const postSpy = vi.spyOn(api, 'post').mockRejectedValue(tokenError);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const unsubscribe = subscribeTaskProgress('rec_123', vi.fn());
+    const statusSpy = vi.fn();
+    const unsubscribe = subscribeTaskProgress('rec_123', vi.fn(), statusSpy);
     await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1));
 
+    expect(statusSpy).toHaveBeenCalledWith('error', 'token request failed');
     expect(errorSpy.mock.calls[0]).toEqual(['[SSE] token error: token request failed']);
     expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('runtime-secret');
 

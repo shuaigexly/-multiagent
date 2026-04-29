@@ -269,6 +269,8 @@ export interface WorkflowProgressPayload extends Record<string, unknown> {
   agent_pipeline?: AgentPipelineSnapshot[];
 }
 
+export type WorkflowStreamStatus = 'connecting' | 'connected' | 'closed' | 'error';
+
 function describeSseError(err: unknown): string {
   if (err instanceof Error) return err.message || err.name;
   if (typeof err === 'string') return err;
@@ -278,10 +280,12 @@ function describeSseError(err: unknown): string {
 export function subscribeTaskProgress(
   recordId: string,
   onEvent: (e: ProgressEvent) => void,
+  onStatus?: (status: WorkflowStreamStatus, message?: string) => void,
 ): () => void {
   let es: EventSource | null = null;
   let closed = false;
   const encodedRecordId = encodeURIComponent(recordId);
+  onStatus?.('connecting');
 
   const handler = (e: MessageEvent) => {
     try {
@@ -302,6 +306,7 @@ export function subscribeTaskProgress(
       es = new EventSource(
         `${BASE_URL}/api/v1/workflow/stream/${encodedRecordId}?token=${encodeURIComponent(resp.data.token)}`,
       );
+      es.onopen = () => onStatus?.('connected');
       [
         'task.started',
         'wave.completed',
@@ -313,15 +318,21 @@ export function subscribeTaskProgress(
         'agent.token',
       ].forEach((evt) => es?.addEventListener(evt, handler as EventListener));
       es.onerror = () => {
+        onStatus?.('error', '实时流连接已断开，已回退到 Base 原生日志');
         es?.close();
       };
     })
     .catch((err) => {
-      if (!closed) console.error(`[SSE] token error: ${describeSseError(err)}`);
+      if (!closed) {
+        const message = describeSseError(err);
+        onStatus?.('error', message);
+        console.error(`[SSE] token error: ${message}`);
+      }
     });
 
   return () => {
     closed = true;
+    onStatus?.('closed');
     es?.close();
   };
 }
