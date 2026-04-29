@@ -23,10 +23,11 @@ from lark_oapi.api.bitable.v1 import (
 )
 
 from app.agents.base_agent import AgentResult
+from app.core.redaction import redact_sensitive_data, redact_sensitive_text
+from app.core.text_utils import truncate_with_marker
 from app.feishu.aily import get_feishu_open_base_url, get_tenant_access_token
 from app.feishu.client import get_feishu_base_url, get_feishu_client
 from app.feishu.retry import with_retry
-from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
 
@@ -293,15 +294,19 @@ async def _create_view_impl(
     try:
         data = r.json()
     except Exception:
-        data = {"code": -1, "msg": f"non-JSON response (status={r.status_code}): {r.text[:200]!r}"}
+        data = {
+            "code": -1,
+            "msg": f"non-JSON response (status={r.status_code}): {redact_sensitive_text(r.text, max_chars=200)!r}",
+        }
     if data.get("code") != 0:
         raise RuntimeError(
-            f"创建视图失败: {view_name} code={data.get('code')} msg={data.get('msg')}"
+            f"创建视图失败: {view_name} code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
         )
     try:
         view_id = data["data"]["view"]["view_id"]
     except (KeyError, TypeError) as exc:
-        raise RuntimeError(f"创建视图响应结构异常: {data}") from exc
+        raise RuntimeError(f"创建视图响应结构异常: {redact_sensitive_data(data)}") from exc
 
     # 仅当传入过滤条件时才发 PATCH（filter_info 是飞书公开支持的 property key）
     if filter_field and filter_value is not None and view_id:
@@ -612,10 +617,14 @@ async def _rename_field_via_http(
     try:
         data = r.json()
     except Exception:
-        data = {"code": -1, "msg": f"non-JSON response (status={r.status_code}): {r.text[:200]!r}"}
+        data = {
+            "code": -1,
+            "msg": f"non-JSON response (status={r.status_code}): {redact_sensitive_text(r.text, max_chars=200)!r}",
+        }
     if data.get("code") != 0:
         raise RuntimeError(
-            f"rename primary field failed: code={data.get('code')} msg={data.get('msg')} "
+            f"rename primary field failed: code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)} "
             f"field_id={field_id} new_name={new_name}"
         )
     logger.info("Renamed primary field %s → %r in table %s", field_id, new_name, table_id)
@@ -683,15 +692,19 @@ async def _create_field_http(app_token: str, table_id: str, field: dict) -> str:
     try:
         data = r.json()
     except Exception:
-        data = {"code": -1, "msg": f"non-JSON response (status={r.status_code}): {r.text[:200]!r}"}
+        data = {
+            "code": -1,
+            "msg": f"non-JSON response (status={r.status_code}): {redact_sensitive_text(r.text, max_chars=200)!r}",
+        }
     if data.get("code") != 0:
         raise RuntimeError(
-            f"创建字段失败: {field['field_name']} code={data.get('code')} msg={data.get('msg')}"
+            f"创建字段失败: {field['field_name']} code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
         )
     try:
         return data["data"]["field"]["field_id"]
     except (KeyError, TypeError) as exc:
-        raise RuntimeError(f"创建字段响应结构异常: {data}") from exc
+        raise RuntimeError(f"创建字段响应结构异常: {redact_sensitive_data(data)}") from exc
 
 
 async def _batch_add_records_impl(

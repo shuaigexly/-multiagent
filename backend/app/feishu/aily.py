@@ -25,6 +25,7 @@ from typing import Optional
 
 import httpx
 
+from app.core.redaction import redact_sensitive_data
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret
 from app.core.text_utils import truncate_with_marker
 from app.feishu.client import get_feishu_base_url, get_feishu_region
@@ -94,11 +95,13 @@ async def _get_tenant_access_token() -> str:
         resp.raise_for_status()
         data = resp.json()
         if data.get("code") != 0:
-            raise RuntimeError(f"获取飞书 token 失败: {data}")
+            raise RuntimeError(f"获取飞书 token 失败: {redact_sensitive_data(data)}")
 
         token = data.get("tenant_access_token")
         if not token:
-            raise RuntimeError(f"飞书 token 响应缺少 tenant_access_token 字段: {data}")
+            raise RuntimeError(
+                f"飞书 token 响应缺少 tenant_access_token 字段: {redact_sensitive_data(data)}"
+            )
         _TOKEN_CACHE["token"] = token
         _TOKEN_CACHE["expire"] = now + data.get("expire", 7200)
         return token

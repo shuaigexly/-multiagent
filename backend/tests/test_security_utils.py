@@ -203,6 +203,146 @@ def test_lark_cli_env_does_not_inherit_unrelated_secrets(monkeypatch):
     assert "POSTHOG_API_KEY" not in mcp_env
 
 
+def test_sensitive_redaction_handles_nested_data_and_text():
+    from app.core.redaction import redact_sensitive_data, redact_sensitive_text
+
+    payload = {
+        "access_token": "access-secret",
+        "oauth_code": "oauth-code-secret",
+        "X-API-Key": "api-key-secret",
+        "status_code": 401,
+        "nested": {
+            "message": "Authorization: Bearer bearer-secret refresh_token=refresh-secret",
+            "primary_key": "safe-id",
+        },
+    }
+
+    redacted = redact_sensitive_data(payload)
+
+    assert redacted["access_token"] == "[REDACTED]"
+    assert redacted["oauth_code"] == "[REDACTED]"
+    assert redacted["X-API-Key"] == "[REDACTED]"
+    assert redacted["status_code"] == 401
+    assert redacted["nested"]["primary_key"] == "safe-id"
+    assert "bearer-secret" not in redacted["nested"]["message"]
+    assert "refresh-secret" not in redacted["nested"]["message"]
+
+    text = redact_sensitive_text(
+        "access_token=access-secret app_secret='app-secret' x-api-key=api-key-secret "
+        "Authorization: Bearer bearer-secret"
+    )
+    assert "access-secret" not in text
+    assert "app-secret" not in text
+    assert "api-key-secret" not in text
+    assert "bearer-secret" not in text
+    assert text.count("[REDACTED]") >= 3
+
+
+def test_feishu_http_error_helpers_redact_response_bodies():
+    import httpx
+
+    from app.bitable_workflow.bitable_ops import _safe_json
+    from app.feishu.cardkit import _parse_json_response
+
+    request = httpx.Request("GET", "https://open.feishu.test")
+    body = "access_token=access-secret Authorization: Bearer bearer-secret"
+
+    parsed = _safe_json(httpx.Response(502, text=body, request=request))
+    assert "access-secret" not in parsed["msg"]
+    assert "bearer-secret" not in parsed["msg"]
+
+    with pytest.raises(RuntimeError) as exc:
+        _parse_json_response(httpx.Response(500, text=body, request=request), "send failed")
+    message = str(exc.value)
+    assert "access-secret" not in message
+    assert "bearer-secret" not in message
+    assert "[REDACTED]" in message
+
+
+@pytest.mark.asyncio
+async def test_refresh_oauth_token_redacts_failure_message(monkeypatch):
+    from app.api import feishu_oauth
+
+    async def fake_refresh():
+        raise RuntimeError(
+            "failed access_token=access-secret refresh_token=refresh-secret "
+            "Authorization: Bearer bearer-secret"
+        )
+
+    monkeypatch.setattr(feishu_oauth, "refresh_user_token", fake_refresh)
+
+    result = await feishu_oauth.refresh_oauth_token()
+
+    assert result["ok"] is False
+    assert "access-secret" not in result["message"]
+    assert "refresh-secret" not in result["message"]
+    assert "bearer-secret" not in result["message"]
+    assert "[REDACTED]" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_user_token_error_redacts_feishu_response_tokens(monkeypatch):
+    from app.feishu import user_token
+
+    user_token._user_access_tokens.clear()
+    user_token._user_refresh_tokens.clear()
+    user_token._last_refresh_at.clear()
+    user_token.set_user_refresh_token("stored-refresh", tenant_id="default")
+
+    monkeypatch.setattr(user_token, "get_feishu_app_id", lambda: "app-id")
+    monkeypatch.setattr(user_token, "get_feishu_app_secret", lambda: "app-secret")
+    monkeypatch.setattr(user_token, "_feishu_base", lambda: "https://open.feishu.test")
+
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._data
+
+    responses = [
+        FakeResponse({"code": 0, "app_access_token": "app-token"}),
+        FakeResponse(
+            {
+                "code": 99991668,
+                "msg": "bad access_token=message-secret",
+                "data": {
+                    "access_token": "new-access-secret",
+                    "refresh_token": "new-refresh-secret",
+                },
+            }
+        ),
+    ]
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return responses.pop(0)
+
+    monkeypatch.setattr(user_token.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+
+    with pytest.raises(RuntimeError) as exc:
+        await user_token._refresh_user_token_impl()
+
+    message = str(exc.value)
+    assert "message-secret" not in message
+    assert "new-access-secret" not in message
+    assert "new-refresh-secret" not in message
+    assert "[REDACTED]" in message
+
+    user_token._user_access_tokens.clear()
+    user_token._user_refresh_tokens.clear()
+    user_token._last_refresh_at.clear()
+
+
 @pytest.mark.asyncio
 async def test_workflow_lock_requires_redis_in_production(monkeypatch):
     import builtins

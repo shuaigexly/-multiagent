@@ -5,6 +5,7 @@ import time
 from fastapi import APIRouter, Depends, Query
 
 from app.core.auth import require_api_key
+from app.core.redaction import redact_sensitive_text
 from app.feishu.reader import (
     FeishuReaderError,
     list_calendar_events,
@@ -31,7 +32,7 @@ def _default_calendar_range() -> tuple[str, str]:
 
 
 def _empty_list_error(exc: Exception) -> dict:
-    return {"data": [], "total": 0, "error": str(exc)}
+    return {"data": [], "total": 0, "error": redact_sensitive_text(exc, max_chars=500)}
 
 
 @router.get("/drive")
@@ -112,7 +113,7 @@ async def get_doc_content(token: str):
         content = await read_doc_content(token)
         return {"content": content}
     except FeishuReaderError as exc:
-        return {"content": "", "error": str(exc)}
+        return {"content": "", "error": redact_sensitive_text(exc, max_chars=500)}
 
 
 @router.get("/context")
@@ -131,17 +132,17 @@ async def get_feishu_context():
     if isinstance(drive, BaseException):
         if isinstance(drive, asyncio.CancelledError):
             raise drive
-        errors["drive"] = str(drive)
+        errors["drive"] = redact_sensitive_text(drive, max_chars=500)
         drive = []
     if isinstance(calendar, BaseException):
         if isinstance(calendar, asyncio.CancelledError):
             raise calendar
-        errors["calendar"] = str(calendar)
+        errors["calendar"] = redact_sensitive_text(calendar, max_chars=500)
         calendar = []
     if isinstance(tasks, BaseException):
         if isinstance(tasks, asyncio.CancelledError):
             raise tasks
-        errors["tasks"] = str(tasks)
+        errors["tasks"] = redact_sensitive_text(tasks, max_chars=500)
         tasks = []
     pending_tasks = [item for item in tasks if not item.get("completed")][:20]
     payload = {

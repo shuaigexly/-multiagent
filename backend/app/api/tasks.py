@@ -18,6 +18,7 @@ from app.core.data_parser import parse_content
 from app.core.env import get_int_env
 from app.core.event_emitter import EventEmitter
 from app.core.orchestrator import orchestrate
+from app.core.redaction import redact_sensitive_text
 from app.core.settings import settings
 from app.core.task_planner import plan_task
 from app.core.text_utils import truncate_with_marker
@@ -539,22 +540,28 @@ async def _execute_task(
                 await _remove_upload_file(input_file_path)
 
             except Exception as e:
+                safe_error = redact_sensitive_text(e, max_chars=500)
                 logger.error(
-                    f"Task {task_id} failed: {e}",
+                    "Task %s failed: %s",
+                    task_id,
+                    safe_error,
                     exc_info=True,
-                    extra={"task_id": task_id, "error": str(e)},
+                    extra={"task_id": task_id, "error": safe_error},
                 )
                 try:
                     if await _update_task_unless_cancelled(
                         db,
                         task_id,
                         status="failed",
-                        error_message=str(e),
+                        error_message=safe_error,
                     ):
                         emitter2 = EventEmitter(task_id=task_id, db=db)
-                        await emitter2.emit_task_error(str(e))
+                        await emitter2.emit_task_error(safe_error)
                 except Exception as exc:
-                    logger.warning("任务失败状态更新或错误事件发送失败: %s", exc)
+                    logger.warning(
+                        "任务失败状态更新或错误事件发送失败: %s",
+                        redact_sensitive_text(exc, max_chars=500),
+                    )
 
 
 async def _enrich_from_feishu_context(

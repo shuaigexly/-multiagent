@@ -12,53 +12,13 @@ import logging
 from typing import Any, Optional
 
 from app.core.observability import get_correlation_id, get_tenant_id
+from app.core.redaction import redact_sensitive_data
 from app.models.database import AsyncSessionLocal, AuditLog
 
 logger = logging.getLogger(__name__)
 
 
-# v8.6.20-r13（审计 #9 安全）：审计日志 payload 是 JSON 列，明文存。OAuth 回调、
-# 配置更新等 action 的 payload 可能含 OAuth `code` / `app_secret` /
-# `refresh_token` / `access_token` / `password` 等敏感原值；任何能读 audit_log
-# 表的工具都直接看到。在写入前递归 redact 一遍。
-_SENSITIVE_KEY_TOKENS = (
-    "secret",
-    "password",
-    "passwd",
-    "token",
-    "code",
-    "key",
-    "credential",
-    "session",
-)
-
-
-def _is_sensitive_key(key: object) -> bool:
-    if not isinstance(key, str):
-        return False
-    k = key.lower()
-    # 白名单：明显非敏感的"key"含义字段不要误伤
-    if k in {"key_field", "primary_key", "task_key", "cache_key", "code_block", "actor_key", "lookup_key"}:
-        return False
-    return any(token in k for token in _SENSITIVE_KEY_TOKENS)
-
-
-def _redact_payload(value: Any, depth: int = 0) -> Any:
-    if depth > 6:
-        return "[REDACTED:depth]"
-    if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            if _is_sensitive_key(k):
-                out[k] = "[REDACTED]"
-            else:
-                out[k] = _redact_payload(v, depth + 1)
-        return out
-    if isinstance(value, list):
-        return [_redact_payload(item, depth + 1) for item in value[:50]]
-    if isinstance(value, tuple):
-        return [_redact_payload(item, depth + 1) for item in value[:50]]
-    return value
+_redact_payload = redact_sensitive_data
 
 
 async def record_audit(

@@ -33,6 +33,7 @@ from app.bitable_workflow.workflow_agents import (
 from app.agents.base_agent import AgentResult
 from app.core.env import get_int_env
 from app.core.observability import clear_task_context, set_task_context
+from app.core.redaction import redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 
 logger = logging.getLogger(__name__)
@@ -1623,6 +1624,7 @@ async def _send_completion_message(
         )
         logger.debug("feishu_chat_id not configured, skipping notification for task [%s]", task_title)
     except Exception as exc:
+        safe_error = redact_sensitive_text(exc, max_chars=500)
         await _write_action_record(
             app_token,
             action_tid,
@@ -1631,7 +1633,7 @@ async def _send_completion_message(
             "执行失败",
             route=route,
             content="飞书卡片消息发送失败",
-            result_text=str(exc),
+            result_text=safe_error,
             record_id=rid,
         )
         await _write_automation_log(
@@ -1643,10 +1645,10 @@ async def _send_completion_message(
             route=route,
             trigger="任务完成",
             summary="飞书卡片消息发送失败",
-            detail=str(exc),
+            detail=safe_error,
             record_id=rid,
         )
-        logger.warning("Feishu notification failed for task [%s]: %s", task_title, exc)
+        logger.warning("Feishu notification failed for task [%s]: %s", task_title, safe_error)
 
 
 async def _create_followup_tasks(
@@ -1776,6 +1778,7 @@ async def _create_followup_tasks(
                 len(execution_items),
             )
     except Exception as exc:
+        safe_error = redact_sensitive_text(exc, max_chars=500)
         await _write_action_record(
             app_token,
             action_tid,
@@ -1784,7 +1787,7 @@ async def _create_followup_tasks(
             "执行失败",
             route=route,
             content="\n".join(f"- {item}" for item in execution_items),
-            result_text=str(exc),
+            result_text=safe_error,
             record_id=source_record_id,
         )
         await _write_automation_log(
@@ -1796,10 +1799,10 @@ async def _create_followup_tasks(
             route=route,
             trigger="工作流执行包",
             summary="创建飞书任务失败",
-            detail=str(exc),
+            detail=safe_error,
             record_id=source_record_id,
         )
-        logger.warning("Feishu task API failed for [%s]: %s", task_title, exc)
+        logger.warning("Feishu task API failed for [%s]: %s", task_title, safe_error)
 
     # 2. 在「分析任务」表中只为需要继续分析/补数/决策的事项生成后续记录
     from app.bitable_workflow import schema as _schema
@@ -1979,6 +1982,7 @@ async def _create_followup_tasks(
                 truncate_with_marker(item, 50, "...[截断]"),
             )
         except Exception as exc:
+            safe_error = redact_sensitive_text(exc, max_chars=500)
             await _write_action_record(
                 app_token,
                 action_tid,
@@ -1987,7 +1991,7 @@ async def _create_followup_tasks(
                 "执行失败",
                 route=route,
                 content=item,
-                result_text=str(exc),
+                result_text=safe_error,
             )
             await _write_automation_log(
                 app_token,
@@ -1998,9 +2002,9 @@ async def _create_followup_tasks(
                 route=route,
                 trigger="CEO 助理行动项",
                 summary="创建后续分析任务失败",
-                detail=str(exc),
+                detail=safe_error,
             )
-            logger.warning("Failed to create follow-up task from [%s]: %s", task_title, exc)
+            logger.warning("Failed to create follow-up task from [%s]: %s", task_title, safe_error)
 
 
 async def _create_review_recheck_task(
@@ -2182,6 +2186,7 @@ async def _create_review_recheck_task(
         )
         logger.info("Review recheck task created for [%s] recommend=%s", task_title, recommend)
     except Exception as exc:
+        safe_error = redact_sensitive_text(exc, max_chars=500)
         await _write_action_record(
             app_token,
             action_tid,
@@ -2190,7 +2195,7 @@ async def _create_review_recheck_task(
             "执行失败",
             route=route,
             content=background,
-            result_text=str(exc),
+            result_text=safe_error,
         )
         await _write_automation_log(
             app_token,
@@ -2201,9 +2206,9 @@ async def _create_review_recheck_task(
             route=route,
             trigger="评审推荐动作",
             summary="创建复核任务失败",
-            detail=str(exc),
+            detail=safe_error,
         )
-        logger.warning("Failed to create review recheck task for [%s]: %s", task_title, exc)
+        logger.warning("Failed to create review recheck task for [%s]: %s", task_title, safe_error)
 
 
 async def run_one_cycle(app_token: str, table_ids: dict) -> int:
@@ -2804,9 +2809,10 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             )
 
         except Exception as exc:
-            logger.error("Pipeline failed for task=%s record=%s: %s", task_title, rid, exc)
+            safe_error = redact_sensitive_text(exc, max_chars=500)
+            logger.error("Pipeline failed for task=%s record=%s: %s", task_title, rid, safe_error)
             try:
-                failure_stage = f"❌ 执行失败，将重试：{truncate_with_marker(exc, 100, '...[截断]')}"
+                failure_stage = f"❌ 执行失败，将重试：{truncate_with_marker(safe_error, 100, '...[截断]')}"
                 reset_fields = {
                     "状态": Status.PENDING,
                     "当前阶段": failure_stage,
@@ -2837,7 +2843,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
             except Exception as reset_exc:
                 logger.error(
                     "Failed to reset task=%s back to PENDING: %s — task may remain stuck in ANALYZING",
-                    task_title, reset_exc,
+                    task_title, redact_sensitive_text(reset_exc, max_chars=500),
                 )
             # 不清除缓存 — 下次重试可复用已完成的 agent 结果
             try:
@@ -2846,7 +2852,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                     rid,
                     "task.error",
                     {
-                        "reason": truncate_with_marker(exc, 200, "...[截断]"),
+                        "reason": truncate_with_marker(safe_error, 200, "...[截断]"),
                         "stage": "分析异常：已回滚为待分析并等待下轮重试",
                         "progress": 0,
                         **_build_workflow_progress_payload(
@@ -2858,7 +2864,7 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
                             delivery_status="pending",
                             current_stage="分析异常：已回滚为待分析并等待下轮重试",
                             analysis_history=analysis_history if 'analysis_history' in locals() else [],
-                            error_reason=truncate_with_marker(exc, 200, "...[截断]"),
+                            error_reason=truncate_with_marker(safe_error, 200, "...[截断]"),
                         ),
                     },
                 )

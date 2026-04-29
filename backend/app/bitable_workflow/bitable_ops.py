@@ -7,6 +7,7 @@ from typing import Optional
 
 import httpx
 
+from app.core.redaction import redact_sensitive_data, redact_sensitive_text
 from app.feishu.aily import get_feishu_open_base_url as _get_base_url
 from app.feishu.aily import get_tenant_access_token as _get_token
 from app.feishu.retry import with_retry
@@ -49,7 +50,7 @@ def _safe_json(resp: httpx.Response) -> dict:
     except Exception:
         return {
             "code": -1,
-            "msg": f"non-JSON response (status={resp.status_code}): {resp.text[:200]!r}",
+            "msg": f"non-JSON response (status={resp.status_code}): {redact_sensitive_text(resp.text, max_chars=200)!r}",
         }
 
 
@@ -253,11 +254,14 @@ async def _create_record_impl(app_token: str, table_id: str, fields: dict) -> st
     resp.raise_for_status()
     data = _safe_json(resp)
     if data.get("code") != 0:
-        raise RuntimeError(f"create record failed: code={data.get('code')} msg={data.get('msg')}")
+        raise RuntimeError(
+            f"create record failed: code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
+        )
     try:
         return data["data"]["record"]["record_id"]
     except (KeyError, TypeError) as exc:
-        raise RuntimeError(f"create record response schema invalid: {data}") from exc
+        raise RuntimeError(f"create record response schema invalid: {redact_sensitive_data(data)}") from exc
 
 
 async def get_record(app_token: str, table_id: str, record_id: str) -> dict:
@@ -272,11 +276,14 @@ async def _get_record_impl(app_token: str, table_id: str, record_id: str) -> dic
     resp.raise_for_status()
     data = _safe_json(resp)
     if data.get("code") != 0:
-        raise RuntimeError(f"get record failed: code={data.get('code')} msg={data.get('msg')}")
+        raise RuntimeError(
+            f"get record failed: code={data.get('code')} "
+            f"msg={redact_sensitive_text(data.get('msg'), max_chars=500)}"
+        )
     try:
         return data["data"]["record"]
     except (KeyError, TypeError) as exc:
-        raise RuntimeError(f"get record response schema invalid: {data}") from exc
+        raise RuntimeError(f"get record response schema invalid: {redact_sensitive_data(data)}") from exc
 
 
 async def update_record(app_token: str, table_id: str, record_id: str, fields: dict) -> None:

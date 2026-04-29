@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_api_key
+from app.core.redaction import redact_sensitive_text
 from app.core.settings import (
     apply_db_config,
     get_feishu_app_id,
@@ -23,7 +24,6 @@ from app.core.settings import (
     get_llm_model,
     get_llm_provider,
 )
-from app.core.text_utils import truncate_with_marker
 from app.feishu.client import reset_feishu_client
 from app.models.database import UserConfig, get_db
 
@@ -256,7 +256,7 @@ async def test_llm(body: LLMTestRequest):
             return {"ok": False, "message": f"模型返回异常: {content or '[空响应]'}"}
         return {"ok": True, "message": "连接成功"}
     except Exception as exc:
-        return {"ok": False, "message": str(exc)}
+        return {"ok": False, "message": redact_sensitive_text(exc, max_chars=500)}
     finally:
         if client is not None:
             try:
@@ -280,7 +280,7 @@ async def test_feishu(body: FeishuTestRequest):
         await _test_feishu_credentials(app_id, app_secret, region)
         return {"ok": True, "message": "飞书连接成功"}
     except Exception as exc:
-        return {"ok": False, "message": str(exc)}
+        return {"ok": False, "message": redact_sensitive_text(exc, max_chars=500)}
 
 
 @router.post("/test-bot", dependencies=[Depends(require_api_key)])
@@ -309,4 +309,4 @@ async def test_bot():
             "message": "Bot 配置正常：" + "，".join(config_summary),
         }
     except Exception as exc:
-        return {"ok": False, "message": f"Bot 配置异常: {truncate_with_marker(exc, 200)}"}
+        return {"ok": False, "message": f"Bot 配置异常: {redact_sensitive_text(exc, max_chars=200)}"}

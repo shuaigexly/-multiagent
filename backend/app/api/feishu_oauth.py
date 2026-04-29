@@ -21,6 +21,7 @@ from app.core.settings import (
 )
 from app.core.auth import require_api_key
 from app.core.observability import get_tenant_id, set_task_context
+from app.core.redaction import redact_sensitive_data, redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 from app.feishu.token_crypto import encrypt_token
 from app.feishu.user_token import (
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 CALLBACK_PATH = "/api/v1/feishu/oauth/callback"
 STATE_TTL_SECONDS = get_int_env("OAUTH_STATE_TTL_SECONDS", 600, minimum=1)
-_pending_states: dict[str, tuple[str, str, float]] = {}
+_pending_states: dict[str, tuple[str, str, float, str]] = {}
 _USER_TOKEN_ERROR_CODES = {
     "99991663",
     "99991664",
@@ -57,11 +58,14 @@ def _feishu_base() -> str:
 
 def _cleanup_pending_states(now: float | None = None) -> None:
     now = now or time.time()
-    expired = [
-        token
-        for token, (_, _, created_at) in _pending_states.items()
-        if now - created_at > STATE_TTL_SECONDS
-    ]
+    expired = []
+    for token, pending in list(_pending_states.items()):
+        if not isinstance(pending, tuple) or len(pending) < 3:
+            expired.append(token)
+            continue
+        created_at = pending[2]
+        if now - created_at > STATE_TTL_SECONDS:
+            expired.append(token)
     for token in expired:
         _pending_states.pop(token, None)
 
@@ -191,7 +195,7 @@ async def refresh_oauth_token():
         await refresh_user_token()
         return {"ok": True}
     except Exception as exc:
-        return {"ok": False, "message": str(exc)}
+        return {"ok": False, "message": _safe_error_message(exc)}
 
 
 @router.get("/oauth/url", dependencies=[Depends(require_api_key)])
@@ -233,7 +237,11 @@ def _scrub_oauth_msg(value: object, max_chars: int = 200) -> str:
     就会露出真容；此处先把不可打印字符都换成空格。"""
     s = str(value or "")
     s = re.sub(r"[\x00-\x1f\x7f]", " ", s)
-    return s[:max_chars]
+    return redact_sensitive_text(s, max_chars=max_chars)
+
+
+def _safe_error_message(value: object, max_chars: int = 200) -> str:
+    return _scrub_oauth_msg(value, max_chars=max_chars)
 
 
 @router.get("/oauth/callback")
@@ -259,7 +267,7 @@ async def oauth_callback(
             r1.raise_for_status()
             app_token_data = r1.json()
             if app_token_data.get("code") not in (None, 0):
-                logger.error("OAuth: 获取 app_access_token 失败: %s", app_token_data)
+                logger.error("OAuth: 获取 app_access_token 失败: %s", redact_sensitive_data(app_token_data))
                 return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(_scrub_oauth_msg(app_token_data.get('msg', '获取app_token失败')), safe='')}")
             app_token = app_token_data.get("app_access_token", "")
             if not app_token:
@@ -276,7 +284,7 @@ async def oauth_callback(
             data = r2.json()
 
         if data.get("code") != 0:
-            logger.error(f"OAuth token 交换失败: {data}")
+            logger.error("OAuth token 交换失败: %s", redact_sensitive_data(data))
             return RedirectResponse(url=f"{frontend_origin}/settings?oauth=error&msg={quote(_scrub_oauth_msg(data.get('msg', '授权失败')), safe='')}")
 
         user_data = data.get("data", {})
@@ -316,7 +324,7 @@ async def oauth_callback(
         return RedirectResponse(url=f"{frontend_origin}/settings?oauth=success")
 
     except Exception as e:
-        logger.error(f"OAuth 回调异常: {e}", exc_info=True)
+        logger.error("OAuth 回调异常: %s", redact_sensitive_text(e, max_chars=500), exc_info=True)
         return RedirectResponse(
             url=f"{frontend_origin}/settings?oauth=error&msg={quote(_scrub_oauth_msg(truncate_with_marker(str(e), 80)), safe='')}"
         )
@@ -335,8 +343,8 @@ async def list_user_bases_endpoint(
         bases = await _with_user_token_retry(_call)
         return {"ok": True, "count": len(bases), "bases": bases}
     except Exception as exc:
-        logger.error("list_user_bases failed: %s", exc, exc_info=True)
-        return {"ok": False, "message": str(exc)}
+        logger.error("list_user_bases failed: %s", _safe_error_message(exc, max_chars=500), exc_info=True)
+        return {"ok": False, "message": _safe_error_message(exc)}
 
 
 @router.get("/oauth/list-tables", dependencies=[Depends(require_api_key)])
@@ -368,8 +376,8 @@ async def list_tables_endpoint(app_token: str = Query(..., description="bitable 
         result = await _with_user_token_retry(_call)
         return {"ok": True, "tables": result}
     except Exception as exc:
-        logger.error("list_tables_endpoint failed: %s", exc, exc_info=True)
-        return {"ok": False, "message": str(exc)}
+        logger.error("list_tables_endpoint failed: %s", _safe_error_message(exc, max_chars=500), exc_info=True)
+        return {"ok": False, "message": _safe_error_message(exc)}
 
 
 @router.get("/oauth/list-dashboards", dependencies=[Depends(require_api_key)])
@@ -386,13 +394,16 @@ async def list_dashboards_endpoint(app_token: str = Query(...)):
         )
         return {"ok": True, "dashboards": dashboards, "auth": "user"}
     except Exception as user_exc:
-        logger.info("list-dashboards user_token path failed (%s), falling back to tenant", user_exc)
+        logger.info(
+            "list-dashboards user_token path failed (%s), falling back to tenant",
+            _safe_error_message(user_exc, max_chars=500),
+        )
         try:
             dashboards = await list_dashboards(app_token, user_token=None)
             return {"ok": True, "dashboards": dashboards, "auth": "tenant"}
         except Exception as exc:
-            logger.error("list-dashboards both paths failed: %s", exc, exc_info=True)
-            return {"ok": False, "message": str(exc)}
+            logger.error("list-dashboards both paths failed: %s", _safe_error_message(exc, max_chars=500), exc_info=True)
+            return {"ok": False, "message": _safe_error_message(exc)}
 
 
 @router.post("/oauth/apply-view-config", dependencies=[Depends(require_api_key)])
@@ -406,5 +417,5 @@ async def apply_view_config(app_token: str = Query(..., description="bitable app
         result = await _with_user_token_retry(_call)
         return {"ok": True, "applied": result["ok"], "failed": result["failed"]}
     except Exception as exc:
-        logger.error("apply_view_config failed: %s", exc, exc_info=True)
-        return {"ok": False, "message": str(exc)}
+        logger.error("apply_view_config failed: %s", _safe_error_message(exc, max_chars=500), exc_info=True)
+        return {"ok": False, "message": _safe_error_message(exc)}

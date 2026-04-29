@@ -23,6 +23,7 @@ from typing import Optional
 
 import httpx
 
+from app.core.redaction import redact_sensitive_text
 from app.feishu.aily import get_feishu_open_base_url
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ async def configure_view_groups(
         except Exception:
             return {
                 "code": -1,
-                "msg": f"non-JSON response (status={resp.status_code}): {resp.text[:200]!r}",
+                "msg": f"non-JSON response (status={resp.status_code}): {redact_sensitive_text(resp.text, max_chars=200)!r}",
             }
 
     async def _paged_items(h: httpx.AsyncClient, url: str) -> list[dict]:

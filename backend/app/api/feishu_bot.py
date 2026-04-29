@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.tasks import _execute_task
 from app.core.env import get_int_env
+from app.core.redaction import redact_sensitive_text
 from app.core.settings import (
     get_feishu_bot_encrypt_key,
     get_feishu_bot_verification_token,
@@ -113,7 +114,7 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
         raw_payload = json.loads(raw_body.decode("utf-8"))
         is_encrypted = bool(raw_payload.get("encrypt"))
     except Exception as exc:
-        logger.warning("Bot event: 请求体解析失败: %s", exc)
+        logger.warning("Bot event: 请求体解析失败: %s", redact_sensitive_text(exc, max_chars=500))
         return JSONResponse({"ok": False}, status_code=400)
 
     if cfg["encrypt_key"] and not is_encrypted:
@@ -127,7 +128,7 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
         body = _decode_request_body(raw_body, cfg["encrypt_key"])
         logger.info("Bot event received event_id=%s", (body.get("header") or {}).get("event_id", "unknown"))
     except Exception as exc:
-        logger.warning("Bot event: 请求体解析失败: %s", exc)
+        logger.warning("Bot event: 请求体解析失败: %s", redact_sensitive_text(exc, max_chars=500))
         return JSONResponse({"ok": False}, status_code=400)
 
     if cfg["verification_token"] and not _verify_token(body, cfg["verification_token"]):
@@ -257,7 +258,10 @@ async def _handle_bot_task_impl(
                 return
 
             if task.status != "done":
-                error_message = task.error_message or f"任务执行未成功，当前状态: {task.status}"
+                error_message = redact_sensitive_text(
+                    task.error_message or f"任务执行未成功，当前状态: {task.status}",
+                    max_chars=500,
+                )
                 if bot_event:
                     bot_event.status = "failed"
                     bot_event.error_message = truncate_with_marker(error_message, 500)
@@ -293,19 +297,20 @@ async def _handle_bot_task_impl(
             bool(open_id),
         )
     except Exception as exc:
-        logger.error("Bot pipeline 执行失败 event_id=%s: %s", event_id, exc, exc_info=True)
+        safe_error = redact_sensitive_text(exc, max_chars=500)
+        logger.error("Bot pipeline 执行失败 event_id=%s: %s", event_id, safe_error, exc_info=True)
         await bot_handler.reply_text_in_thread(
             source_message_id,
-            f"分析失败：{truncate_with_marker(exc, 100)}",
+            f"分析失败：{truncate_with_marker(safe_error, 100)}",
         )
         async with AsyncSessionLocal() as db:
             bot_event = await db.get(FeishuBotEvent, event_id)
             if bot_event:
                 bot_event.status = "failed"
-                bot_event.error_message = truncate_with_marker(exc, 500)
+                bot_event.error_message = truncate_with_marker(safe_error, 500)
             if task_id:
                 task = await db.get(Task, task_id)
                 if task and task.status != "done":
                     task.status = "failed"
-                    task.error_message = truncate_with_marker(exc, 500)
+                    task.error_message = truncate_with_marker(safe_error, 500)
             await db.commit()

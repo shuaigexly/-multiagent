@@ -1104,6 +1104,28 @@ def test_oauth_consume_state_rejects_legacy_3_tuple():
     feishu_oauth._pending_states.clear()
 
 
+def test_oauth_state_cleanup_handles_current_4_tuple_shape():
+    """4-tuple state 是当前写入格式，清理过期 state 时不能再按 legacy 3-tuple 解包。"""
+    import time as _t
+    from app.api import feishu_oauth
+
+    feishu_oauth._pending_states.clear()
+    feishu_oauth._pending_states["expired"] = (
+        "http://app.example.com",
+        "tenant",
+        _t.time() - feishu_oauth.STATE_TTL_SECONDS - 1,
+        "",
+    )
+    feishu_oauth._cleanup_pending_states()
+    assert "expired" not in feishu_oauth._pending_states
+
+    state = feishu_oauth._create_oauth_state("http://app.example.com")
+    origin, tenant_id = feishu_oauth._consume_oauth_state(state)
+    assert origin == "http://app.example.com"
+    assert tenant_id
+    feishu_oauth._pending_states.clear()
+
+
 def test_cli_bridge_redacts_secret_in_stderr_error():
     """v8.6.20-r12（审计 #4 安全）：lark-cli stderr 含 FEISHU_APP_SECRET 字面值时
     必须被替换为 [REDACTED]，防 Sentry / audit log 泄密。"""

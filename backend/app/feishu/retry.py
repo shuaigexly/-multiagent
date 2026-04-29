@@ -3,6 +3,8 @@ import logging
 import re
 from typing import Any, Callable
 
+from app.core.redaction import redact_sensitive_text
+
 logger = logging.getLogger(__name__)
 _CLIENT_ERROR_PATTERN = re.compile(r"\b4(?:0[0-9]|1[0-7])\b")
 
@@ -40,14 +42,17 @@ def _is_non_retryable_value_error(exc: ValueError) -> bool:
 async def _refresh_tokens_if_possible(exc: Exception) -> None:
     logger.warning(
         "Feishu token expired; clearing token caches before retry",
-        extra={"error": str(exc)},
+        extra={"error": redact_sensitive_text(exc, max_chars=500)},
     )
     try:
         from app.feishu import aily
 
         aily._TOKEN_CACHE.clear()
     except Exception as cache_exc:
-        logger.warning("Failed to clear Feishu tenant token cache: %s", cache_exc)
+        logger.warning(
+            "Failed to clear Feishu tenant token cache: %s",
+            redact_sensitive_text(cache_exc, max_chars=500),
+        )
 
     try:
         from app.feishu.user_token import get_user_refresh_token, refresh_user_token
@@ -57,7 +62,7 @@ async def _refresh_tokens_if_possible(exc: Exception) -> None:
     except Exception as refresh_exc:
         logger.warning(
             "Feishu token refresh failed; falling back to normal retry flow: %s",
-            refresh_exc,
+            redact_sensitive_text(refresh_exc, max_chars=500),
         )
 
 
@@ -92,7 +97,10 @@ async def with_retry(
                 await _refresh_tokens_if_possible(exc)
                 continue
             if _is_client_error(exc):
-                logger.warning("4xx fast-fail, not retrying", extra={"error": str(exc)})
+                logger.warning(
+                    "4xx fast-fail, not retrying",
+                    extra={"error": redact_sensitive_text(exc, max_chars=500)},
+                )
                 raise
 
         attempt += 1
@@ -102,9 +110,12 @@ async def with_retry(
                 "Feishu call failed (attempt %s/%s): %s. Retrying in %ss",
                 attempt,
                 max_attempts,
-                last_exc,
+                redact_sensitive_text(last_exc, max_chars=500),
                 delay,
-                extra={"attempt": attempt, "error": str(last_exc)},
+                extra={
+                    "attempt": attempt,
+                    "error": redact_sensitive_text(last_exc, max_chars=500),
+                },
             )
             await asyncio.sleep(delay)
 

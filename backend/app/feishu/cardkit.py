@@ -6,6 +6,7 @@ from typing import Optional
 import httpx
 
 from app.agents.base_agent import AgentResult
+from app.core.redaction import redact_sensitive_text
 from app.core.settings import get_feishu_app_id, get_feishu_app_secret, get_feishu_region
 from app.core.text_utils import truncate_with_marker
 from app.feishu.client import get_feishu_base_url
@@ -255,8 +256,9 @@ def _parse_json_response(resp: httpx.Response, context: str) -> dict:
     try:
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        body = truncate_with_marker(redact_sensitive_text(resp.text), 500)
         raise RuntimeError(
-            f"{context}: HTTP {resp.status_code}: {truncate_with_marker(resp.text, 500)}"
+            f"{context}: HTTP {resp.status_code}: {body}"
         ) from exc
     try:
         data = resp.json()

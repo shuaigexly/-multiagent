@@ -12,6 +12,7 @@ from app.core.settings import (
     get_feishu_region,
 )
 from app.core.observability import get_tenant_id
+from app.core.redaction import redact_sensitive_data, redact_sensitive_text
 from app.feishu.token_crypto import encrypt_token
 from app.models.database import AsyncSessionLocal, UserConfig
 
@@ -153,7 +154,8 @@ async def _refresh_user_token_impl() -> None:
             if app_token_data.get("code") not in (None, 0):
                 raise RuntimeError(
                     f"获取 app_access_token 失败: code={app_token_data.get('code')} "
-                    f"msg={app_token_data.get('msg')}"
+                    f"msg={redact_sensitive_text(app_token_data.get('msg'))} "
+                    f"data={redact_sensitive_data(app_token_data.get('data'))}"
                 )
             if not app_access_token:
                 raise RuntimeError("获取 app_access_token 失败: 响应中缺少 app_access_token")
@@ -166,21 +168,22 @@ async def _refresh_user_token_impl() -> None:
             refresh_resp.raise_for_status()
             refresh_data = refresh_resp.json()
     except httpx.HTTPError as exc:
-        raise RuntimeError(f"刷新飞书用户 token 请求失败: {exc}") from exc
+        raise RuntimeError(f"刷新飞书用户 token 请求失败: {redact_sensitive_text(exc, max_chars=500)}") from exc
     except Exception as exc:
-        raise RuntimeError(f"刷新飞书用户 token 失败: {exc}") from exc
+        raise RuntimeError(f"刷新飞书用户 token 失败: {redact_sensitive_text(exc, max_chars=500)}") from exc
 
     if refresh_data.get("code") != 0:
         raise RuntimeError(
             f"刷新飞书用户 token 失败: code={refresh_data.get('code')} "
-            f"msg={refresh_data.get('msg')} data={refresh_data.get('data')}"
+            f"msg={redact_sensitive_text(refresh_data.get('msg'))} "
+            f"data={redact_sensitive_data(refresh_data.get('data'))}"
         )
 
     token_data = refresh_data.get("data") or {}
     new_access_token = token_data.get("access_token")
     new_refresh_token = token_data.get("refresh_token")
     if not new_access_token or not new_refresh_token:
-        raise RuntimeError(f"刷新飞书用户 token 失败: 响应缺少 token 字段 data={token_data}")
+        raise RuntimeError(f"刷新飞书用户 token 失败: 响应缺少 token 字段 data={redact_sensitive_data(token_data)}")
 
     encrypted_access_token = encrypt_token(new_access_token)
     encrypted_refresh_token = encrypt_token(new_refresh_token)

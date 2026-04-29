@@ -14,6 +14,7 @@ from app.feishu import bitable, doc, im, slides, task as feishu_task
 from app.feishu.cardkit import send_card_to_chat
 from app.feishu.client import get_feishu_client
 from app.core.event_emitter import EventEmitter
+from app.core.redaction import redact_sensitive_text
 from app.core.text_utils import truncate_with_marker
 from app.models.database import PublishedAsset
 
@@ -102,14 +103,18 @@ async def _mark_asset_failed(
     asset.meta = {
         **(asset.meta or {}),
         "status": "failed",
-        "error": truncate_with_marker(error, 500),
+        "error": truncate_with_marker(redact_sensitive_text(error), 500),
     }
     try:
         await _commit_with_retry(db, f"DB提交失败({asset.asset_type}:failed)")
     except Exception as exc:
         logger.error(
             "Failed to mark published asset as failed",
-            extra={"asset_type": asset.asset_type, "asset_id": asset.id, "error": str(exc)},
+            extra={
+                "asset_type": asset.asset_type,
+                "asset_id": asset.id,
+                "error": redact_sensitive_text(exc, max_chars=500),
+            },
         )
 
 
@@ -154,10 +159,12 @@ async def publish_results(
             )
         except Exception as e:
             await _mark_asset_failed(db, asset, e)
-            errors["doc"] = str(e)
+            safe_error = redact_sensitive_text(e, max_chars=500)
+            errors["doc"] = safe_error
             logger.error(
-                f"飞书文档发布失败: {e}",
-                extra={"task_id": task_id, "asset_type": "doc", "error": str(e)},
+                "飞书文档发布失败: %s",
+                safe_error,
+                extra={"task_id": task_id, "asset_type": "doc", "error": safe_error},
             )
         else:
             published.append({"type": "doc", "title": title, "url": result["url"]})
@@ -189,10 +196,12 @@ async def publish_results(
             )
         except Exception as e:
             await _mark_asset_failed(db, asset, e)
-            errors["bitable"] = str(e)
+            safe_error = redact_sensitive_text(e, max_chars=500)
+            errors["bitable"] = safe_error
             logger.error(
-                f"多维表格发布失败: {e}",
-                extra={"task_id": task_id, "asset_type": "bitable", "error": str(e)},
+                "多维表格发布失败: %s",
+                safe_error,
+                extra={"task_id": task_id, "asset_type": "bitable", "error": safe_error},
             )
         else:
             published.append({"type": "bitable", "title": bitable_title, "url": bitable_result["url"]})
@@ -226,10 +235,12 @@ async def publish_results(
             )
         except Exception as e:
             await _mark_asset_failed(db, asset, e)
-            errors["slides"] = str(e)
+            safe_error = redact_sensitive_text(e, max_chars=500)
+            errors["slides"] = safe_error
             logger.error(
-                f"演示文稿发布失败: {e}",
-                extra={"task_id": task_id, "asset_type": "slides", "error": str(e)},
+                "演示文稿发布失败: %s",
+                safe_error,
+                extra={"task_id": task_id, "asset_type": "slides", "error": safe_error},
             )
         else:
             published.append({"type": "slides", "title": slides_title, "url": slides_result["url"]})
@@ -284,10 +295,12 @@ async def publish_results(
             raise
         except Exception as e:
             await _mark_asset_failed(db, asset, e)
-            errors["card"] = str(e)
+            safe_error = redact_sensitive_text(e, max_chars=500)
+            errors["card"] = safe_error
             logger.error(
-                f"互动卡片发送失败: {e}",
-                extra={"task_id": task_id, "asset_type": "card", "error": str(e)},
+                "互动卡片发送失败: %s",
+                safe_error,
+                extra={"task_id": task_id, "asset_type": "card", "error": safe_error},
             )
         else:
             published.append({
@@ -355,10 +368,12 @@ async def publish_results(
             raise
         except Exception as e:
             await _mark_asset_failed(db, asset, e)
-            errors["message"] = str(e)
+            safe_error = redact_sensitive_text(e, max_chars=500)
+            errors["message"] = safe_error
             logger.error(
-                f"群消息发送失败: {e}",
-                extra={"task_id": task_id, "asset_type": "message", "error": str(e)},
+                "群消息发送失败: %s",
+                safe_error,
+                extra={"task_id": task_id, "asset_type": "message", "error": safe_error},
             )
         else:
             published.append({"type": "message", "title": "群消息已发送",
@@ -404,10 +419,12 @@ async def publish_results(
         except Exception as e:
             for asset in assets:
                 await _mark_asset_failed(db, asset, e)
-            errors["task"] = str(e)
+            safe_error = redact_sensitive_text(e, max_chars=500)
+            errors["task"] = safe_error
             logger.error(
-                f"飞书任务创建失败: {e}",
-                extra={"task_id": task_id, "asset_type": "task", "error": str(e)},
+                "飞书任务创建失败: %s",
+                safe_error,
+                extra={"task_id": task_id, "asset_type": "task", "error": safe_error},
             )
         else:
             published.append({"type": "task", "count": len(task_results),
