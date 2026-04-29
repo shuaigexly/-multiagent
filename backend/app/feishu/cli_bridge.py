@@ -23,6 +23,23 @@ _CLI_ENV_ALLOWLIST = (
     "LC_ALL",
     "SYSTEMROOT",
     "COMSPEC",
+    # Round-10 修复 #4：Windows 下 npx / Node 必需环境变量。缺这些 npx 会跳过用户级缓存
+    # （%APPDATA%\npm-cache）、找不到 .cmd/.ps1 (PATHEXT)、定位不到 Program Files 安装目录，
+    # 整个 lark-cli 链路在 Windows 直接挂掉。
+    "APPDATA",
+    "LOCALAPPDATA",
+    "USERPROFILE",
+    "USERNAME",
+    "PATHEXT",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PROGRAMDATA",
+    "WINDIR",
+    "NODE_PATH",
+    "NPM_CONFIG_CACHE",
+    "NPM_CONFIG_PREFIX",
+    "NPM_CONFIG_USERCONFIG",
 )
 
 

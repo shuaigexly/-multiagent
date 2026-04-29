@@ -106,16 +106,36 @@ async def correlation_scope(correlation_id: str | None = None) -> AsyncIterator[
 class _ContextFilter(logging.Filter):
     """注入 ContextVar 值到每条 LogRecord，供 formatter 使用。"""
 
+    # Round-10 修复 #3：caller 显式传 extra={"task_id": "x"} 时，LogRecord 已经带了
+    # 该属性（值由 caller 决定）。原实现无脑覆盖，使 caller 的 extra 永远丢失。
+    # 现策略：仅当 record 上还没有该属性 / 仍是默认占位时，才用 ContextVar 兜底。
+    _FIELDS = (
+        ("correlation_id", _correlation_id),
+        ("task_id", _task_id),
+        ("agent_id", _agent_id),
+        ("tenant_id", _tenant_id),
+    )
+
     def filter(self, record: logging.LogRecord) -> bool:
-        record.correlation_id = _correlation_id.get() or "-"
-        record.task_id = _task_id.get() or "-"
-        record.agent_id = _agent_id.get() or "-"
-        record.tenant_id = _tenant_id.get() or "-"
+        for attr, ctxvar in self._FIELDS:
+            existing = getattr(record, attr, None)
+            if existing in (None, "", "-"):
+                setattr(record, attr, ctxvar.get() or "-")
         return True
 
 
 class _JsonFormatter(logging.Formatter):
     """Structured JSON output — 适合 Loki / Datadog / CloudWatch 直接消费。"""
+
+    def formatTime(self, record, datefmt=None):
+        # v8.6.20-r25（Round-10 BLOCKER）：logging.Formatter.formatTime 默认调
+        # time.strftime，不支持 %f（微秒）— Windows + Linux 都报 ValueError。
+        # JSON log 路径全 broken。改用 datetime.fromtimestamp().strftime() 兼容 %f。
+        from datetime import datetime as _dt, timezone as _tz
+        ct = _dt.fromtimestamp(record.created, tz=_tz.utc)
+        if datefmt:
+            return ct.strftime(datefmt)
+        return ct.isoformat()
 
     def format(self, record: logging.LogRecord) -> str:
         base: dict[str, Any] = {
@@ -129,6 +149,10 @@ class _JsonFormatter(logging.Formatter):
             "tenant_id": getattr(record, "tenant_id", "-"),
         }
         # Forward extra={...} fields if any
+        # Round-10 修复 #1：旧路径 `json.dumps(val, default=str)` 让 dataclass /
+        # BaseModel / Exception 等非原生对象的 repr 直通 JSON sink，可能携带 token。
+        # redact_sensitive_data 现已对未知对象走 repr-after-redact，这里再用 ensure_ascii=False
+        # 序列化一次确认安全；失败兜底仍走 redact_sensitive_text。
         for key, val in record.__dict__.items():
             if key.startswith("_") or key in {
                 "args", "msg", "name", "levelname", "levelno", "pathname", "filename",
@@ -138,12 +162,12 @@ class _JsonFormatter(logging.Formatter):
                 "correlation_id", "task_id", "agent_id", "tenant_id",
             }:
                 continue
-            val = redact_sensitive_data(val)
+            redacted = redact_sensitive_data(val)
             try:
-                json.dumps(val, default=str)
-                base[key] = val
+                json.dumps(redacted, ensure_ascii=False)
+                base[key] = redacted
             except Exception:
-                base[key] = redact_sensitive_text(repr(val))
+                base[key] = redact_sensitive_text(repr(redacted))
         if record.exc_info:
             base["exc"] = redact_sensitive_text(self.formatException(record.exc_info))
         return json.dumps(base, ensure_ascii=False, default=str)
