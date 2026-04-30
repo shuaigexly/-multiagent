@@ -10,7 +10,13 @@ import { getFeishuContext, getChats, type FeishuContext } from '../services/feis
 import type { AgentInfo, SSEEvent, TaskPlanResponse } from '../services/types';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { isTerminalTaskStatus, resolveStreamEndState, type WorkbenchStep } from './workbenchStreamState';
+import {
+  appendWorkbenchStreamEvent,
+  isTerminalTaskStatus,
+  parseWorkbenchStreamEvent,
+  resolveStreamEndState,
+  type WorkbenchStep,
+} from './workbenchStreamState';
 
 const ALL_AGENT_MODULES = [
   'data_analyst', 'finance_advisor', 'seo_advisor', 'content_manager',
@@ -120,6 +126,7 @@ export default function Workbench() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const streamSeqRef = useRef(0);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [inputText, setInputText] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -157,7 +164,10 @@ export default function Workbench() {
       .catch(() => {})
       .finally(() => setCtxLoading(false));
   }, []);
-  useEffect(() => () => { eventSourceRef.current?.close(); }, []);
+  useEffect(() => () => {
+    streamSeqRef.current += 1;
+    eventSourceRef.current?.close();
+  }, []);
 
   const toggleModule = (id: string) =>
     setSelectedModules(p => p.includes(id) ? p.filter(i => i !== id) : [...p, id]);
@@ -170,23 +180,32 @@ export default function Workbench() {
   };
 
   const startSSE = async (tid: string, recover: 'input' | 'confirm') => {
+    const streamSeq = streamSeqRef.current + 1;
+    streamSeqRef.current = streamSeq;
     eventSourceRef.current?.close();
     const es = await createSSEConnection(tid);
+    if (streamSeq !== streamSeqRef.current) {
+      es.close();
+      return;
+    }
     eventSourceRef.current = es;
     es.onmessage = (e) => {
-      const d = JSON.parse(e.data) as SSEEvent;
-      if (d.event_type === 'stream.end') {
+      if (eventSourceRef.current !== es) return;
+      const d = parseWorkbenchStreamEvent(e.data);
+      if (!d) return;
+      if (!('sequence' in d)) {
         es.close();
         if (eventSourceRef.current === es) eventSourceRef.current = null;
-        const result = resolveStreamEndState((d as SSEEvent & { status?: unknown }).status, recover);
+        const result = resolveStreamEndState(d.status, recover);
         setStep(result.step);
         setError(result.error);
         setLoading(false);
         return;
       }
-      if (d.event_type !== 'stream.timeout') setEvents(p => [...p, d]);
+      setEvents(p => appendWorkbenchStreamEvent(p, d));
     };
     es.onerror = async () => {
+      if (eventSourceRef.current !== es) return;
       es.close(); if (eventSourceRef.current === es) eventSourceRef.current = null;
       try {
         const s = await getTaskStatus(tid);
@@ -222,10 +241,11 @@ export default function Workbench() {
     if (!taskId || cancelling) return;
     setCancelling(true);
     setError(null);
+    streamSeqRef.current += 1;
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
     try {
       await cancelTask(taskId);
-      eventSourceRef.current?.close();
-      eventSourceRef.current = null;
       setStep('input');
       setLoading(false);
       setEvents([]);

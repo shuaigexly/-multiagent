@@ -58,6 +58,13 @@ def _strip_optional_string(value: object) -> object:
     return value
 
 
+def _normalize_path_id(value: str, label: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail=f"{label} 不能为空")
+    return normalized
+
+
 def _refresh_native_state_artifacts() -> None:
     app_token = str(_state.get("app_token") or "").strip()
     table_ids = _state.get("table_ids") or {}
@@ -1094,6 +1101,7 @@ async def workflow_stream_token(
     task_record_id: Annotated[str, Path(min_length=1, max_length=128)],
     request: Request,
 ):
+    task_record_id = _normalize_path_id(task_record_id, "task_record_id")
     return {
         "token": issue_stream_token(
             subject=task_record_id,
@@ -1125,6 +1133,7 @@ async def workflow_stream(
     订阅后立即接收 task.started / wave.completed / task.done / task.error 等事件。
     前端使用 EventSource 即可订阅；连接保持到 task.done/task.error 或客户端断开。
     """
+    task_record_id = _normalize_path_id(task_record_id, "task_record_id")
     verify_stream_token(
         token,
         subject=task_record_id,

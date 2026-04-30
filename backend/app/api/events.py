@@ -19,11 +19,19 @@ MAX_SSE_SECONDS = get_int_env("MAX_SSE_SECONDS", 600, minimum=1)
 STREAM_TOKEN_TTL_SECONDS = get_int_env("STREAM_TOKEN_TTL_SECONDS", 60, minimum=1)
 
 
+def _normalize_path_id(value: str, label: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail=f"{label} 不能为空")
+    return normalized
+
+
 @router.post("/{task_id}/events-token", dependencies=[Depends(require_api_key)])
 async def task_events_token(
     task_id: Annotated[str, Path(min_length=1, max_length=128)],
     request: Request,
 ):
+    task_id = _normalize_path_id(task_id, "task_id")
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Task.id).where(Task.id == task_id))
         if not result.scalar_one_or_none():
@@ -45,6 +53,7 @@ async def task_events(
     token: Annotated[str, Query(max_length=4096)] = "",
 ):
     """SSE 流：推送任务执行进度事件（业务语言，非技术日志）"""
+    task_id = _normalize_path_id(task_id, "task_id")
     verify_stream_token(
         token,
         subject=task_id,
