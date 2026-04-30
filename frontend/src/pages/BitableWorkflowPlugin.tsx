@@ -189,13 +189,13 @@ const HEALTH_TONE_STYLE: Record<HealthTone, string> = {
 const TOKEN_PREVIEW_MAX_CHARS = 900;
 
 function textValue(value: unknown): string {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
   if (typeof value === "boolean") return value ? "是" : "否";
   if (Array.isArray(value)) {
     return value
       .map((item) => {
-        if (typeof item === "string") return item;
+        if (typeof item === "string") return item.trim();
         if (typeof item === "number") return String(item);
         if (item && typeof item === "object") {
           const candidate = item as Record<string, unknown>;
@@ -1876,7 +1876,15 @@ export default function BitableWorkflowPlugin() {
               variant="outline"
               onClick={() => {
                 setLoading(true);
-                void bitable.base.getSelection().then((next) => setSelection(next));
+                void bitable.base.getSelection()
+                  .then((next) => {
+                    setError("");
+                    setSelection(next);
+                  })
+                  .catch((err) => {
+                    setError(`刷新当前选中失败：${String(err)}`);
+                    setLoading(false);
+                  });
               }}
               className="w-full"
             >

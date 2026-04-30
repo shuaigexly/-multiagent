@@ -25,6 +25,15 @@ export const LAUNCHER_OUTPUT_PURPOSES = [
 ] as const;
 
 export const LAUNCHER_TASK_SOURCE = "手工创建";
+export const LAUNCHER_INITIAL_WORKFLOW_CONTRACT = {
+  responsibilityRole: "系统调度",
+  responsibilityOwner: "系统",
+  nativeAction: "等待分析完成",
+  exceptionStatus: "正常",
+  exceptionType: "无",
+  exceptionNote: "",
+  automationStatus: "未触发",
+} as const;
 
 export interface LauncherFieldMeta {
   id: string;
@@ -51,6 +60,14 @@ export function buildLauncherRecordFields(
   const fieldByName = new Map(fields.map((field) => [field.name, field]));
   const cellPayload: Record<string, IOpenCellValue> = {};
 
+  const requireField = (name: string): LauncherFieldMeta => {
+    const field = fieldByName.get(name);
+    if (!field) {
+      throw new Error(`缺少必需字段「${name}」`);
+    }
+    return field;
+  };
+
   const textCell = (value: string): IOpenTextSegment[] => [
     { type: IOpenSegmentType.Text, text: value },
   ];
@@ -76,9 +93,16 @@ export function buildLauncherRecordFields(
     const field = fieldByName.get(name);
     if (field) cellPayload[field.id] = value;
   };
+  const setCheckboxIfExists = (name: string, value: boolean) => {
+    const field = fieldByName.get(name);
+    if (field) cellPayload[field.id] = value;
+  };
 
   const title = input.title.trim();
-  setTextIfExists("任务标题", title);
+  if (!title) {
+    throw new Error("任务标题不能为空");
+  }
+  cellPayload[requireField("任务标题").id] = textCell(title);
   setSelectIfExists("分析维度", input.dimension);
   setSelectIfExists("优先级", input.priority);
   setSelectIfExists("输出目的", input.outputPurpose);
@@ -87,6 +111,24 @@ export function buildLauncherRecordFields(
   setTextIfExists("当前阶段", "用户从插件提交");
   setNumberIfExists("进度", 0);
   setSelectIfExists("任务来源", LAUNCHER_TASK_SOURCE);
+  setSelectIfExists("当前责任角色", LAUNCHER_INITIAL_WORKFLOW_CONTRACT.responsibilityRole);
+  setTextIfExists("当前责任人", LAUNCHER_INITIAL_WORKFLOW_CONTRACT.responsibilityOwner);
+  setSelectIfExists("当前原生动作", LAUNCHER_INITIAL_WORKFLOW_CONTRACT.nativeAction);
+  setSelectIfExists("异常状态", LAUNCHER_INITIAL_WORKFLOW_CONTRACT.exceptionStatus);
+  setSelectIfExists("异常类型", LAUNCHER_INITIAL_WORKFLOW_CONTRACT.exceptionType);
+  setTextIfExists("异常说明", LAUNCHER_INITIAL_WORKFLOW_CONTRACT.exceptionNote);
+  setSelectIfExists("自动化执行状态", LAUNCHER_INITIAL_WORKFLOW_CONTRACT.automationStatus);
+  [
+    "待发送汇报",
+    "待创建执行任务",
+    "待安排复核",
+    "是否已拍板",
+    "待拍板确认",
+    "是否已执行落地",
+    "待执行确认",
+    "是否进入复盘",
+    "待复盘确认",
+  ].forEach((name) => setCheckboxIfExists(name, false));
 
   return cellPayload;
 }
