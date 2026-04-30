@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 _http_client: httpx.AsyncClient | None = None
 import threading as _threading
 _http_client_lock = _threading.Lock()
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 500
+_MAX_RECORDS_PER_CALL = 5000
 
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -46,12 +49,47 @@ def _safe_json(resp: httpx.Response) -> dict:
     让上层 RuntimeError 带清晰 status，便于排错。
     """
     try:
-        return resp.json()
+        data = resp.json()
     except Exception:
         return {
             "code": -1,
             "msg": f"non-JSON response (status={resp.status_code}): {redact_sensitive_text(resp.text, max_chars=200)!r}",
         }
+    if not isinstance(data, dict):
+        return {
+            "code": -1,
+            "msg": f"non-object JSON response (status={resp.status_code}): {redact_sensitive_text(data, max_chars=200)!r}",
+        }
+    return data
+
+
+def _bounded_int(value: int, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        normalized = default
+    if normalized < minimum:
+        return minimum
+    if normalized > maximum:
+        return maximum
+    return normalized
+
+
+def _normalize_record_paging(page_size: int, max_records: int) -> tuple[int, int]:
+    """Clamp Feishu record pagination so bad callers cannot fan out huge scans."""
+    normalized_max = _bounded_int(
+        max_records,
+        default=_DEFAULT_PAGE_SIZE,
+        minimum=0,
+        maximum=_MAX_RECORDS_PER_CALL,
+    )
+    normalized_page_size = _bounded_int(
+        page_size,
+        default=_DEFAULT_PAGE_SIZE,
+        minimum=1,
+        maximum=_MAX_PAGE_SIZE,
+    )
+    return normalized_page_size, normalized_max
 
 
 # field_exists 进程内缓存：(app_token, table_id) -> (set[field_name], unix_ts)
@@ -197,6 +235,9 @@ async def list_records(
     page_size: int = 50,
     max_records: int = 500,
 ) -> list[dict]:
+    page_size, max_records = _normalize_record_paging(page_size, max_records)
+    if max_records <= 0:
+        return []
     return await with_retry(_list_records_impl, app_token, table_id, filter_expr, page_size, max_records)
 
 
@@ -361,6 +402,9 @@ async def search_records(
     "automatic_fields" 时重试一次不带该字段；5xx 走 with_retry（不剥离参数）。
     缺字段 / InvalidSort 等抛 RuntimeError，由上层 fallback。
     """
+    page_size, max_records = _normalize_record_paging(page_size, max_records)
+    if max_records <= 0:
+        return []
     return await with_retry(
         _search_records_impl, app_token, table_id,
         filter_conditions, sort, field_names, page_size, max_records, automatic_fields,

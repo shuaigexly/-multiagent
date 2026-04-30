@@ -59,6 +59,13 @@ TASK_TYPES = {
     },
 }
 
+VALID_MODULES = {
+    "data_analyst", "finance_advisor", "seo_advisor",
+    "content_manager", "product_manager", "operations_manager", "ceo_assistant",
+}
+MAX_SELECTED_MODULES = 4
+MAX_REASONING_CHARS = 80
+
 PLANNER_PROMPT = """你是一位经验丰富的 AI 团队调度专家，负责根据用户任务描述，精准匹配最合适的 AI 专家模块组合。
 
 【调度原则】
@@ -94,6 +101,24 @@ class TaskPlan(BaseModel):
     task_type_label: str
     selected_modules: list[str]
     reasoning: str
+
+
+def _normalize_selected_modules(raw_modules: object, task_type: str) -> list[str]:
+    modules: list[str] = []
+    if isinstance(raw_modules, list):
+        for module in raw_modules:
+            if module not in VALID_MODULES or module in modules:
+                continue
+            modules.append(module)
+            if len(modules) >= MAX_SELECTED_MODULES:
+                break
+    return modules or list(TASK_TYPES[task_type]["modules"])
+
+
+def _normalize_reasoning(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:MAX_REASONING_CHARS]
 
 
 async def plan_task(user_input: str, feishu_context: Optional[dict] = None) -> TaskPlan:
@@ -140,20 +165,15 @@ async def _llm_plan(user_input: str, feishu_context: Optional[dict] = None) -> T
     if fence_match:
         raw = fence_match.group(1).strip()
     data = json.loads(raw)
-    # 校验 modules 是否合法
-    valid_modules = {"data_analyst", "finance_advisor", "seo_advisor",
-                     "content_manager", "product_manager", "operations_manager", "ceo_assistant"}
-    modules = [m for m in data.get("selected_modules", []) if m in valid_modules]
     task_type = data.get("task_type", "general")
     if task_type not in TASK_TYPES:
         task_type = "general"
-    if not modules:
-        modules = TASK_TYPES[task_type]["modules"]
+    modules = _normalize_selected_modules(data.get("selected_modules", []), task_type)
     return TaskPlan(
         task_type=task_type,
         task_type_label=data.get("task_type_label") or TASK_TYPES[task_type]["label"],
         selected_modules=modules,
-        reasoning=data.get("reasoning", ""),
+        reasoning=_normalize_reasoning(data.get("reasoning", "")),
     )
 
 

@@ -90,6 +90,15 @@ interface BitableRecordValue {
   fields: Record<string, unknown>;
 }
 
+interface BitableTableLike {
+  getRecordById(recordId: string): Promise<BitableRecordValue>;
+  getRecordsByPage(params: { pageSize?: number; pageToken?: string; filter?: IGetRecordsFilterInfo }): Promise<{
+    records: BitableRecordValue[];
+    hasMore: boolean;
+    pageToken?: string;
+  }>;
+}
+
 interface RuntimeHealthItem {
   key: string;
   label: string;
@@ -104,6 +113,8 @@ const REVIEW_TABLE_NAME = "产出评审";
 const ACTION_TABLE_NAME = "交付动作";
 const ARCHIVE_TABLE_NAME = "交付结果归档";
 const AUTOMATION_LOG_TABLE_NAME = "自动化日志";
+const RELATION_SCAN_PAGE_SIZE = 80;
+const RELATION_SCAN_MAX_PAGES = 6;
 
 const WORKFLOW_DETAIL_STATUS_STYLE: Record<StepStatus, string> = {
   done: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -1252,13 +1263,13 @@ export default function BitableWorkflowPlugin() {
   const [resolutionDebug, setResolutionDebug] = useState<WorkflowResolutionDebug | null>(null);
   const [selectedRecordSnapshot, setSelectedRecordSnapshot] = useState<TaskSnapshot | null>(null);
   const unsubscribeRef = useRef<null | (() => void)>(null);
-  const tableCacheRef = useRef(new Map<string, Promise<{ getRecordById(recordId: string): Promise<BitableRecordValue>; getRecordsByPage(params: { pageSize?: number; pageToken?: number }): Promise<{ records: BitableRecordValue[]; hasMore: boolean; pageToken?: number }>; }>>());
+  const tableCacheRef = useRef(new Map<string, Promise<BitableTableLike>>());
   const fieldMapCacheRef = useRef(new Map<string, Promise<Map<string, string>>>());
 
   const getCachedTable = useCallback((tableId: string) => {
     const cached = tableCacheRef.current.get(tableId);
     if (cached) return cached;
-    const promise = bitable.base.getTableById(tableId);
+    const promise = bitable.base.getTableById(tableId) as Promise<BitableTableLike>;
     tableCacheRef.current.set(tableId, promise);
     return promise;
   }, []);
@@ -1290,12 +1301,14 @@ export default function BitableWorkflowPlugin() {
     const seen = new Set(collected.map((item) => item.recordId));
     const [table, fieldMap] = await Promise.all([getCachedTable(tableId), getCachedFieldMap(tableId)]);
 
-    let pageToken: number | undefined;
+    let pageToken: string | undefined;
     let hasMore = true;
+    let scannedPages = 0;
 
-    while (hasMore && collected.length < limit) {
+    while (hasMore && collected.length < limit && scannedPages < RELATION_SCAN_MAX_PAGES) {
+      scannedPages += 1;
       const response = await table.getRecordsByPage({
-        pageSize: 100,
+        pageSize: RELATION_SCAN_PAGE_SIZE,
         ...(pageToken ? { pageToken } : {}),
         ...(filter ? { filter } : {}),
       });

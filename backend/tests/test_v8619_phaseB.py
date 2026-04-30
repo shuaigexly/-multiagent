@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.bitable_workflow.bitable_ops import (
-    search_records, batch_update_records, batch_delete_records,
+    search_records, batch_update_records, batch_delete_records, list_records, _safe_json,
 )
 
 
@@ -14,6 +14,47 @@ def _resp(payload: dict, status: int = 200) -> MagicMock:
     r.text = ""
     r.raise_for_status = MagicMock()
     return r
+
+
+def test_safe_json_rejects_non_object_json():
+    resp = _resp(["not", "object"])
+
+    result = _safe_json(resp)
+
+    assert result["code"] == -1
+    assert "non-object JSON response" in result["msg"]
+
+
+@pytest.mark.asyncio
+async def test_list_records_clamps_paging_parameters(monkeypatch):
+    captured: dict = {}
+
+    async def fake_get(url, headers=None, params=None):
+        captured["params"] = params
+        return _resp({"code": 0, "data": {"items": [{"record_id": "rec1"}], "has_more": False}})
+
+    mock_client = MagicMock()
+    mock_client.get = fake_get
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+
+    rows = await list_records("app", "tbl", page_size=999999, max_records=999999)
+
+    assert rows == [{"record_id": "rec1"}]
+    assert captured["params"]["page_size"] == 500
+
+
+@pytest.mark.asyncio
+async def test_list_records_returns_empty_for_non_positive_limits(monkeypatch):
+    get_spy = AsyncMock()
+    mock_client = MagicMock()
+    mock_client.get = get_spy
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+
+    rows = await list_records("app", "tbl", page_size=100, max_records=-1)
+
+    assert rows == []
+    assert get_spy.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -44,6 +85,25 @@ async def test_search_records_request_body_shape(monkeypatch):
     assert captured["body"]["sort"][0]["field_name"] == "综合评分"
     assert "field_names" in captured["body"]
     assert "automatic_fields" not in captured["body"]  # 默认 False 不发送
+
+
+@pytest.mark.asyncio
+async def test_search_records_clamps_paging_parameters(monkeypatch):
+    captured: dict = {}
+
+    async def fake_post(url, headers=None, params=None, json=None):
+        captured["params"] = params
+        return _resp({"code": 0, "data": {"items": [{"record_id": "rec1"}], "has_more": False}})
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_http_client", lambda: mock_client)
+    monkeypatch.setattr("app.bitable_workflow.bitable_ops._get_token", AsyncMock(return_value="t"))
+
+    rows = await search_records("app", "tbl", page_size=999999, max_records=999999)
+
+    assert rows == [{"record_id": "rec1"}]
+    assert captured["params"]["page_size"] == 500
 
 
 @pytest.mark.asyncio

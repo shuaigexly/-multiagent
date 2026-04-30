@@ -37,8 +37,11 @@ function normalizeText(value: string) {
 
 function getTimestamp(event: SSEEvent, cache: Map<number, string>) {
   const rawTimestamp = event.payload?.timestamp;
-  if (typeof rawTimestamp === 'string') {
-    return new Date(rawTimestamp).toLocaleTimeString('zh-CN', { hour12: false });
+  if (typeof rawTimestamp === 'string' || typeof rawTimestamp === 'number') {
+    const timestamp = new Date(rawTimestamp);
+    if (Number.isFinite(timestamp.getTime())) {
+      return timestamp.toLocaleTimeString('zh-CN', { hour12: false });
+    }
   }
 
   const existing = cache.get(event.sequence);
