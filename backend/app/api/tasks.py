@@ -41,6 +41,7 @@ _claim_lock: asyncio.Lock | None = None
 import threading as _threading
 _claim_lock_init = _threading.Lock()
 _MAX_FEISHU_CONTEXT_CHARS = 200_000
+_MAX_INPUT_TEXT_CHARS = 5000
 _FEISHU_CONTEXT_LIST_LIMITS = {
     "drive": 20,
     "calendar": 50,
@@ -156,8 +157,8 @@ def _parse_feishu_context(raw: str | None) -> dict | None:
 @router.post("", response_model=TaskPlanResponse, dependencies=[Depends(require_api_key)])
 async def create_task(
     request: Request,
-    input_text: Optional[str] = Form(None),
-    feishu_context: Optional[str] = Form(None),
+    input_text: Optional[str] = Form(None, max_length=_MAX_INPUT_TEXT_CHARS),
+    feishu_context: Optional[str] = Form(None, max_length=_MAX_FEISHU_CONTEXT_CHARS),
     file: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -168,11 +169,14 @@ async def create_task(
     client_ip = request.client.host if request.client else "unknown"
     _check_rate_limit(client_ip)
 
-    if not input_text and not file:
+    normalized_input_text = input_text.strip() if input_text is not None else None
+    if normalized_input_text == "":
+        normalized_input_text = None
+
+    if not normalized_input_text and not file:
         raise HTTPException(422, "input_text 或 file 至少提供一个")
-    MAX_INPUT_LEN = 5000
-    if input_text and len(input_text) > MAX_INPUT_LEN:
-        raise HTTPException(422, f"任务描述不能超过 {MAX_INPUT_LEN} 字符")
+    if normalized_input_text and len(normalized_input_text) > _MAX_INPUT_TEXT_CHARS:
+        raise HTTPException(422, f"任务描述不能超过 {_MAX_INPUT_TEXT_CHARS} 字符")
 
     task_id = str(uuid.uuid4())
     input_file_path = None
@@ -213,7 +217,7 @@ async def create_task(
             await f.write(file_content)
 
     # 拼接用于规划的文本
-    planning_text = input_text or ""
+    planning_text = normalized_input_text or ""
     if file_content:
         planning_text += f"\n\n[附件内容片段]\n{truncate_with_marker(file_content, 500)}"
 
@@ -235,7 +239,7 @@ async def create_task(
     task = Task(
         id=task_id,
         status="planning",
-        input_text=input_text,
+        input_text=normalized_input_text,
         input_file=input_file_path,
         task_type=plan.task_type,
         task_type_label=plan.task_type_label,

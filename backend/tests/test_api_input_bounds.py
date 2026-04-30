@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 
 def _client_without_api_key(monkeypatch) -> TestClient:
@@ -83,6 +84,47 @@ def test_task_and_stream_path_and_query_ids_are_bounded(monkeypatch):
         "/api/v1/feishu/tasks",
         json={"summary": "ok", "source_task_id": long_id},
     ).status_code == 422
+
+
+def test_task_confirm_payloads_are_bounded():
+    from pydantic import ValidationError
+    from app.models.schemas import PublishRequest, TaskConfirm, TaskCreate
+
+    with pytest.raises(ValidationError):
+        TaskConfirm(selected_modules=["data_analyst"] * 20)
+
+    with pytest.raises(ValidationError):
+        TaskConfirm(selected_modules=["data_analyst"], user_instructions="x" * 2001)
+
+    with pytest.raises(ValidationError):
+        TaskCreate(input_text="x" * 5001)
+
+    with pytest.raises(ValidationError):
+        PublishRequest(asset_types=["doc"] * 20)
+
+    with pytest.raises(ValidationError):
+        PublishRequest(asset_types=["doc"], chat_id="c" * 129)
+
+
+def test_workflow_control_payloads_are_bounded():
+    from pydantic import ValidationError
+    from app.api.workflow import ApplyNativeRequest, SetupRequest, StartRequest
+
+    with pytest.raises(ValidationError):
+        SetupRequest(name=" " * 8)
+
+    with pytest.raises(ValidationError):
+        SetupRequest(name="x" * 121)
+
+    with pytest.raises(ValidationError):
+        StartRequest(
+            app_token="app",
+            table_ids={"task": "task", "report": "report", "performance": "perf"},
+            interval=86401,
+        )
+
+    with pytest.raises(ValidationError):
+        ApplyNativeRequest(surfaces=["workflow"] * 20)
 
 
 def test_config_request_values_are_bounded(monkeypatch):

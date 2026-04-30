@@ -35,6 +35,11 @@ _MAX_EVENT_BODY_BYTES = get_int_env(
     256 * 1024,
     minimum=1024,
 )
+_MAX_BOT_TEXT_CHARS = get_int_env(
+    "FEISHU_BOT_MAX_TEXT_CHARS",
+    5000,
+    minimum=100,
+)
 _SIGNATURE_SKEW_SECONDS = get_int_env(
     "FEISHU_BOT_SIGNATURE_SKEW_SECONDS",
     300,
@@ -87,6 +92,13 @@ def _decode_request_body(raw_body: bytes, encrypt_key: str) -> dict[str, Any]:
         raise ValueError("收到加密事件，但未配置 Encrypt Key")
     plaintext = AESCipher(encrypt_key).decrypt_str(encrypted)
     return json.loads(plaintext)
+
+
+def _normalize_bot_text(text: str) -> str:
+    normalized = text.strip()
+    if len(normalized) <= _MAX_BOT_TEXT_CHARS:
+        return normalized
+    return truncate_with_marker(normalized, _MAX_BOT_TEXT_CHARS)
 
 
 @router.post("/event")
@@ -146,6 +158,9 @@ async def feishu_bot_event(request: Request, background_tasks: BackgroundTasks):
         return JSONResponse({"ok": True})
 
     text = bot_handler.extract_text(body)
+    if not text:
+        return JSONResponse({"ok": True})
+    text = _normalize_bot_text(text)
     if not text:
         return JSONResponse({"ok": True})
 

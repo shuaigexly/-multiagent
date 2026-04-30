@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Inbox, Loader2, Plus, Trash2 } from 'lucide-react';
 import { deleteTask, listTasks } from '../services/api';
@@ -51,8 +51,11 @@ export default function History() {
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
   const [canUseServerSearch, setCanUseServerSearch] = useState(false);
   const [usingServerSearch, setUsingServerSearch] = useState(false);
+  const requestSeqRef = useRef(0);
 
   const loadTasks = async ({ search, initial = false }: { search?: string; initial?: boolean } = {}) => {
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
     if (initial) {
       setLoading(true);
     } else {
@@ -65,17 +68,21 @@ export default function History() {
         limit: search ? 100 : HISTORY_FETCH_LIMIT,
         search,
       });
+      if (requestSeq !== requestSeqRef.current) return;
       setTasks(data);
       if (!search) {
         setCanUseServerSearch(data.length >= HISTORY_FETCH_LIMIT);
       }
     } catch {
+      if (requestSeq !== requestSeqRef.current) return;
       setError(initial ? '加载失败' : '更新失败');
     } finally {
-      if (initial) {
-        setLoading(false);
-      } else {
-        setRefreshing(false);
+      if (requestSeq === requestSeqRef.current) {
+        if (initial) {
+          setLoading(false);
+        } else {
+          setRefreshing(false);
+        }
       }
     }
   };
@@ -112,11 +119,11 @@ export default function History() {
     }
 
     const timer = window.setInterval(() => {
-      void loadTasks();
+      void loadTasks({ search: usingServerSearch ? debouncedSearch : undefined });
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, [tasks, loading]);
+  }, [debouncedSearch, loading, tasks, usingServerSearch]);
 
   const filteredTasks = useMemo(() => {
     const keyword = debouncedSearch.toLowerCase();

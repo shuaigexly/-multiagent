@@ -6,6 +6,7 @@ import {
   getTaskResults,
   getTaskStatus,
   publishTask,
+  submitTask,
 } from '../services/api';
 import { api } from '../services/http';
 
@@ -43,5 +44,22 @@ describe('task api service', () => {
     postSpy.mockRestore();
     getSpy.mockRestore();
     deleteSpy.mockRestore();
+  });
+
+  it('trims task input before submitting multipart payloads', async () => {
+    const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { task_id: 'task_1' } });
+
+    await submitTask('  分析增长数据  ');
+
+    const form = postSpy.mock.calls[0][1] as FormData;
+    expect(postSpy).toHaveBeenCalledWith('/api/v1/tasks', expect.any(FormData));
+    expect(form.get('input_text')).toBe('分析增长数据');
+
+    postSpy.mockClear();
+    await submitTask('   ');
+    const blankForm = postSpy.mock.calls[0][1] as FormData;
+    expect(blankForm.has('input_text')).toBe(false);
+
+    postSpy.mockRestore();
   });
 });

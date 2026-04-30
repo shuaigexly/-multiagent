@@ -62,10 +62,18 @@ def _refresh_native_state_artifacts() -> None:
 
 
 class SetupRequest(BaseModel):
-    name: str = "内容运营虚拟组织"
+    name: str = Field(default="内容运营虚拟组织", min_length=1, max_length=120)
     mode: str = "seed_demo"
     base_type: str = "validation"
     apply_native: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        normalized = v.strip()
+        if not normalized:
+            raise ValueError("name 不能为空")
+        return normalized
 
     @field_validator("mode")
     @classmethod
@@ -84,9 +92,9 @@ class SetupRequest(BaseModel):
 
 class StartRequest(BaseModel):
     app_token: str = Field(min_length=1, max_length=64)
-    table_ids: dict[str, str]
-    interval: int = Field(default=30, ge=1)
-    analysis_every: int = Field(default=5, ge=1)
+    table_ids: dict[str, str] = Field(..., min_length=3, max_length=32)
+    interval: int = Field(default=30, ge=1, le=86400)
+    analysis_every: int = Field(default=5, ge=1, le=1000)
 
     @model_validator(mode="after")
     def check_table_ids(self) -> "StartRequest":
@@ -167,7 +175,7 @@ class ConfirmRequest(BaseModel):
 
 
 class ApplyNativeRequest(BaseModel):
-    surfaces: list[str] = Field(default_factory=list)
+    surfaces: list[str] = Field(default_factory=list, max_length=len(_NATIVE_ALL_SURFACES))
     force: bool = False
 
     @field_validator("surfaces")

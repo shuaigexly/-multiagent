@@ -1413,6 +1413,8 @@ export default function BitableWorkflowPlugin() {
     async function load() {
       setLoading(true);
       setError("");
+      setLive(null);
+      setSelectedTimelineEventKey("");
       try {
         const selectedRecord = await getMappedRecordById(selection.tableId!, selection.recordId!);
         setSelectedRecordSnapshot(selectedRecord);
@@ -1486,19 +1488,22 @@ export default function BitableWorkflowPlugin() {
 
         if (currentTask?.recordId && getRuntimeApiKey()) {
           const initialProgress = safeProgress(currentTask.fields["进度"]);
-          setLive((prev) => ({
-            stage: prev?.stage || textValue(currentTask.fields["当前阶段"]) || "等待实时流连接",
-            progress: Math.max(prev?.progress || 0, initialProgress),
-            status: prev?.status || "running",
+          const currentStatusText = textValue(currentTask.fields["状态"]);
+          const initialLiveStatus: LiveState["status"] =
+            currentStatusText.includes("失败") || currentStatusText.includes("异常")
+              ? "error"
+              : currentStatusText.includes("完成") || initialProgress >= 100
+                ? "done"
+                : "running";
+          setLive({
+            stage: textValue(currentTask.fields["当前阶段"]) || "等待实时流连接",
+            progress: initialProgress,
+            status: initialLiveStatus,
             updatedAt: new Date().toISOString(),
             streamStatus: "connecting",
             streamMessage: "正在连接后端实时流",
-            tokenPreview: prev?.tokenPreview,
-            activeAgent: prev?.activeAgent,
-            history: prev?.history || [],
-            workflowSteps: prev?.workflowSteps,
-            agentPipeline: prev?.agentPipeline,
-          }));
+            history: [],
+          });
           unsubscribeRef.current = subscribeTaskProgress(
             currentTask.recordId,
             (event: ProgressEvent) => {
@@ -1507,9 +1512,12 @@ export default function BitableWorkflowPlugin() {
                 const nextStep = buildLiveStepEvent(event);
                 const nextHistory = nextStep ? [...(prev?.history || []), nextStep].slice(-10) : prev?.history || [];
                 const tokenChunk = event.event_type === "agent.token" ? textValue(event.payload.chunk) : "";
+                const nextProgress = event.event_type === "task.done"
+                  ? 100
+                  : safeProgress(event.payload.progress ?? prev?.progress ?? 0);
                 return {
                   stage: String(event.payload.stage || prev?.stage || "等待调度"),
-                  progress: safeProgress(event.payload.progress ?? prev?.progress ?? 0),
+                  progress: nextProgress,
                   status:
                     event.event_type === "task.done"
                       ? "done"

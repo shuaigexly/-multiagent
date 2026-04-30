@@ -50,8 +50,6 @@ const PUBLISH_OPTIONS = [
   { value: 'task', label: '飞书任务', desc: '待办清单', icon: CheckSquare },
 ];
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
 type ActionTaskState = 'idle' | 'loading' | 'success' | 'error';
 type SectionTone = 'risk' | 'insight' | 'action' | 'default';
 const ResultCharts = lazy(() => import('../components/ResultCharts').then((module) => ({ default: module.ResultCharts })));
@@ -375,6 +373,7 @@ export default function ResultView() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
   const copyResetTimerRef = useRef<number | null>(null);
+  const actionResetTimerRefs = useRef<number[]>([]);
   const [data, setData] = useState<TaskResultsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
@@ -407,6 +406,8 @@ export default function ResultView() {
 
   useEffect(() => () => {
     if (copyResetTimerRef.current) window.clearTimeout(copyResetTimerRef.current);
+    actionResetTimerRefs.current.forEach((timer) => window.clearTimeout(timer));
+    actionResetTimerRefs.current = [];
   }, []);
 
   const orderedAgentResults = useMemo(() => getOrderedAgentResults(data?.agent_results ?? []), [data?.agent_results]);
@@ -423,16 +424,18 @@ export default function ResultView() {
 
   const createActionTask = async (item: string) => {
     if (!taskId || actionTaskStates.get(item) === 'loading') return;
+    const summary = item.trim().slice(0, 500);
+    if (!summary) return;
 
     setActionTaskState(item, 'loading');
 
     try {
-      await createFeishuTask(item, taskId);
+      await createFeishuTask(summary, taskId);
       setActionTaskState(item, 'success');
-      window.setTimeout(() => setActionTaskState(item, 'idle'), 2000);
+      actionResetTimerRefs.current.push(window.setTimeout(() => setActionTaskState(item, 'idle'), 2000));
     } catch {
       setActionTaskState(item, 'error');
-      window.setTimeout(() => setActionTaskState(item, 'idle'), 2000);
+      actionResetTimerRefs.current.push(window.setTimeout(() => setActionTaskState(item, 'idle'), 2000));
     }
   };
 
@@ -449,7 +452,12 @@ export default function ResultView() {
     setPublishing(true);
     setError(null);
     try {
-      await publishTask(taskId, publishTypes, { docTitle: docTitle || undefined, chatId: chatId || undefined });
+      const normalizedDocTitle = docTitle.trim();
+      const normalizedChatId = chatId.trim();
+      await publishTask(taskId, publishTypes, {
+        docTitle: normalizedDocTitle || undefined,
+        chatId: normalizedChatId || undefined,
+      });
       setData(await getTaskResults(taskId));
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -626,7 +634,7 @@ export default function ResultView() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-[11px] text-muted-foreground">文档标题</label>
-                <Input value={docTitle} onChange={(event) => setDocTitle(event.target.value)} placeholder="4 月经营分析周报" />
+                <Input value={docTitle} maxLength={100} onChange={(event) => setDocTitle(event.target.value)} placeholder="4 月经营分析周报" />
               </div>
               <div>
                 <label className={`mb-1 block text-[11px] ${needsFeishuTarget ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>

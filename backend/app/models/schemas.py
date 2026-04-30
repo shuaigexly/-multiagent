@@ -11,8 +11,8 @@ VALID_ASSET_TYPES = {"doc", "bitable", "slides", "message", "task", "card"}
 
 
 class TaskCreate(BaseModel):
-    input_text: Optional[str] = None
-    input_file: Optional[str] = None   # file_id from upload
+    input_text: Optional[str] = Field(None, max_length=5000)
+    input_file: Optional[str] = Field(None, max_length=256)   # file_id from upload
     feishu_context: Optional[dict] = None
 
     @model_validator(mode="after")
@@ -31,8 +31,8 @@ class TaskPlanResponse(BaseModel):
 
 
 class TaskConfirm(BaseModel):
-    selected_modules: List[str]
-    user_instructions: Optional[str] = None
+    selected_modules: List[str] = Field(..., min_length=1, max_length=len(VALID_MODULES))
+    user_instructions: Optional[str] = Field(None, max_length=2000)
 
     @field_validator("selected_modules")
     @classmethod
@@ -79,9 +79,9 @@ class TaskResultsResponse(BaseModel):
 
 
 class PublishRequest(BaseModel):
-    asset_types: List[str]
-    doc_title: Optional[str] = None
-    chat_id: Optional[str] = None
+    asset_types: List[str] = Field(..., min_length=1, max_length=len(VALID_ASSET_TYPES))
+    doc_title: Optional[str] = Field(None, max_length=100)
+    chat_id: Optional[str] = Field(None, max_length=128)
 
     @field_validator("asset_types")
     @classmethod
@@ -92,13 +92,6 @@ class PublishRequest(BaseModel):
         if invalid:
             raise ValueError(f"未知资产类型: {invalid}")
         return list(dict.fromkeys(v))
-
-    @field_validator("doc_title")
-    @classmethod
-    def validate_doc_title(cls, v):
-        if v is not None and len(v) > 100:
-            raise ValueError("doc_title 不超过 100 字符")
-        return v
 
 
 class PublishResponse(BaseModel):

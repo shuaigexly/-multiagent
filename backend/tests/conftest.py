@@ -7,6 +7,8 @@ import pytest
 # 生产环境通过 requirements.txt 安装真实包。
 for _mod in [
     "lark_oapi",
+    "lark_oapi.core",
+    "lark_oapi.core.utils",
     "lark_oapi.api",
     "lark_oapi.api.im",
     "lark_oapi.api.im.v1",

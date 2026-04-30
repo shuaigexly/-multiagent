@@ -20,6 +20,24 @@ def test_upload_path_resolution_is_scoped_to_upload_dir(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_create_task_rejects_whitespace_only_input():
+    from app.api import tasks
+
+    request = SimpleNamespace(client=SimpleNamespace(host="blank-input-test"))
+
+    with pytest.raises(HTTPException) as exc:
+        await tasks.create_task(
+            request=request,
+            input_text="   \n\t  ",
+            feishu_context=None,
+            file=None,
+            db=SimpleNamespace(),
+        )
+
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_uploaded_file_is_removed_when_feishu_context_json_is_invalid(tmp_path, monkeypatch):
     from app.api import tasks
     from app.core.settings import settings

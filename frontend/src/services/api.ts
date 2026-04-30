@@ -16,7 +16,8 @@ export async function submitTask(
   feishuContext?: object
 ): Promise<TaskPlanResponse> {
   const form = new FormData();
-  if (inputText) form.append('input_text', inputText);
+  const normalizedInputText = inputText.trim();
+  if (normalizedInputText) form.append('input_text', normalizedInputText);
   if (file) form.append('file', file);
   if (feishuContext) form.append('feishu_context', JSON.stringify(feishuContext));
   const resp = await api.post('/api/v1/tasks', form);
