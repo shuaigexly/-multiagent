@@ -253,25 +253,24 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 
 当前仓库已经实际跑过：
 
-1. 本地后端回归测试
-2. 模板中心相关调度测试
-3. 前端生产构建
-
-当前仓库没有实际跑过：
-
-1. 真实飞书多维表格创建
-2. 真实飞书记录写入
-3. 真实飞书自动化执行
-4. 真实飞书任务 / 消息 / 复核提醒动作
-
-因此当前正确口径是：
-
-- 已完成“代码链路连通验收”
-- 未完成“真实飞书权限下的端到端联调验收”
+1. 本地后端回归测试 — `pytest backend/tests` **417 passed**（v8.6.20-r27）
+2. 模板中心 / 调度 / 输入边界 / 工作流流式 / 多维表面回归
+3. 前端生产构建 + GitHub Pages 部署
+4. **真实飞书多维表格端到端实跑** — v8.6.20-r25 在 `GXkTbYLn9a3WRbswJ99crIcMnvh` 跑通 setup_workflow + 1 轮 cycle，3153 s 内 verify_bitable issues=0、3 条 SEED 任务由 7 岗 DAG 完成、CEO 行动项写回主表生成新「待分析」任务，闭环成立
 
 详见：
 
 - [docs/FEISHU_BITABLE_VALIDATION_BOUNDARY.md](docs/FEISHU_BITABLE_VALIDATION_BOUNDARY.md)
+
+### 已知运行边界与生产前置条件
+
+> 这部分如实标注，避免审阅 / 用户对超出当前验收范围的能力产生误期。
+
+- **单 Base 单租户**：[backend/app/api/workflow.py](backend/app/api/workflow.py) 的 `_state` 是单进程内存字典，多个用户同时调 `/setup` + `/start` 会互相覆盖 base 元数据。多租户隔离需要把 `_state` 改成 `dict[tenant_id, dict]` 或落 Redis；本版未做。
+- **Redis 锁分布式语义**：单实例部署时 in-process `asyncio.Lock` 已够用；扩到 2+ 后端实例必须挂 Redis（`scheduler.py` 已经写了 Redis SET nx，缺连接时降级到本地锁，启动时会 WARNING）。生产不要禁用 Redis。
+- **数据源解析覆盖度**：`backend/app/core/data_parser.py` 当前只稳支持 RFC 4180 CSV + Markdown 文本。TSV / 含引号嵌套逗号的 Excel 导出 / 异形表头需要用户自己预清洗。
+- **国内大模型**：默认 deepseek-chat，可切智谱 GLM / 火山引擎 / 通义 / 豆包；**禁止** OpenAI / Anthropic（竞赛一票否决项 + 代码层未配 base_url 校验，但默认 .env 不指向境外）。
+- **i18n**：表名 / 字段 / 视图 / Agent persona 全中文；非中文场景需手翻一次 `schema.py` 与 `demo_data.py`。
 
 **典型使用流程：**
 

@@ -1,0 +1,48 @@
+name: Backend Tests
+
+# v8.6.20-r28: pre-submission CI gate — pytest 全量 + compileall。
+# 任意 push / PR 触发；和 deploy-bitable-plugin 解耦，避免一边失败拖另一边。
+# Skip path：仅文档 / 仅 README 修改不重跑（节省 CI 资源）。
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "frontend/**"
+      - ".github/workflows/deploy-bitable-plugin.yml"
+  pull_request:
+    branches: [master]
+  workflow_dispatch: {}
+
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile-check all modules
+        run: python -m compileall -q app tests
+
+      - name: Run pytest
+        run: python -m pytest -q --tb=short
