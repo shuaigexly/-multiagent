@@ -48,6 +48,7 @@ import BitableAgentLauncher from "./BitableAgentLauncher";
 type StepStatus = "done" | "running" | "pending" | "error";
 type TimelineFilter = "all" | "base" | "sse" | "error";
 type HealthTone = "success" | "running" | "warning" | "error" | "neutral";
+type WorkspaceMode = "run" | "context" | "delivery";
 
 interface WorkflowStepDetail {
   key: string;
@@ -140,6 +141,17 @@ const TIMELINE_FILTER_LABEL: Record<TimelineFilter, string> = {
   error: "异常",
 };
 const TIMELINE_FILTERS: TimelineFilter[] = ["all", "base", "sse", "error"];
+const WORKSPACE_MODE_LABEL: Record<WorkspaceMode, string> = {
+  run: "运行",
+  context: "上下文",
+  delivery: "交付",
+};
+const WORKSPACE_MODE_CAPTION: Record<WorkspaceMode, string> = {
+  run: "默认聚焦 AI 运转流程、当前岗位、步骤轨道和原生日志。",
+  context: "查看入口回溯、任务摘要、关联来源和定位诊断。",
+  delivery: "查看证据指标、评审对象、交付动作和归档对象。",
+};
+const WORKSPACE_MODES: WorkspaceMode[] = ["run", "context", "delivery"];
 
 const AGENT_NODE_STYLE: Record<AgentPipelineSnapshot["status"], string> = {
   running: "border-sky-300 bg-sky-50 text-sky-700 shadow-[0_0_0_4px_rgba(14,165,233,0.10)]",
@@ -716,6 +728,38 @@ function RuntimeHealthStrip({ items }: { items: RuntimeHealthItem[] }) {
   );
 }
 
+function WorkspaceModeSwitch({
+  mode,
+  onModeChange,
+}: {
+  mode: WorkspaceMode;
+  onModeChange: (mode: WorkspaceMode) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex rounded-lg bg-slate-100 p-1">
+          {WORKSPACE_MODES.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => onModeChange(item)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                mode === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+              }`}
+            >
+              {WORKSPACE_MODE_LABEL[item]}
+            </button>
+          ))}
+        </div>
+        <div className="min-w-0 flex-1 text-sm leading-6 text-slate-500">
+          {WORKSPACE_MODE_CAPTION[mode]}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AgentFlowDashboard({
   agents,
   progress,
@@ -1276,6 +1320,7 @@ export default function BitableWorkflowPlugin() {
   const [selectedAgentKey, setSelectedAgentKey] = useState("data_analyst");
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
   const [selectedTimelineEventKey, setSelectedTimelineEventKey] = useState("");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("run");
   const [resolutionDebug, setResolutionDebug] = useState<WorkflowResolutionDebug | null>(null);
   const [selectedRecordSnapshot, setSelectedRecordSnapshot] = useState<TaskSnapshot | null>(null);
   const unsubscribeRef = useRef<null | (() => void)>(null);
@@ -1796,43 +1841,12 @@ export default function BitableWorkflowPlugin() {
               <div className="mt-3">
                 <RuntimeHealthStrip items={runtimeHealthItems} />
               </div>
-              <div className="mt-5 grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
-                <section className="space-y-6">
-                  <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Management Summary</div>
-                    <div className="mt-2 text-sm leading-7 text-slate-700">
-                      {textValue(task.fields["最新管理摘要"]) || textValue(task.fields["背景说明"]) || "等待管理摘要生成。"}
-                    </div>
-                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      {taskSignalItems.map((item) => (
-                        <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
-                          <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{item.label}</div>
-                          <div className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-800">{item.value}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+              <div className="mt-3">
+                <WorkspaceModeSwitch mode={workspaceMode} onModeChange={setWorkspaceMode} />
+              </div>
 
-                  <ResolutionCard resolutionDebug={resolutionDebug} resolutionStyle={RESOLUTION_STYLE} />
-                  <TraceChainCard nodes={traceChainItems} />
-                  <EntryContextCard
-                    sourceKind={sourceKind}
-                    sourceContextItems={sourceContextItems}
-                    relationSummaryItems={relationSummaryItems}
-                  />
-                  <RelationObjectsCard relationSections={relationSections} />
-
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    {evidenceItems.map((item) => (
-                      <div key={item.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
-                        <div className="mt-2 text-lg font-semibold text-slate-950">{item.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="space-y-4">
+              {workspaceMode === "run" && (
+                <section className="mt-5 space-y-4">
                   <AgentFlowDashboard
                     agents={agentPipeline}
                     progress={progress}
@@ -1862,18 +1876,62 @@ export default function BitableWorkflowPlugin() {
                     </div>
                   )}
 
-                  <WorkflowStepRail steps={workflowSteps} activeStep={activeStep} />
-                  <WorkflowTimelineCard
-                    events={timelineEvents}
-                    filteredEvents={filteredTimelineEvents}
-                    filter={timelineFilter}
-                    onFilterChange={setTimelineFilter}
-                    automationLogCount={automationLogs.length}
-                    selectedEvent={selectedTimelineEvent}
-                    onSelectEvent={setSelectedTimelineEventKey}
-                  />
+                  <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+                    <WorkflowStepRail steps={workflowSteps} activeStep={activeStep} />
+                    <WorkflowTimelineCard
+                      events={timelineEvents}
+                      filteredEvents={filteredTimelineEvents}
+                      filter={timelineFilter}
+                      onFilterChange={setTimelineFilter}
+                      automationLogCount={automationLogs.length}
+                      selectedEvent={selectedTimelineEvent}
+                      onSelectEvent={setSelectedTimelineEventKey}
+                    />
+                  </div>
                 </section>
-              </div>
+              )}
+
+              {workspaceMode === "context" && (
+                <section className="mt-5 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Management Summary</div>
+                      <div className="mt-2 text-sm leading-7 text-slate-700">
+                        {textValue(task.fields["最新管理摘要"]) || textValue(task.fields["背景说明"]) || "等待管理摘要生成。"}
+                      </div>
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        {taskSignalItems.map((item) => (
+                          <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
+                            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{item.label}</div>
+                            <div className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-800">{item.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <ResolutionCard resolutionDebug={resolutionDebug} resolutionStyle={RESOLUTION_STYLE} />
+                    <EntryContextCard
+                      sourceKind={sourceKind}
+                      sourceContextItems={sourceContextItems}
+                      relationSummaryItems={relationSummaryItems}
+                    />
+                  </div>
+                  <TraceChainCard nodes={traceChainItems} />
+                </section>
+              )}
+
+              {workspaceMode === "delivery" && (
+                <section className="mt-5 grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
+                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                    {evidenceItems.map((item) => (
+                      <div key={item.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
+                        <div className="mt-2 text-lg font-semibold text-slate-950">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <RelationObjectsCard relationSections={relationSections} />
+                </section>
+              )}
             </>
           )}
 

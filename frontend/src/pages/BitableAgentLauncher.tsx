@@ -9,7 +9,7 @@
  */
 import { useState } from "react";
 import { bitable } from "@lark-base-open/js-sdk";
-import { Loader2, Rocket, Sparkles } from "lucide-react";
+import { ChevronDown, Loader2, Rocket, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   LAUNCHER_DIMENSIONS,
@@ -31,6 +31,7 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<{ recordId: string; title: string } | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   async function handleLaunch() {
     setError("");
@@ -69,6 +70,7 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
 
       setSuccess({ recordId: String(recordId), title: title.trim() });
       onLaunched?.(String(recordId), title.trim());
+      setExpanded(false);
 
       // 重置表单
       setTitle("");
@@ -81,123 +83,131 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
   }
 
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-[linear-gradient(135deg,rgba(125,211,252,0.10),rgba(255,255,255,0.98)_42%,rgba(196,181,253,0.10))] p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-slate-500">
             <Sparkles className="h-3.5 w-3.5 text-violet-500" />
             <span>Multi-Agent Launcher</span>
           </div>
-          <div className="mt-2 text-2xl font-semibold text-slate-950">启动一次七岗 AI 协同分析</div>
-          <div className="mt-2 text-sm leading-6 text-slate-600">
-            告诉系统你要分析什么，调度器自动调用数据/内容/SEO/产品/运营/财务/CEO 七岗并行+依赖排序产出综合决策报告。
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3">
-        <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
-          任务标题 <span className="text-rose-500">*</span>
-          <input
-            type="text"
-            className="mt-1 block w-full rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200"
-            placeholder="例如：Q3 财务健康度审视、竞品功能对标分析、用户留存漏斗诊断…"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            maxLength={200}
-            disabled={submitting}
-          />
-        </label>
-
-        <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
-          背景说明（可选）
-          <textarea
-            rows={3}
-            className="mt-1 block w-full rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200"
-            placeholder="把上下文 / 已知现状 / 数据源 等写下来，agent 会一并消化"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            maxLength={2000}
-            disabled={submitting}
-          />
-        </label>
-
-        <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
-            分析维度
-            <select
-              className="mt-1 block w-full rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
-              value={dimension}
-              onChange={(e) => setDimension(e.target.value as typeof LAUNCHER_DIMENSIONS[number])}
-              disabled={submitting}
-            >
-              {LAUNCHER_DIMENSIONS.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
-            优先级
-            <select
-              className="mt-1 block w-full rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as typeof LAUNCHER_PRIORITIES[number]["value"])}
-              disabled={submitting}
-            >
-              {LAUNCHER_PRIORITIES.map((p) => (
-                <option key={p.value} value={p.value}>{p.value}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
-            输出目的
-            <select
-              className="mt-1 block w-full rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
-              value={outputPurpose}
-              onChange={(e) => setOutputPurpose(e.target.value as typeof LAUNCHER_OUTPUT_PURPOSES[number])}
-              disabled={submitting}
-            >
-              {LAUNCHER_OUTPUT_PURPOSES.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </div>
-
-      {error && (
-        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/90 px-3 py-2 text-sm text-rose-700">
-          {error}
-        </div>
-      )}
-      {success && (
-        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/90 px-3 py-2 text-sm text-emerald-700">
-          ✓ 已写入「分析任务」表（{success.title}）。调度器会在下一轮 cycle 自动接手；右侧主面板会显示步骤详情。
-        </div>
-      )}
-
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="text-xs text-slate-500 leading-5">
-          下一步：调度循环每 30s 扫一次「待分析」队列，到达后会写入 7 岗输出 + CEO 综合报告 + 自动生成跟进任务。
+          <div className="mt-1 truncate text-lg font-semibold text-slate-950">启动七岗 AI 协同分析</div>
         </div>
         <Button
-          onClick={handleLaunch}
-          disabled={submitting || !title.trim()}
-          className="bg-violet-600 hover:bg-violet-700 text-white"
+          type="button"
+          variant={expanded ? "secondary" : "default"}
+          onClick={() => setExpanded((value) => !value)}
+          className={expanded ? "" : "bg-violet-600 text-white hover:bg-violet-700"}
         >
-          {submitting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              写入中…
-            </>
-          ) : (
-            <>
-              <Rocket className="mr-2 h-4 w-4" />
-              启动七岗分析
-            </>
-          )}
+          {expanded ? "收起" : "新建任务"}
+          <ChevronDown className={`ml-2 h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
         </Button>
       </div>
+
+      {success && (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/90 px-3 py-2 text-sm text-emerald-700">
+          已写入「分析任务」表：{success.title}
+        </div>
+      )}
+
+      {expanded && (
+        <>
+          <div className="mt-4 grid gap-3">
+            <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+              任务标题 <span className="text-rose-500">*</span>
+              <input
+                type="text"
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200"
+                placeholder="例如：Q3 财务健康度审视、竞品功能对标分析、用户留存漏斗诊断…"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={200}
+                disabled={submitting}
+              />
+            </label>
+
+            <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+              背景说明（可选）
+              <textarea
+                rows={3}
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200"
+                placeholder="把上下文 / 已知现状 / 数据源 等写下来，agent 会一并消化"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={2000}
+                disabled={submitting}
+              />
+            </label>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                分析维度
+                <select
+                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
+                  value={dimension}
+                  onChange={(e) => setDimension(e.target.value as typeof LAUNCHER_DIMENSIONS[number])}
+                  disabled={submitting}
+                >
+                  {LAUNCHER_DIMENSIONS.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                优先级
+                <select
+                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value as typeof LAUNCHER_PRIORITIES[number]["value"])}
+                  disabled={submitting}
+                >
+                  {LAUNCHER_PRIORITIES.map((p) => (
+                    <option key={p.value} value={p.value}>{p.value}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                输出目的
+                <select
+                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
+                  value={outputPurpose}
+                  onChange={(e) => setOutputPurpose(e.target.value as typeof LAUNCHER_OUTPUT_PURPOSES[number])}
+                  disabled={submitting}
+                >
+                  {LAUNCHER_OUTPUT_PURPOSES.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
+          {error && (
+            <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50/90 px-3 py-2 text-sm text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+            <Button
+              onClick={handleLaunch}
+              disabled={submitting || !title.trim()}
+              className="bg-violet-600 text-white hover:bg-violet-700"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  写入中…
+                </>
+              ) : (
+                <>
+                  <Rocket className="mr-2 h-4 w-4" />
+                  启动七岗分析
+                </>
+              )}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
