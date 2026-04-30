@@ -14,8 +14,14 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncIterator
+
+
+def _utc_iso_now() -> str:
+    """生成 UTC ISO 时间戳（带 Z 后缀），用 timezone-aware datetime — Py 3.12+
+    `datetime.utcnow()` 已 deprecated，避免 DeprecationWarning 在测试日志中刷屏。"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +53,7 @@ async def publish(task_id: str, event_type: str, payload: dict) -> None:
         "task_id": task_id,
         "event_type": event_type,
         "payload": payload,
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": _utc_iso_now(),
     }
     async with _get_lock():
         queues = list(_subscribers.get(task_id, []))
@@ -89,7 +95,7 @@ async def subscribe(task_id: str, *, keepalive_seconds: float = 15.0) -> AsyncIt
                     "task_id": task_id,
                     "event_type": "keepalive",
                     "payload": {},
-                    "ts": datetime.utcnow().isoformat() + "Z",
+                    "ts": _utc_iso_now(),
                 }
                 continue
             yield msg

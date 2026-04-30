@@ -22,7 +22,7 @@ import json as _json
 import logging
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.agents.base_agent import AgentResult, ResultSection
@@ -510,7 +510,7 @@ async def run_task_pipeline(
             return
         duration_ms = None
         if started_at:
-            duration_ms = int((datetime.utcnow() - started_at).total_seconds() * 1000)
+            duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
         payload = {
             "event_type": event_type,
             "agent_id": agent.agent_id,
@@ -538,7 +538,7 @@ async def run_task_pipeline(
             logger.debug("agent_event_callback failed: %s", cb_exc)
 
     async def _run_agent(agent, *, wave: str, dependency: str, upstream=None) -> AgentResult:
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
         await _emit_agent_event("agent.started", agent, wave=wave, dependency=dependency, started_at=started_at)
         try:
             result = await _safe_analyze(

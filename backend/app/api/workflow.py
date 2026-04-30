@@ -1135,6 +1135,21 @@ async def workflow_confirm(req: ConfirmRequest):
     allowed, reason = _confirm_action_allowed(req.action, task_fields)
     if not allowed:
         raise HTTPException(status_code=409, detail=reason)
+    # v8.6.20-r30：幂等保护 — 双击 / 网络重试 重复 confirm 同一动作时，task_fields
+    # 上对应的「是否已..」布尔位已经被前一次写过。直接抛 409，避免在 action /
+    # automation_log / archive 三张表里追加重复记录。
+    duplicate_marker = {
+        "approve": ("是否已拍板", "拍板"),
+        "execute": ("是否已执行落地", "执行落地"),
+        "retrospective": ("是否进入复盘", "进入复盘"),
+    }.get(req.action)
+    if duplicate_marker is not None:
+        marker_field, action_label = duplicate_marker
+        if _boolish(task_fields.get(marker_field)):
+            raise HTTPException(
+                status_code=409,
+                detail=f"该任务已经{action_label}过，忽略重复确认",
+            )
     fields: dict[str, object] = {}
     optional_keys: list[str] = []
     action_name = ""

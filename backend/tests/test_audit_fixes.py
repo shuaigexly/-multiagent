@@ -1972,3 +1972,141 @@ async def test_event_emitter_still_writes_events_for_active_task():
     assert db.added[0].sequence == 8
     assert db.commits == 1
     assert db.rollbacks == 0
+
+
+# ---- v8.6.20-r30: /confirm 双击 / 重试幂等保护 ----
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_rejects_duplicate_approve(monkeypatch):
+    """approve 已成功后再 POST 同一记录 → 409，不触发任何写。"""
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+    from fastapi import HTTPException
+
+    update_calls: list[dict] = []
+    log_calls: list[tuple] = []
+
+    async def fail_update(*args, **kwargs):
+        update_calls.append({"args": args, "kwargs": kwargs})
+
+    async def fail_create(_app_token, _table_id, fields, optional_keys=None):
+        log_calls.append((_table_id, fields))
+        return "rec_log"
+
+    async def stale_get_record(_app_token, _table_id, _record_id):
+        # 模拟前一次 approve 已成功落库后的 task 状态：标志位 + pending 旗标都还在
+        # 这样 _confirm_action_allowed 放行 → 由新加的幂等 guard 抓住重复。
+        return {
+            "fields": {
+                "任务标题": "增长复盘任务",
+                "工作流路由": "等待拍板",
+                "拍板负责人": "CEO",
+                "汇报对象": "CEO",
+                "待拍板确认": True,
+                "是否已拍板": True,
+            }
+        }
+
+    monkeypatch.setattr(workflow.bitable_ops, "update_record_optional_fields", fail_update)
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", stale_get_record)
+    monkeypatch.setattr(workflow.bitable_ops, "create_record_optional_fields", fail_create)
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+    workflow._state.clear()
+    workflow._state.update({"table_ids": {"action": "tbl_action", "automation_log": "tbl_log"}})
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_dup",
+        action="approve",
+        actor="CEO",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await workflow.workflow_confirm(req)
+    assert exc.value.status_code == 409
+    assert "拍板" in exc.value.detail
+    # 确保没有任何写入发生 — 这是幂等的核心契约
+    assert update_calls == []
+    assert log_calls == []
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_rejects_duplicate_execute(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+    from fastapi import HTTPException
+
+    async def stale_get_record(_app_token, _table_id, _record_id):
+        # 模拟 partial-update 残留态：标志位已写入但 pending 旗标没被重置
+        # 之前 _confirm_action_allowed 会放行（pending_execution=True），新 guard
+        # 必须看 是否已执行落地=True 抓住重复。
+        return {
+            "fields": {
+                "任务标题": "已执行任务",
+                "工作流路由": "直接执行",
+                "待执行确认": True,
+                "是否已执行落地": True,
+            }
+        }
+
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", stale_get_record)
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_exec",
+        action="execute",
+        actor="执行负责人",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await workflow.workflow_confirm(req)
+    assert exc.value.status_code == 409
+    assert "执行落地" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_workflow_confirm_rejects_duplicate_retrospective(monkeypatch):
+    sse_pkg = ModuleType("sse_starlette")
+    sse_mod = ModuleType("sse_starlette.sse")
+    sse_mod.EventSourceResponse = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "sse_starlette", sse_pkg)
+    monkeypatch.setitem(sys.modules, "sse_starlette.sse", sse_mod)
+    from app.api import workflow
+    from fastapi import HTTPException
+
+    async def stale_get_record(_app_token, _table_id, _record_id):
+        return {
+            "fields": {
+                "任务标题": "已复盘任务",
+                "工作流路由": "复盘归档",
+                "是否已执行落地": True,  # ← 让 _confirm_action_allowed 放行 retro 分支
+                "待复盘确认": True,
+                "是否进入复盘": True,
+            }
+        }
+
+    monkeypatch.setattr(workflow.bitable_ops, "get_record", stale_get_record)
+    monkeypatch.setattr(workflow, "record_audit", AsyncMock())
+
+    req = workflow.ConfirmRequest(
+        app_token="app",
+        table_id="tbl",
+        record_id="rec_retro",
+        action="retrospective",
+        actor="复盘负责人",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await workflow.workflow_confirm(req)
+    assert exc.value.status_code == 409
+    assert "复盘" in exc.value.detail
