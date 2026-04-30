@@ -75,18 +75,20 @@ async def setup_workflow(
     # DELETE /drive/v1/files/{app_token}?type=bitable 把整个 base 删掉，确保
     # 上层调用方要么拿到完整可用的 base，要么什么都没有。
     try:
+        # 表 tab 顺序即用户打开 Base 的第一层导航。先创建前台工作表，再创建后台资产表。
         task_tid = await create_table(app_token, schema.TABLE_TASK, schema.TASK_FIELDS)
         # 岗位分析表和综合报告表通过关联字段（type=18）与分析任务表建立表间关系
         output_tid = await create_table(app_token, schema.TABLE_AGENT_OUTPUT, agent_output_fields(task_tid))
         report_tid = await create_table(app_token, schema.TABLE_REPORT, report_fields(task_tid))
+        action_tid = await create_table(app_token, schema.TABLE_ACTION, schema.ACTION_FIELDS)
+        archive_tid = await create_table(app_token, schema.TABLE_DELIVERY_ARCHIVE, schema.DELIVERY_ARCHIVE_FIELDS)
+
         performance_tid = await create_table(app_token, schema.TABLE_PERFORMANCE, schema.PERFORMANCE_FIELDS)
         # v8.6.16 — 第 5 张表「📚 数据源库」：每行一个数据集，分析任务通过名称引用
         datasource_tid = await create_table(app_token, schema.TABLE_DATASOURCE, schema.DATASOURCE_FIELDS)
         evidence_tid = await create_table(app_token, schema.TABLE_EVIDENCE, schema.EVIDENCE_FIELDS)
         review_tid = await create_table(app_token, schema.TABLE_REVIEW, schema.REVIEW_FIELDS)
-        action_tid = await create_table(app_token, schema.TABLE_ACTION, schema.ACTION_FIELDS)
         review_history_tid = await create_table(app_token, schema.TABLE_REVIEW_HISTORY, schema.REVIEW_HISTORY_FIELDS)
-        archive_tid = await create_table(app_token, schema.TABLE_DELIVERY_ARCHIVE, schema.DELIVERY_ARCHIVE_FIELDS)
         automation_log_tid = await create_table(app_token, schema.TABLE_AUTOMATION_LOG, schema.AUTOMATION_LOG_FIELDS)
         template_tid = await create_table(app_token, schema.TABLE_TEMPLATE_CENTER, schema.TEMPLATE_CENTER_FIELDS)
 

@@ -83,41 +83,42 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-slate-500">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
             <Sparkles className="h-3.5 w-3.5 text-violet-500" />
-            <span>Multi-Agent Launcher</span>
+            <span>Launcher</span>
           </div>
-          <div className="mt-1 truncate text-lg font-semibold text-slate-950">启动七岗 AI 协同分析</div>
+          <div className="mt-1 truncate text-base font-semibold text-slate-950">启动七岗分析</div>
         </div>
         <Button
           type="button"
           variant={expanded ? "secondary" : "default"}
           onClick={() => setExpanded((value) => !value)}
-          className={expanded ? "" : "bg-violet-600 text-white hover:bg-violet-700"}
+          size="sm"
+          className={expanded ? "shrink-0" : "shrink-0 bg-violet-600 text-white hover:bg-violet-700"}
         >
-          {expanded ? "收起" : "新建任务"}
-          <ChevronDown className={`ml-2 h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+          {expanded ? "收起" : "新建"}
+          <ChevronDown className={`ml-1.5 h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
         </Button>
       </div>
 
       {success && (
-        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/90 px-3 py-2 text-sm text-emerald-700">
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/90 px-3 py-2 text-sm leading-6 text-emerald-700">
           已写入「分析任务」表：{success.title}
         </div>
       )}
 
       {expanded && (
         <>
-          <div className="mt-4 grid gap-3">
-            <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+          <div className="mt-3 grid gap-3">
+            <label className="text-xs font-medium text-slate-500">
               任务标题 <span className="text-rose-500">*</span>
               <input
                 type="text"
-                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200"
-                placeholder="例如：Q3 财务健康度审视、竞品功能对标分析、用户留存漏斗诊断…"
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200"
+                placeholder="例如：用户留存漏斗诊断"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={200}
@@ -125,12 +126,12 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
               />
             </label>
 
-            <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+            <label className="text-xs font-medium text-slate-500">
               背景说明（可选）
               <textarea
                 rows={3}
-                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200"
-                placeholder="把上下文 / 已知现状 / 数据源 等写下来，agent 会一并消化"
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200"
+                placeholder="补充上下文、目标或数据源"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 maxLength={2000}
@@ -138,11 +139,11 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
               />
             </label>
 
-            <div className="grid gap-3 md:grid-cols-3">
-              <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+            <div className="grid gap-2">
+              <label className="text-xs font-medium text-slate-500">
                 分析维度
                 <select
-                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
+                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-sm leading-6 text-slate-900"
                   value={dimension}
                   onChange={(e) => setDimension(e.target.value as typeof LAUNCHER_DIMENSIONS[number])}
                   disabled={submitting}
@@ -152,10 +153,10 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
                   ))}
                 </select>
               </label>
-              <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+              <label className="text-xs font-medium text-slate-500">
                 优先级
                 <select
-                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
+                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-sm leading-6 text-slate-900"
                   value={priority}
                   onChange={(e) => setPriority(e.target.value as typeof LAUNCHER_PRIORITIES[number]["value"])}
                   disabled={submitting}
@@ -165,10 +166,10 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
                   ))}
                 </select>
               </label>
-              <label className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+              <label className="text-xs font-medium text-slate-500">
                 输出目的
                 <select
-                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2.5 text-sm leading-6 text-slate-900"
+                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-sm leading-6 text-slate-900"
                   value={outputPurpose}
                   onChange={(e) => setOutputPurpose(e.target.value as typeof LAUNCHER_OUTPUT_PURPOSES[number])}
                   disabled={submitting}
@@ -187,11 +188,11 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
             </div>
           )}
 
-          <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+          <div className="mt-3 flex">
             <Button
               onClick={handleLaunch}
               disabled={submitting || !title.trim()}
-              className="bg-violet-600 text-white hover:bg-violet-700"
+              className="w-full bg-violet-600 text-white hover:bg-violet-700"
             >
               {submitting ? (
                 <>

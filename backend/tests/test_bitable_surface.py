@@ -1,5 +1,7 @@
 """Base surface regression tests: keep the default Bitable workspace compact."""
 
+import pytest
+
 
 def test_curated_view_plan_keeps_bitable_surface_compact():
     from app.bitable_workflow.runner import _build_curated_view_plan
@@ -79,3 +81,39 @@ def test_native_specs_do_not_reference_removed_bitable_views():
             referenced.update(rule["view_rule"]["visibility"]["visible_views"])
 
     assert referenced - created_names == set()
+
+
+@pytest.mark.asyncio
+async def test_setup_creates_frontstage_tables_first(monkeypatch):
+    from app.bitable_workflow import runner, schema
+
+    created_tables: list[str] = []
+
+    async def fake_create_bitable(name: str) -> dict:
+        return {"app_token": "app_compact", "url": "https://feishu.cn/base/app_compact", "name": name}
+
+    async def fake_create_table(_app_token: str, table_name: str, _fields: list[dict]) -> str:
+        created_tables.append(table_name)
+        return f"tbl_{len(created_tables)}"
+
+    async def fake_views(*args, **kwargs):
+        return {"views": [], "forms": []}
+
+    async def fake_noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(runner, "create_bitable", fake_create_bitable)
+    monkeypatch.setattr(runner, "create_table", fake_create_table)
+    monkeypatch.setattr(runner, "_create_extra_views", fake_views)
+    monkeypatch.setattr(runner, "_cleanup_auto_created_artifacts", fake_noop)
+    monkeypatch.setattr(runner, "_populate_base_records", fake_noop)
+
+    await runner.setup_workflow(name="compact-order", mode="prod_empty")
+
+    assert created_tables[:5] == [
+        schema.TABLE_TASK,
+        schema.TABLE_AGENT_OUTPUT,
+        schema.TABLE_REPORT,
+        schema.TABLE_ACTION,
+        schema.TABLE_DELIVERY_ARCHIVE,
+    ]

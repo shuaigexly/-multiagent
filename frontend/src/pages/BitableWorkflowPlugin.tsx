@@ -146,11 +146,6 @@ const WORKSPACE_MODE_LABEL: Record<WorkspaceMode, string> = {
   context: "上下文",
   delivery: "交付",
 };
-const WORKSPACE_MODE_CAPTION: Record<WorkspaceMode, string> = {
-  run: "默认聚焦 AI 运转流程、当前岗位、步骤轨道和原生日志。",
-  context: "查看入口回溯、任务摘要、关联来源和定位诊断。",
-  delivery: "查看证据指标、评审对象、交付动作和归档对象。",
-};
 const WORKSPACE_MODES: WorkspaceMode[] = ["run", "context", "delivery"];
 
 const AGENT_NODE_STYLE: Record<AgentPipelineSnapshot["status"], string> = {
@@ -675,69 +670,61 @@ function WorkflowCommandBar({
   ];
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass}`}>{status}</span>
-            {streamStatus && (
-              <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${STREAM_STATUS_STYLE[streamStatus]}`}>
-                {STREAM_STATUS_LABEL[streamStatus]}
-              </span>
-            )}
-          </div>
-          <div className="mt-2 truncate text-2xl font-semibold leading-tight text-slate-950">
-            {title || "未命名任务"}
-          </div>
-          <div className="mt-3">
-            <Progress value={progress} className="h-2" />
-            <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-              <span className="truncate">{stage || "等待调度"}</span>
-              <span className="shrink-0 tabular-nums">{progress.toFixed(0)}%</span>
-            </div>
-          </div>
-        </div>
-        <div className="w-full lg:w-[430px]">
-          <div className="flex rounded-lg bg-slate-100 p-1">
-            {WORKSPACE_MODES.map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => onWorkspaceModeChange(item)}
-                className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                  workspaceMode === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                {WORKSPACE_MODE_LABEL[item]}
-              </button>
-            ))}
-          </div>
-          <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">
-            {WORKSPACE_MODE_CAPTION[workspaceMode]}
-          </div>
+    <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex items-center gap-2">
+        <span className={`shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium ${statusClass}`}>{status}</span>
+        {streamStatus && (
+          <span className={`shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium ${STREAM_STATUS_STYLE[streamStatus]}`}>
+            {STREAM_STATUS_LABEL[streamStatus]}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-2 min-w-0 text-lg font-semibold leading-snug text-slate-950">
+        {title || "未命名任务"}
+      </div>
+
+      <div className="mt-3">
+        <Progress value={progress} className="h-2" />
+        <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-slate-500">
+          <span className="min-w-0 truncate">{stage || "等待调度"}</span>
+          <span className="shrink-0 tabular-nums">{progress.toFixed(0)}%</span>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-3 flex rounded-lg bg-slate-100 p-1">
+        {WORKSPACE_MODES.map((item) => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => onWorkspaceModeChange(item)}
+            className={`flex-1 rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
+              workspaceMode === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+            }`}
+          >
+            {WORKSPACE_MODE_LABEL[item]}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
         {healthItems.map((item) => (
-          <div key={item.key} className={`rounded-lg border px-3 py-2 ${HEALTH_TONE_STYLE[item.tone]}`}>
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] opacity-70">
-              <item.icon className="h-3.5 w-3.5" />
-              {item.label}
+          <div key={item.key} className={`min-w-0 rounded-lg border px-2.5 py-2 ${HEALTH_TONE_STYLE[item.tone]}`}>
+            <div className="flex items-center gap-1.5 text-[10px] font-medium opacity-70">
+              <item.icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{item.label}</span>
             </div>
             <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
           </div>
         ))}
       </div>
 
-      <div className="mt-3 grid gap-2 md:grid-cols-4">
-        {signals.map((item) => (
-          <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-slate-400">
-              <item.icon className="h-3.5 w-3.5 text-slate-500" />
-              {item.label}
-            </div>
-            <div className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-800">{item.value}</div>
+      <div className="mt-2 grid gap-2">
+        {signals.slice(1).map((item) => (
+          <div key={item.label} className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+            <item.icon className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+            <div className="shrink-0 text-[11px] font-medium text-slate-400">{item.label}</div>
+            <div className="min-w-0 truncate text-sm font-medium text-slate-800">{item.value}</div>
           </div>
         ))}
       </div>
@@ -996,6 +983,161 @@ function AgentFlowDashboard({
   );
 }
 
+function CompactAgentFlowPanel({
+  agents,
+  progress,
+  stage,
+  route,
+  reviewAction,
+  evidenceCount,
+  pendingDataCount,
+  selectedAgentKey,
+  selectedAgent,
+  timeline,
+  streamStatus,
+  streamMessage,
+  onSelectAgent,
+}: {
+  agents: AgentPipelineSnapshot[];
+  progress: number;
+  stage: string;
+  route: string;
+  reviewAction: string;
+  evidenceCount: number;
+  pendingDataCount: number;
+  selectedAgentKey?: string;
+  selectedAgent: AgentPipelineSnapshot | null;
+  timeline: LiveStepEvent[];
+  streamStatus?: WorkflowStreamStatus;
+  streamMessage?: string;
+  onSelectAgent?: (agentKey: string) => void;
+}) {
+  const doneCount = agents.filter((agent) => agent.status === "done").length;
+  const runningCount = agents.filter((agent) => agent.status === "running").length;
+  const errorCount = agents.filter((agent) => agent.status === "error").length;
+  const selectedPersona = selectedAgent ? AGENT_PERSONAS[selectedAgent.key] : null;
+  const selectedAgentEvents = selectedAgent
+    ? timeline
+        .filter((event) => {
+          const haystack = `${event.stage} ${event.detail}`;
+          return haystack.includes(selectedAgent.name) || haystack.includes(selectedAgent.role) || haystack.includes(selectedAgent.key);
+        })
+        .slice(0, 2)
+    : [];
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+              <BrainCircuit className="h-4 w-4 text-sky-600" />
+              七岗 AI 流程
+            </div>
+            <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
+              <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5">{doneCount}/7 完成</span>
+              {runningCount > 0 && <span className="rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-700">{runningCount} 运行中</span>}
+              {errorCount > 0 && <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">{errorCount} 异常</span>}
+            </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="text-2xl font-semibold tabular-nums text-slate-950">{progress.toFixed(0)}%</div>
+            <div className="text-[11px] text-slate-400">{streamStatus ? STREAM_STATUS_LABEL[streamStatus] : "Base"}</div>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-2">
+          {[
+            { icon: Radio, label: "阶段", value: stage || "等待调度" },
+            { icon: GitBranch, label: "路由", value: route || "待生成" },
+            { icon: Zap, label: "评审", value: reviewAction || "待评审" },
+            { icon: TimerReset, label: "证据", value: `${evidenceCount} / ${pendingDataCount}` },
+          ].map((item) => (
+            <div key={item.label} className="flex min-w-0 items-center gap-2 rounded-md bg-slate-50 px-2.5 py-2">
+              <item.icon className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <span className="shrink-0 text-[11px] font-medium text-slate-400">{item.label}</span>
+              <span className="min-w-0 truncate text-sm font-medium text-slate-800">{item.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-2 p-3">
+        {agents.map((agent) => {
+          const persona = AGENT_PERSONAS[agent.key];
+          const isSelected = selectedAgentKey === agent.key;
+          return (
+            <button
+              key={agent.key}
+              type="button"
+              onClick={() => onSelectAgent?.(agent.key)}
+              className={`flex w-full min-w-0 items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${AGENT_NODE_STYLE[agent.status]} ${
+                isSelected ? "ring-2 ring-sky-300 ring-offset-1" : "hover:border-slate-300"
+              }`}
+            >
+              <div
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm font-semibold text-white ${agent.status === "running" ? "animate-pulse" : ""}`}
+                style={{ backgroundColor: persona?.color || "#64748b" }}
+              >
+                {persona?.avatar || agent.name.slice(0, 1)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold text-slate-950">{agent.role}</div>
+                <div className="truncate text-xs text-slate-500">{agent.wave} · {AGENT_STATUS_LABEL[agent.status]}</div>
+              </div>
+              <div className="shrink-0 text-right text-[11px] text-slate-500">
+                <div>{formatDurationMs(agent.duration_ms)}</div>
+                <div>{agent.confidence ? `${agent.confidence}/5` : "-"}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {selectedAgent && (
+        <div className="border-t border-slate-200 bg-slate-50/70 p-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm font-semibold text-white"
+              style={{ backgroundColor: selectedPersona?.color || "#64748b" }}
+            >
+              {selectedPersona?.avatar || selectedAgent.name.slice(0, 1)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate text-sm font-semibold text-slate-950">{selectedAgent.role}</div>
+                <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${AGENT_NODE_STYLE[selectedAgent.status]}`}>
+                  {AGENT_STATUS_LABEL[selectedAgent.status]}
+                </span>
+              </div>
+              <div className="mt-1 line-clamp-3 text-sm leading-6 text-slate-700">
+                {selectedAgent.status === "error" ? selectedAgent.reason || selectedAgent.summary : selectedAgent.summary || "等待该岗位输出。"}
+              </div>
+              {streamMessage && <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{streamMessage}</div>}
+            </div>
+          </div>
+
+          {!!selectedAgentEvents.length && (
+            <div className="mt-3 grid gap-2">
+              {selectedAgentEvents.map((event) => (
+                <div key={event.key} className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 truncate text-sm font-medium text-slate-900">{event.stage}</div>
+                    <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] ${STEP_STATUS_STYLE[event.status]}`}>
+                      {event.eventType === "native.log" ? "Base" : "SSE"}
+                    </span>
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{event.detail}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function WorkflowStepRail({
   steps,
   activeStep,
@@ -1007,31 +1149,31 @@ function WorkflowStepRail({
   const doneCount = steps.filter((step) => step.status === "done").length;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Workflow Route</div>
-          <div className="mt-1 text-lg font-semibold text-slate-950">自动化步骤轨道</div>
-          <div className="mt-1 text-sm leading-6 text-slate-600">{activeStep?.title || "等待进入步骤"}</div>
+          <div className="text-xs font-medium text-slate-500">Workflow Route</div>
+          <div className="mt-1 text-base font-semibold text-slate-950">自动化步骤</div>
+          <div className="mt-1 line-clamp-1 text-sm text-slate-600">{activeStep?.title || "等待进入步骤"}</div>
         </div>
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-right">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Closed</div>
+        <div className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-right">
+          <div className="text-[10px] font-medium text-slate-400">Closed</div>
           <div className="mt-1 text-sm font-semibold tabular-nums text-slate-900">
             {doneCount}/{steps.length}
           </div>
         </div>
       </div>
 
-      <div className="mt-4 max-h-[520px] space-y-3 overflow-y-auto pr-1">
+      <div className="mt-3 max-h-[360px] space-y-2 overflow-y-auto pr-1">
         {steps.map((step, index) => {
           const isCurrent = step.key === activeStep?.key;
           const isError = step.status === "error";
           const isDone = step.status === "done";
           return (
-            <div key={step.key} className="relative pl-9">
-              {index < steps.length - 1 && <div className="absolute left-[15px] top-9 h-[calc(100%+0.75rem)] w-px bg-slate-200" />}
+            <div key={step.key} className="relative pl-8">
+              {index < steps.length - 1 && <div className="absolute left-[13px] top-8 h-[calc(100%+0.5rem)] w-px bg-slate-200" />}
               <div
-                className={`absolute left-0 top-1 flex h-8 w-8 items-center justify-center rounded-lg border ${
+                className={`absolute left-0 top-1 flex h-7 w-7 items-center justify-center rounded-md border ${
                   isError
                     ? "border-rose-200 bg-rose-50 text-rose-600"
                     : isDone
@@ -1042,39 +1184,39 @@ function WorkflowStepRail({
                 }`}
               >
                 {isError ? (
-                  <ShieldAlert className="h-4 w-4" />
+                  <ShieldAlert className="h-3.5 w-3.5" />
                 ) : isDone ? (
-                  <CheckCircle2 className="h-4 w-4" />
+                  <CheckCircle2 className="h-3.5 w-3.5" />
                 ) : isCurrent ? (
-                  <Sparkles className="h-4 w-4 animate-pulse" />
+                  <Sparkles className="h-3.5 w-3.5 animate-pulse" />
                 ) : (
-                  <Clock3 className="h-4 w-4" />
+                  <Clock3 className="h-3.5 w-3.5" />
                 )}
               </div>
-              <div className={`rounded-lg border p-3 ${isCurrent ? "border-sky-200 bg-sky-50/80" : "border-slate-200 bg-slate-50/70"}`}>
-                <div className="flex items-start justify-between gap-3">
+              <div className={`rounded-lg border p-2.5 ${isCurrent ? "border-sky-200 bg-sky-50/80" : "border-slate-200 bg-slate-50/70"}`}>
+                <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
+                    <div className="flex items-center gap-1.5">
+                      <div className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${WORKFLOW_DETAIL_STATUS_STYLE[step.status]}`}>
                         {step.status === "done" ? "已完成" : step.status === "error" ? "失败" : step.status === "pending" ? "待开始" : "执行中"}
                       </div>
-                      <div className="text-sm font-semibold text-slate-950">{step.title}</div>
+                      <div className="min-w-0 truncate text-sm font-semibold text-slate-950">{step.title}</div>
                     </div>
-                    <div className="mt-2 text-sm leading-6 text-slate-700">{step.description}</div>
+                    <div className="mt-1.5 line-clamp-2 text-sm leading-6 text-slate-700">{step.description}</div>
                   </div>
-                  <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">0{index + 1}</div>
+                  <div className="shrink-0 text-[10px] font-medium text-slate-400">0{index + 1}</div>
                 </div>
                 {!!step.items.length && (
-                  <div className="mt-3 grid gap-2">
+                  <div className="mt-2 grid gap-1.5">
                     {step.items.slice(0, isCurrent ? 4 : 2).map((item) => (
-                      <div key={item} className="rounded-md border border-white bg-white/90 px-3 py-2 text-sm leading-6 text-slate-600">
+                      <div key={item} className="rounded-md border border-white bg-white/90 px-2.5 py-1.5 text-xs leading-5 text-slate-600">
                         {item}
                       </div>
                     ))}
                   </div>
                 )}
                 {step.note && (
-                  <div className="mt-3 rounded-md border border-dashed border-slate-200 bg-white/80 px-3 py-2 text-sm leading-6 text-slate-500">
+                  <div className="mt-2 line-clamp-3 rounded-md border border-dashed border-slate-200 bg-white/80 px-2.5 py-1.5 text-xs leading-5 text-slate-500">
                     {step.note}
                   </div>
                 )}
@@ -1111,80 +1253,70 @@ function WorkflowTimelineCard({
     : "任务启动后，这里会优先展示自动化日志表沉淀的 workflow 节点；SSE 在线时会同步补充实时事件。";
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Workflow Timeline</div>
-          <div className="mt-1 text-lg font-semibold text-slate-950">原生阶段时间线</div>
-          <div className="mt-1 text-sm leading-6 text-slate-600">Base 自动化日志为主，SSE 实时事件作为在线增量补充。</div>
+          <div className="text-xs font-medium text-slate-500">Workflow Timeline</div>
+          <div className="mt-1 text-base font-semibold text-slate-950">阶段时间线</div>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-right">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Native Logs</div>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-right">
+            <div className="text-[10px] font-medium text-slate-400">Base</div>
             <div className="mt-1 text-sm font-semibold tabular-nums text-slate-900">{automationLogCount} 条</div>
-          </div>
-          <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-            {TIMELINE_FILTERS.map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => onFilterChange(item)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  filter === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                {TIMELINE_FILTER_LABEL[item]} <span className="tabular-nums">{counts[item]}</span>
-              </button>
-            ))}
           </div>
         </div>
       </div>
 
+      <div className="mt-3 flex overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-1">
+        {TIMELINE_FILTERS.map((item) => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => onFilterChange(item)}
+            className={`shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              filter === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+            }`}
+          >
+            {TIMELINE_FILTER_LABEL[item]} <span className="tabular-nums">{counts[item]}</span>
+          </button>
+        ))}
+      </div>
+
       {!filteredEvents.length ? (
-        <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50/80 px-3 py-4 text-sm leading-6 text-slate-500">{emptyText}</div>
+        <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50/80 px-3 py-4 text-sm leading-6 text-slate-500">{emptyText}</div>
       ) : (
         <>
           {selectedEvent && (
-            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-2.5">
+              <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${selectedIsNative ? "border-emerald-200 bg-white text-emerald-700" : "border-sky-200 bg-white text-sky-700"}`}>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${selectedIsNative ? "border-emerald-200 bg-white text-emerald-700" : "border-sky-200 bg-white text-sky-700"}`}>
                       {selectedIsNative ? "Base" : "SSE"}
                     </span>
-                    <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${STEP_STATUS_STYLE[selectedEvent.status]}`}>
+                    <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${STEP_STATUS_STYLE[selectedEvent.status]}`}>
                       {selectedEvent.status === "done" ? "完成" : selectedEvent.status === "error" ? "异常" : "推进"}
                     </span>
                   </div>
                   <div className="mt-2 text-sm font-semibold text-slate-950">{selectedEvent.stage}</div>
-                  <div className="mt-2 text-sm leading-6 text-slate-700">{selectedEvent.detail}</div>
+                  <div className="mt-1.5 line-clamp-3 text-sm leading-6 text-slate-700">{selectedEvent.detail}</div>
                 </div>
-                <div className="text-right text-xs leading-5 text-slate-500">
+                <div className="shrink-0 text-right text-[11px] leading-5 text-slate-500">
                   <div>{formatRelativeTime(selectedEvent.updatedAt)}</div>
                   <div>{formatDateValue(selectedEvent.updatedAt)}</div>
-                </div>
-              </div>
-              <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
-                <div className="rounded-md border border-white bg-white/80 px-3 py-2">
-                  <span className="text-slate-400">事件类型</span>
-                  <span className="ml-2 font-medium text-slate-700">{selectedEvent.eventType}</span>
-                </div>
-                <div className="rounded-md border border-white bg-white/80 px-3 py-2">
-                  <span className="text-slate-400">更新时间</span>
-                  <span className="ml-2 font-medium text-slate-700">{formatDateValue(selectedEvent.updatedAt)}</span>
                 </div>
               </div>
             </div>
           )}
 
-          <div className="mt-4 max-h-[440px] space-y-3 overflow-y-auto pr-1">
+          <div className="mt-3 max-h-[320px] space-y-2 overflow-y-auto pr-1">
             {filteredEvents.map((event, index) => {
               const isNative = event.eventType === "native.log";
               const sourceLabel = isNative ? "Base" : "SSE";
               const isSelected = event.key === selectedEvent?.key;
               return (
-                <div key={event.key} className="relative pl-7">
-                  {index < filteredEvents.length - 1 && <div className="absolute left-[6px] top-5 h-[calc(100%+0.75rem)] w-px bg-slate-200" />}
+                <div key={event.key} className="relative pl-6">
+                  {index < filteredEvents.length - 1 && <div className="absolute left-[5px] top-5 h-[calc(100%+0.5rem)] w-px bg-slate-200" />}
                   <div
                     className={`absolute left-0 top-3 h-3 w-3 rounded-full border-2 ${
                       event.status === "error"
@@ -1198,25 +1330,25 @@ function WorkflowTimelineCard({
                     type="button"
                     aria-pressed={isSelected}
                     onClick={() => onSelectEvent(event.key)}
-                    className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                    className={`w-full rounded-lg border px-2.5 py-2.5 text-left transition-colors ${
                       isSelected ? "border-sky-300 bg-white shadow-sm" : "border-slate-200 bg-slate-50/80 hover:border-slate-300 hover:bg-white"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-slate-950">{event.stage}</div>
-                        <div className="mt-1 line-clamp-2 text-sm leading-6 text-slate-600">{event.detail}</div>
+                        <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{event.detail}</div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${isNative ? "border-emerald-200 bg-white text-emerald-700" : "border-sky-200 bg-white text-sky-700"}`}>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${isNative ? "border-emerald-200 bg-white text-emerald-700" : "border-sky-200 bg-white text-sky-700"}`}>
                           {sourceLabel}
                         </span>
-                        <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${STEP_STATUS_STYLE[event.status]}`}>
+                        <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${STEP_STATUS_STYLE[event.status]}`}>
                           {event.status === "done" ? "完成" : event.status === "error" ? "异常" : "推进"}
                         </span>
                       </div>
                     </div>
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                    <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
                       <span>{formatRelativeTime(event.updatedAt)}</span>
                       <span>{formatDateValue(event.updatedAt)}</span>
                     </div>
@@ -1705,8 +1837,8 @@ export default function BitableWorkflowPlugin() {
   );
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,250,252,0.94),rgba(255,255,255,0.98))] p-4 text-slate-900">
-      <div className="mx-auto max-w-6xl space-y-5">
+    <div className="min-h-screen bg-slate-50 p-2 text-slate-900">
+      <div className="mx-auto max-w-[440px] space-y-3">
         {/* v8.6.20-r24：顶部 Agent 启动器 — 直接输入任务一键写入分析任务表 */}
         <BitableAgentLauncher
           onLaunched={(rid) => {
@@ -1719,59 +1851,52 @@ export default function BitableWorkflowPlugin() {
           }}
         />
 
-        <div className="rounded-xl border border-slate-200 bg-white/92 p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Bitable Embedded Workflow</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-950">多维表格内嵌执行面板</div>
-              <div className="mt-2 text-sm leading-6 text-slate-600">
-                这个版本不走独立 `/workflow` 页面，而是跟随你在工作流相关表里选中的记录直接展示。
-              </div>
+        <div className="rounded-lg border border-slate-200 bg-white/95 p-3 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-slate-500">Bitable Workflow</div>
+              <div className="mt-1 truncate text-lg font-semibold text-slate-950">AI 运转流程</div>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50/90 px-4 py-3 text-sm text-slate-600">
-              当前入口：{sourceLabel} · {title || "请先选中一条工作流记录"}
+            <div className="min-w-0 shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-right text-xs text-slate-600">
+              <div>{sourceLabel}</div>
+              <div className="max-w-32 truncate font-medium text-slate-900">{title || "未选中"}</div>
             </div>
           </div>
 
           {!getRuntimeApiKey() && (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm leading-6 text-amber-800">
-              当前域名下未检测到 API Key，插件仍可读取多维表格里的任务数据，但不会订阅后端 SSE 实时流。
-              需要实时步骤流时，请先在同域站点写入{" "}
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs leading-5 text-amber-800">
+              未检测到 API Key，仅显示 Base 状态。
               <code className="rounded border border-amber-200 bg-white/70 px-1.5 py-0.5">
-                localStorage["{API_KEY_STORAGE_KEY}"]
+                {API_KEY_STORAGE_KEY}
               </code>
-              。
             </div>
           )}
 
           {loading ? (
-            <div className="mt-6 flex items-center gap-2 text-sm text-slate-500">
+            <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" />
               正在加载多维表格上下文...
             </div>
           ) : error ? (
-            <div className="mt-6">
+            <div className="mt-4">
               <EmptyState text={error} />
             </div>
           ) : !selection.recordId || sourceKind === "unsupported" ? (
-            <div className="mt-6">
-              <EmptyState text="请在「分析任务 / 产出评审 / 交付动作 / 交付结果归档 / 自动化日志」任一工作流表中选中记录。插件会在右侧面板自动回溯并展示对应任务轨道。" />
+            <div className="mt-4">
+              <EmptyState text="请选中一条工作流记录。" />
             </div>
           ) : !task ? (
-            <div className="mt-6 grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
-              <section className="space-y-6">
-                <div className="rounded-xl border border-slate-200 bg-[linear-gradient(135deg,rgba(251,191,36,0.10),rgba(255,255,255,0.98)_42%,rgba(248,250,252,0.90))] p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="max-w-3xl">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">待人工修正</span>
-                        <span className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">{sourceLabel}</span>
+            <div className="mt-4 grid gap-3">
+              <section className="space-y-3">
+                <div className="rounded-lg border border-slate-200 bg-amber-50/70 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">待修正</span>
+                        <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700">{sourceLabel}</span>
                       </div>
-                      <div className="mt-4 text-3xl font-semibold leading-tight text-slate-950">
+                      <div className="mt-2 line-clamp-2 text-base font-semibold leading-snug text-slate-950">
                         {selectedRecordTitle || "当前记录尚未关联到分析任务"}
-                      </div>
-                      <div className="mt-3 text-sm leading-7 text-slate-700">
-                        你当前选中的不是主任务记录，且插件还没有成功回溯到对应分析任务。请优先检查该行是否具备完整的 `关联记录ID` 或 `任务标题`。
                       </div>
                     </div>
                   </div>
@@ -1786,14 +1911,10 @@ export default function BitableWorkflowPlugin() {
                 />
                 <RelationObjectsCard relationSections={relationSections} />
               </section>
-
-              <section className="rounded-xl border border-slate-200 bg-white/94 p-5 shadow-sm">
-                <EmptyState text={`当前已从「${sourceLabel}」进入，但还没有成功回溯到对应分析任务。请检查该行的「关联记录ID」或「任务标题」是否完整。`} />
-              </section>
             </div>
           ) : (
             <>
-              <div className="mt-6">
+              <div className="mt-4">
                 <WorkflowCommandBar
                   title={title}
                   sourceLabel={sourceLabel}
@@ -1810,8 +1931,8 @@ export default function BitableWorkflowPlugin() {
               </div>
 
               {workspaceMode === "run" && (
-                <section className="mt-5 space-y-4">
-                  <AgentFlowDashboard
+                <section className="mt-3 space-y-3">
+                  <CompactAgentFlowPanel
                     agents={agentPipeline}
                     progress={progress}
                     stage={live?.stage || textValue(task.fields["当前阶段"]) || "等待调度"}
@@ -1828,16 +1949,16 @@ export default function BitableWorkflowPlugin() {
                   />
 
                   {live?.tokenPreview && (
-                    <div className="rounded-xl border border-sky-200 bg-[linear-gradient(135deg,rgba(224,242,254,0.72),rgba(255,255,255,0.96))] p-4 shadow-sm">
+                    <div className="rounded-lg border border-sky-200 bg-sky-50/70 p-3 shadow-sm">
                       <div className="flex items-center gap-2 text-sm font-medium text-slate-950">
                         <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
                         <span>实时流{live.activeAgent ? ` · ${live.activeAgent}` : ""}</span>
                       </div>
-                      <div className="mt-2 text-sm leading-6 text-slate-600">{live.tokenPreview}</div>
+                      <div className="mt-2 line-clamp-4 text-sm leading-6 text-slate-600">{live.tokenPreview}</div>
                     </div>
                   )}
 
-                  <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+                  <div className="grid gap-3">
                     <WorkflowStepRail steps={workflowSteps} activeStep={activeStep} />
                     <WorkflowTimelineCard
                       events={timelineEvents}
@@ -1853,17 +1974,17 @@ export default function BitableWorkflowPlugin() {
               )}
 
               {workspaceMode === "context" && (
-                <section className="mt-5 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-                  <div className="space-y-4">
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Management Summary</div>
+                <section className="mt-3 grid gap-3">
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+                      <div className="text-xs font-medium text-slate-500">Management Summary</div>
                       <div className="mt-2 text-sm leading-7 text-slate-700">
                         {textValue(task.fields["最新管理摘要"]) || textValue(task.fields["背景说明"]) || "等待管理摘要生成。"}
                       </div>
-                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <div className="mt-3 grid gap-2">
                         {taskSignalItems.map((item) => (
-                          <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
-                            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{item.label}</div>
+                          <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50/80 px-2.5 py-2">
+                            <div className="text-[11px] font-medium text-slate-400">{item.label}</div>
                             <div className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-800">{item.value}</div>
                           </div>
                         ))}
@@ -1881,12 +2002,12 @@ export default function BitableWorkflowPlugin() {
               )}
 
               {workspaceMode === "delivery" && (
-                <section className="mt-5 grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                <section className="mt-3 grid gap-3">
+                  <div className="grid grid-cols-2 gap-2">
                     {evidenceItems.map((item) => (
-                      <div key={item.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
-                        <div className="mt-2 text-lg font-semibold text-slate-950">{item.value}</div>
+                      <div key={item.label} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+                        <div className="text-[11px] font-medium text-slate-500">{item.label}</div>
+                        <div className="mt-1 text-base font-semibold text-slate-950">{item.value}</div>
                       </div>
                     ))}
                   </div>
@@ -1896,13 +2017,14 @@ export default function BitableWorkflowPlugin() {
             </>
           )}
 
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-4 flex gap-2">
             <Button
               variant="outline"
               onClick={() => {
                 setLoading(true);
                 void bitable.base.getSelection().then((next) => setSelection(next));
               }}
+              className="w-full"
             >
               <Activity className="mr-2 h-4 w-4" />
               刷新当前选中
