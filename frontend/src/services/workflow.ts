@@ -277,15 +277,28 @@ function describeSseError(err: unknown): string {
   return 'unknown error';
 }
 
+function requireStreamToken(data: { token?: unknown }): string {
+  const token = typeof data.token === 'string' ? data.token.trim() : '';
+  if (!token) {
+    throw new Error('stream token missing');
+  }
+  return token;
+}
+
 export function subscribeTaskProgress(
   recordId: string,
   onEvent: (e: ProgressEvent) => void,
   onStatus?: (status: WorkflowStreamStatus, message?: string) => void,
 ): () => void {
+  const normalizedRecordId = recordId.trim();
+  if (!normalizedRecordId) {
+    onStatus?.('error', 'record id missing');
+    return () => undefined;
+  }
   let es: EventSource | null = null;
   let closed = false;
   let terminal = false;
-  const encodedRecordId = encodeURIComponent(recordId);
+  const encodedRecordId = encodeURIComponent(normalizedRecordId);
   onStatus?.('connecting');
 
   const closeStream = (status: WorkflowStreamStatus, message?: string) => {
@@ -314,10 +327,14 @@ export function subscribeTaskProgress(
     .post<{ token: string }>(`/api/v1/workflow/stream-token/${encodedRecordId}`)
     .then((resp) => {
       if (closed) return;
+      const token = requireStreamToken(resp.data);
+      if (closed) return;
       es = new EventSource(
-        `${BASE_URL}/api/v1/workflow/stream/${encodedRecordId}?token=${encodeURIComponent(resp.data.token)}`,
+        `${BASE_URL}/api/v1/workflow/stream/${encodedRecordId}?token=${encodeURIComponent(token)}`,
       );
-      es.onopen = () => onStatus?.('connected');
+      es.onopen = () => {
+        if (!closed && !terminal) onStatus?.('connected');
+      };
       [
         'task.started',
         'wave.completed',

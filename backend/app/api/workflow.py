@@ -52,6 +52,12 @@ def _strip_required_string(value: object) -> object:
     return value
 
 
+def _strip_optional_string(value: object) -> object:
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
 def _refresh_native_state_artifacts() -> None:
     app_token = str(_state.get("app_token") or "").strip()
     table_ids = _state.get("table_ids") or {}
@@ -122,6 +128,8 @@ class StartRequest(BaseModel):
                 raise ValueError(f"table_ids['{key}'] 不能为空字符串")
             if len(normalized_val) > 128:
                 raise ValueError(f"table_ids['{key}'] 超过长度限制")
+            if normalized_key in normalized_table_ids:
+                raise ValueError(f"table_ids 归一化后存在重复键: {normalized_key}")
             normalized_table_ids[normalized_key] = normalized_val
         self.table_ids = normalized_table_ids
 
@@ -170,6 +178,36 @@ class SeedRequest(BaseModel):
     def strip_required_strings(cls, v: object) -> object:
         return _strip_required_string(v)
 
+    @field_validator(
+        "dimension",
+        "background",
+        "target_audience",
+        "output_purpose",
+        "task_source",
+        "business_owner",
+        "audience_level",
+        "success_criteria",
+        "constraints",
+        "business_stage",
+        "referenced_dataset",
+        "report_audience",
+        "report_audience_open_id",
+        "approval_owner",
+        "approval_owner_open_id",
+        "execution_owner",
+        "execution_owner_open_id",
+        "review_owner",
+        "review_owner_open_id",
+        "retrospective_owner",
+        "retrospective_owner_open_id",
+        "template_name",
+        "template",
+        mode="before",
+    )
+    @classmethod
+    def strip_optional_strings(cls, v: object) -> object:
+        return _strip_optional_string(v)
+
     @field_validator("dimension")
     @classmethod
     def check_dimension(cls, v: str) -> str:
@@ -202,6 +240,11 @@ class ConfirmRequest(BaseModel):
         if v not in _VALID_CONFIRM_ACTIONS:
             raise ValueError(f"action 必须是以下之一: {sorted(_VALID_CONFIRM_ACTIONS)}")
         return v
+
+    @field_validator("actor", mode="before")
+    @classmethod
+    def strip_actor(cls, v: object) -> object:
+        return _strip_optional_string(v)
 
 
 class ApplyNativeRequest(BaseModel):
@@ -1101,6 +1144,13 @@ async def workflow_records(
     status: Optional[str] = Query(None, max_length=50),
 ):
     """查看多维表格中的记录（可按状态过滤）。"""
+    app_token = app_token.strip()
+    table_id = table_id.strip()
+    status = status.strip() if status is not None else None
+    if not app_token or not table_id:
+        raise HTTPException(status_code=400, detail="app_token/table_id 不能为空")
+    if status == "":
+        status = None
     if status is not None and status not in _VALID_STATUSES:
         raise HTTPException(
             status_code=400,

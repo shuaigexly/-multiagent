@@ -28,6 +28,7 @@ import {
   getWorkflowSourceKind,
   matchesRelatedRecord,
   matchesTaskRecord,
+  normalizeWorkflowPage,
   resolveAgentFocusKey,
   workflowSourceLabel,
   type WorkflowResolutionDebug,
@@ -1314,7 +1315,8 @@ export default function BitableWorkflowPlugin() {
         ...(pageToken ? { pageToken } : {}),
         ...(filter ? { filter } : {}),
       });
-      for (const record of response.records) {
+      const page = normalizeWorkflowPage(response);
+      for (const record of page.records) {
         const mapped = mapRecordFields(record, fieldMap);
         if (seen.has(mapped.recordId)) continue;
         if (!predicate(mapped)) continue;
@@ -1322,8 +1324,8 @@ export default function BitableWorkflowPlugin() {
         seen.add(mapped.recordId);
         if (collected.length >= limit) break;
       }
-      hasMore = response.hasMore;
-      pageToken = response.pageToken;
+      hasMore = page.hasMore;
+      pageToken = page.pageToken;
       if (hasMore && !pageToken) break;
     }
 

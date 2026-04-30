@@ -9,6 +9,7 @@ import {
   getWorkflowSourceKind,
   matchesRelatedRecord,
   matchesTaskRecord,
+  normalizeWorkflowPage,
   resolveAgentFocusKey,
   workflowSourceLabel,
 } from "../pages/bitableWorkflowPluginUtils";
@@ -244,5 +245,23 @@ describe("bitable workflow plugin utils", () => {
     expect(resolveAgentFocusKey(agents, "data_analyst", false)).toBe("finance_advisor");
     expect(resolveAgentFocusKey(agents, "data_analyst", true)).toBe("data_analyst");
     expect(resolveAgentFocusKey(agents, "missing", true)).toBe("finance_advisor");
+  });
+
+  it("normalizes malformed Bitable page responses before sidebar scans", () => {
+    expect(normalizeWorkflowPage({ records: [{ id: "rec_1" }], hasMore: 1, pageToken: " next " })).toEqual({
+      records: [{ id: "rec_1" }],
+      hasMore: true,
+      pageToken: "next",
+    });
+    expect(normalizeWorkflowPage({ records: [], hasMore: "false", pageToken: "   " })).toEqual({
+      records: [],
+      hasMore: false,
+      pageToken: undefined,
+    });
+    expect(normalizeWorkflowPage({ records: undefined, hasMore: false, pageToken: 123 })).toEqual({
+      records: [],
+      hasMore: false,
+      pageToken: undefined,
+    });
   });
 });

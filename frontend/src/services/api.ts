@@ -7,7 +7,24 @@ import type {
 import { api, BASE_URL } from './http';
 
 function taskPath(taskId: string): string {
-  return encodeURIComponent(taskId);
+  const normalized = taskId.trim();
+  if (!normalized) {
+    throw new Error('task id missing');
+  }
+  return encodeURIComponent(normalized);
+}
+
+function optionalTrim(value?: string | null): string | null {
+  const normalized = value?.trim() || '';
+  return normalized || null;
+}
+
+function requireStreamToken(data: { token?: unknown }): string {
+  const token = typeof data.token === 'string' ? data.token.trim() : '';
+  if (!token) {
+    throw new Error('stream token missing');
+  }
+  return token;
 }
 
 export async function submitTask(
@@ -31,7 +48,7 @@ export async function confirmTask(
 ): Promise<{ task_id: string; status: string }> {
   const resp = await api.post(`/api/v1/tasks/${taskPath(taskId)}/confirm`, {
     selected_modules: selectedModules,
-    user_instructions: userInstructions || null,
+    user_instructions: optionalTrim(userInstructions),
   });
   return resp.data;
 }
@@ -63,7 +80,16 @@ export async function listTasks(params?: {
   status?: string;
   search?: string;
 }): Promise<TaskListItem[]> {
-  const resp = await api.get('/api/v1/tasks', { params });
+  const normalizedParams = params ? { ...params } : undefined;
+  if (normalizedParams) {
+    const status = optionalTrim(params?.status);
+    const search = optionalTrim(params?.search);
+    delete normalizedParams.status;
+    delete normalizedParams.search;
+    if (status) normalizedParams.status = status;
+    if (search) normalizedParams.search = search;
+  }
+  const resp = await api.get('/api/v1/tasks', { params: normalizedParams });
   return resp.data;
 }
 
@@ -74,8 +100,8 @@ export async function publishTask(
 ): Promise<{ published: object[] }> {
   const resp = await api.post(`/api/v1/tasks/${taskPath(taskId)}/publish`, {
     asset_types: assetTypes,
-    doc_title: options?.docTitle,
-    chat_id: options?.chatId,
+    doc_title: optionalTrim(options?.docTitle),
+    chat_id: optionalTrim(options?.chatId),
   });
   return resp.data;
 }
@@ -94,12 +120,16 @@ export async function createFeishuTask(
   summary: string,
   sourceTaskId: string
 ): Promise<void> {
-  await api.post('/api/v1/feishu/tasks', { summary, source_task_id: sourceTaskId });
+  await api.post('/api/v1/feishu/tasks', {
+    summary: summary.trim(),
+    source_task_id: sourceTaskId.trim(),
+  });
 }
 
 export async function createSSEConnection(taskId: string): Promise<EventSource> {
   const encodedTaskId = taskPath(taskId);
   const resp = await api.post<{ token: string }>(`/api/v1/tasks/${encodedTaskId}/events-token`);
-  const url = `${BASE_URL}/api/v1/tasks/${encodedTaskId}/events?token=${encodeURIComponent(resp.data.token)}`;
+  const token = requireStreamToken(resp.data);
+  const url = `${BASE_URL}/api/v1/tasks/${encodedTaskId}/events?token=${encodeURIComponent(token)}`;
   return new EventSource(url);
 }

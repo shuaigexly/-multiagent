@@ -135,10 +135,29 @@ def test_workflow_control_payloads_are_bounded():
             table_ids={" task ": "   ", "report": "report", "performance": "perf"},
         )
 
+    with pytest.raises(ValidationError):
+        StartRequest(
+            app_token="app",
+            table_ids={" task ": "tbl_a", "task": "tbl_b", "report": "report", "performance": "perf"},
+        )
+
     seed = SeedRequest(app_token=" app ", table_id=" tbl ", title=" 增长诊断 ")
     assert seed.app_token == "app"
     assert seed.table_id == "tbl"
     assert seed.title == "增长诊断"
+
+    seed_with_optional_fields = SeedRequest(
+        app_token="app",
+        table_id="tbl",
+        title="增长诊断",
+        dimension=" 综合分析 ",
+        background=" 背景 ",
+        template=" 模板A ",
+    )
+    assert seed_with_optional_fields.dimension == "综合分析"
+    assert seed_with_optional_fields.background == "背景"
+    assert seed_with_optional_fields.template == "模板A"
+    assert seed_with_optional_fields.template_name == "模板A"
 
     start = StartRequest(
         app_token=" app ",
@@ -147,11 +166,34 @@ def test_workflow_control_payloads_are_bounded():
     assert start.app_token == "app"
     assert start.table_ids == {"task": "tbl_task", "report": "tbl_report", "performance": "tbl_perf"}
 
-    confirm = ConfirmRequest(app_token=" app ", table_id=" tbl ", record_id=" rec ", action=" approve ")
+    confirm = ConfirmRequest(app_token=" app ", table_id=" tbl ", record_id=" rec ", action=" approve ", actor=" CEO ")
     assert confirm.app_token == "app"
     assert confirm.table_id == "tbl"
     assert confirm.record_id == "rec"
     assert confirm.action == "approve"
+    assert confirm.actor == "CEO"
+
+
+@pytest.mark.asyncio
+async def test_workflow_records_trims_query_values(monkeypatch):
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_list_records(app_token, table_id, filter_expr=None):
+        captured["app_token"] = app_token
+        captured["table_id"] = table_id
+        captured["filter_expr"] = filter_expr
+        return [{"record_id": "rec_1"}]
+
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", fake_list_records)
+
+    result = await workflow.workflow_records(" app ", " tbl ", " 待分析 ")
+
+    assert result == {"count": 1, "records": [{"record_id": "rec_1"}]}
+    assert captured["app_token"] == "app"
+    assert captured["table_id"] == "tbl"
+    assert "待分析" in captured["filter_expr"]
 
 
 def test_config_request_values_are_bounded(monkeypatch):

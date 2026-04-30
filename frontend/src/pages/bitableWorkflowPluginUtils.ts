@@ -75,6 +75,22 @@ export interface WorkflowAgentFocusCandidate {
   status: string;
 }
 
+export interface WorkflowPageLike<T> {
+  records?: T[];
+  hasMore?: unknown;
+  pageToken?: unknown;
+}
+
+function booleanValue(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1" || normalized === "yes";
+  }
+  return false;
+}
+
 function textValue(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
@@ -469,4 +485,13 @@ export function resolveAgentFocusKey(
     (agents.some((agent) => agent.key === selectedKey) ? selectedKey : "") ||
     agents[0].key
   );
+}
+
+export function normalizeWorkflowPage<T>(page: WorkflowPageLike<T>): { records: T[]; hasMore: boolean; pageToken?: string } {
+  const pageToken = typeof page.pageToken === "string" ? page.pageToken.trim() : "";
+  return {
+    records: Array.isArray(page.records) ? page.records : [],
+    hasMore: booleanValue(page.hasMore),
+    pageToken: pageToken || undefined,
+  };
 }

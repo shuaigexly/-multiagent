@@ -46,6 +46,23 @@ describe('workflow SSE subscription', () => {
     vi.unstubAllGlobals();
   });
 
+  it('rejects blank workflow record ids without requesting stream tokens', () => {
+    const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { token: 'stream-token' } });
+    const EventSourceMock = vi.fn();
+    vi.stubGlobal('EventSource', EventSourceMock);
+
+    const statusSpy = vi.fn();
+    const unsubscribe = subscribeTaskProgress('   ', vi.fn(), statusSpy);
+    unsubscribe();
+
+    expect(statusSpy).toHaveBeenCalledWith('error', 'record id missing');
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(EventSourceMock).not.toHaveBeenCalled();
+
+    postSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it('marks the stream closed when workflow reaches a terminal event', async () => {
     vi.spyOn(api, 'post').mockResolvedValue({ data: { token: 'stream-token' } });
     const close = vi.fn();
@@ -71,6 +88,45 @@ describe('workflow SSE subscription', () => {
 
     unsubscribe();
     expect(statusSpy).toHaveBeenCalledTimes(2);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('does not report connected after a workflow stream was unsubscribed', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ data: { token: 'stream-token' } });
+    const source: { addEventListener: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; onopen?: () => void } = {
+      addEventListener: vi.fn(),
+      close: vi.fn(),
+    };
+    const EventSourceMock = vi.fn().mockImplementation(() => source);
+    vi.stubGlobal('EventSource', EventSourceMock);
+
+    const statusSpy = vi.fn();
+    const unsubscribe = subscribeTaskProgress('rec_123', vi.fn(), statusSpy);
+    await vi.waitFor(() => expect(EventSourceMock).toHaveBeenCalledTimes(1));
+
+    unsubscribe();
+    source.onopen?.();
+
+    expect(statusSpy).toHaveBeenCalledWith('closed');
+    expect(statusSpy).not.toHaveBeenCalledWith('connected');
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects missing workflow stream tokens without opening EventSource', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const EventSourceMock = vi.fn();
+    vi.stubGlobal('EventSource', EventSourceMock);
+
+    const statusSpy = vi.fn();
+    const unsubscribe = subscribeTaskProgress('rec_123', vi.fn(), statusSpy);
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1));
+
+    expect(statusSpy).toHaveBeenCalledWith('error', 'stream token missing');
+    expect(EventSourceMock).not.toHaveBeenCalled();
+    unsubscribe();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -104,6 +160,31 @@ describe('workflow SSE subscription', () => {
 
     expect(postSpy).toHaveBeenCalledWith('/api/v1/tasks/task%2Fa%20b%3Fx%3D1/events-token');
     expect(EventSourceMock.mock.calls[0][0]).toContain('/api/v1/tasks/task%2Fa%20b%3Fx%3D1/events?token=task%20token%2Fwith%20symbols');
+
+    postSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects missing task event stream tokens without opening EventSource', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
+    const EventSourceMock = vi.fn();
+    vi.stubGlobal('EventSource', EventSourceMock);
+
+    await expect(createSSEConnection('task_1')).rejects.toThrow('stream token missing');
+    expect(EventSourceMock).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects blank task event stream ids before requesting tokens', async () => {
+    const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { token: 'task-token' } });
+    const EventSourceMock = vi.fn();
+    vi.stubGlobal('EventSource', EventSourceMock);
+
+    await expect(createSSEConnection('  ')).rejects.toThrow('task id missing');
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(EventSourceMock).not.toHaveBeenCalled();
 
     postSpy.mockRestore();
     vi.unstubAllGlobals();
