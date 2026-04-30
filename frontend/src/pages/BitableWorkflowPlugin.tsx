@@ -15,7 +15,6 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { AGENT_PERSONAS } from "@/components/agentPersonas";
 import { API_KEY_STORAGE_KEY, getRuntimeApiKey } from "@/services/http";
@@ -668,65 +667,95 @@ function WorkflowCommandBar({
     { label: "评审", value: reviewAction || "待评审", icon: Zap },
     { label: "阶段", value: stage || "等待调度", icon: Radio },
   ];
+  const primarySignals = signals.slice(1);
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="flex items-center gap-2">
-        <span className={`shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium ${statusClass}`}>{status}</span>
-        {streamStatus && (
-          <span className={`shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium ${STREAM_STATUS_STYLE[streamStatus]}`}>
-            {STREAM_STATUS_LABEL[streamStatus]}
-          </span>
-        )}
-      </div>
-
-      <div className="mt-2 min-w-0 text-lg font-semibold leading-snug text-slate-950">
-        {title || "未命名任务"}
-      </div>
-
-      <div className="mt-3">
-        <Progress value={progress} className="h-2" />
-        <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-slate-500">
-          <span className="min-w-0 truncate">{stage || "等待调度"}</span>
-          <span className="shrink-0 tabular-nums">{progress.toFixed(0)}%</span>
-        </div>
-      </div>
-
-      <div className="mt-3 flex rounded-lg bg-slate-100 p-1">
-        {WORKSPACE_MODES.map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => onWorkspaceModeChange(item)}
-            className={`flex-1 rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
-              workspaceMode === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
-            }`}
-          >
-            {WORKSPACE_MODE_LABEL[item]}
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        {healthItems.map((item) => (
-          <div key={item.key} className={`min-w-0 rounded-lg border px-2.5 py-2 ${HEALTH_TONE_STYLE[item.tone]}`}>
-            <div className="flex items-center gap-1.5 text-[10px] font-medium opacity-70">
-              <item.icon className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{item.label}</span>
+    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_22px_rgba(15,23,42,0.06)]">
+      <div className="p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[11px] font-medium text-slate-500">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-white">
+                <GitBranch className="h-3.5 w-3.5" />
+              </span>
+              <span className="truncate">Workflow console</span>
             </div>
-            <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
+            <div className="mt-1 line-clamp-2 text-lg font-semibold leading-snug text-slate-950">
+              {title || "未命名任务"}
+            </div>
           </div>
-        ))}
-      </div>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <span className={`rounded-md border px-2 py-1 text-[11px] font-semibold ${statusClass}`}>{status}</span>
+            {streamStatus && (
+              <span className={`rounded-md border px-2 py-1 text-[11px] font-semibold ${STREAM_STATUS_STYLE[streamStatus]}`}>
+                {STREAM_STATUS_LABEL[streamStatus]}
+              </span>
+            )}
+          </div>
+        </div>
 
-      <div className="mt-2 grid gap-2">
-        {signals.slice(1).map((item) => (
-          <div key={item.label} className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
-            <item.icon className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            <div className="shrink-0 text-[11px] font-medium text-slate-400">{item.label}</div>
-            <div className="min-w-0 truncate text-sm font-medium text-slate-800">{item.value}</div>
+        <div className="mt-3 overflow-hidden rounded-lg bg-slate-950 p-3 text-white shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] font-medium text-slate-400">当前阶段</div>
+              <div className="mt-1 truncate text-sm font-semibold text-white">{stage || "等待调度"}</div>
+            </div>
+            <div className="shrink-0 text-2xl font-semibold tabular-nums">{progress.toFixed(0)}%</div>
           </div>
-        ))}
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/15">
+            <div
+              className="h-full rounded-full bg-[linear-gradient(90deg,#38bdf8,#a78bfa,#34d399)] transition-all"
+              style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+            />
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-400">
+            <span className="min-w-0 truncate">{sourceLabel}</span>
+            <span className="shrink-0">{route || "待生成"}</span>
+          </div>
+        </div>
+
+        <div className="mt-3 flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+          {WORKSPACE_MODES.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => onWorkspaceModeChange(item)}
+              className={`flex-1 rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
+                workspaceMode === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+              }`}
+            >
+              {WORKSPACE_MODE_LABEL[item]}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {healthItems.map((item) => (
+            <div
+              key={item.key}
+              title={item.caption}
+              className={`min-w-0 rounded-lg border px-2.5 py-2 ${HEALTH_TONE_STYLE[item.tone]}`}
+            >
+              <div className="flex items-center gap-1.5 text-[10px] font-medium opacity-75">
+                <item.icon className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{item.label}</span>
+              </div>
+              <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-2 grid gap-1.5">
+          {primarySignals.map((item) => (
+            <div key={item.label} className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-2.5 py-2">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white text-slate-600">
+                <item.icon className="h-3.5 w-3.5" />
+              </span>
+              <div className="shrink-0 text-[11px] font-medium text-slate-400">{item.label}</div>
+              <div className="min-w-0 truncate text-sm font-medium text-slate-800">{item.value}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -1024,81 +1053,125 @@ function CompactAgentFlowPanel({
         })
         .slice(0, 2)
     : [];
+  const waveOrder = ["Wave 1", "Wave 2", "Wave 3"];
+  const waveCaption: Record<string, string> = {
+    "Wave 1": "并行分析",
+    "Wave 2": "财务校验",
+    "Wave 3": "管理汇总",
+  };
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 p-3">
+    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_22px_rgba(15,23,42,0.06)]">
+      <div className="p-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-              <BrainCircuit className="h-4 w-4 text-sky-600" />
-              七岗 AI 流程
+            <div className="flex items-center gap-2 text-[11px] font-medium text-slate-500">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+                <BrainCircuit className="h-3.5 w-3.5" />
+              </span>
+              <span className="truncate">七岗 AI 流程</span>
             </div>
             <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
-              <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5">{doneCount}/7 完成</span>
+              <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5">{doneCount}/{agents.length || 7} 完成</span>
               {runningCount > 0 && <span className="rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-700">{runningCount} 运行中</span>}
               {errorCount > 0 && <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">{errorCount} 异常</span>}
             </div>
           </div>
-          <div className="shrink-0 text-right">
-            <div className="text-2xl font-semibold tabular-nums text-slate-950">{progress.toFixed(0)}%</div>
+          <div className="shrink-0 rounded-lg bg-slate-950 px-2.5 py-1.5 text-right text-white shadow-sm">
+            <div className="text-xl font-semibold tabular-nums">{progress.toFixed(0)}%</div>
             <div className="text-[11px] text-slate-400">{streamStatus ? STREAM_STATUS_LABEL[streamStatus] : "Base"}</div>
           </div>
         </div>
 
-        <div className="mt-3 grid gap-2">
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className="h-full rounded-full bg-[linear-gradient(90deg,#0ea5e9,#8b5cf6,#10b981)] transition-all"
+            style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+          />
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
           {[
             { icon: Radio, label: "阶段", value: stage || "等待调度" },
             { icon: GitBranch, label: "路由", value: route || "待生成" },
             { icon: Zap, label: "评审", value: reviewAction || "待评审" },
             { icon: TimerReset, label: "证据", value: `${evidenceCount} / ${pendingDataCount}` },
           ].map((item) => (
-            <div key={item.label} className="flex min-w-0 items-center gap-2 rounded-md bg-slate-50 px-2.5 py-2">
-              <item.icon className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-              <span className="shrink-0 text-[11px] font-medium text-slate-400">{item.label}</span>
-              <span className="min-w-0 truncate text-sm font-medium text-slate-800">{item.value}</span>
+            <div key={item.label} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/80 px-2.5 py-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
+                <item.icon className="h-3.5 w-3.5 shrink-0" />
+                <span>{item.label}</span>
+              </div>
+              <div className="mt-1 truncate text-sm font-medium text-slate-800">{item.value}</div>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="grid gap-2 p-3">
-        {agents.map((agent) => {
-          const persona = AGENT_PERSONAS[agent.key];
-          const isSelected = selectedAgentKey === agent.key;
-          return (
-            <button
-              key={agent.key}
-              type="button"
-              onClick={() => onSelectAgent?.(agent.key)}
-              className={`flex w-full min-w-0 items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${AGENT_NODE_STYLE[agent.status]} ${
-                isSelected ? "ring-2 ring-sky-300 ring-offset-1" : "hover:border-slate-300"
-              }`}
-            >
-              <div
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm font-semibold text-white ${agent.status === "running" ? "animate-pulse" : ""}`}
-                style={{ backgroundColor: persona?.color || "#64748b" }}
-              >
-                {persona?.avatar || agent.name.slice(0, 1)}
+      <div className="border-t border-slate-100 bg-[#fbfcfe] p-3">
+        <div className="space-y-3">
+          {waveOrder.map((wave) => {
+            const waveAgents = agents.filter((agent) => agent.wave === wave);
+            if (!waveAgents.length) return null;
+            return (
+              <div key={wave}>
+                <div className="mb-2 flex items-center gap-2">
+                  <div className="shrink-0 text-[11px] font-semibold uppercase text-slate-500">{wave}</div>
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <div className="shrink-0 text-[11px] font-medium text-slate-500">{waveCaption[wave]}</div>
+                </div>
+                <div className="grid gap-2">
+                  {waveAgents.map((agent) => {
+                    const persona = AGENT_PERSONAS[agent.key];
+                    const isSelected = selectedAgentKey === agent.key;
+                    const isRunning = agent.status === "running";
+                    const statusDot =
+                      agent.status === "done"
+                        ? "bg-emerald-500"
+                        : agent.status === "error"
+                          ? "bg-rose-500"
+                          : isRunning
+                            ? "bg-sky-500"
+                            : "bg-slate-300";
+                    return (
+                      <button
+                        key={agent.key}
+                        type="button"
+                        onClick={() => onSelectAgent?.(agent.key)}
+                        className={`flex w-full min-w-0 items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-all ${
+                          isSelected ? "border-sky-300 bg-white shadow-sm ring-2 ring-sky-100" : "border-slate-200 bg-white/90 hover:border-slate-300 hover:bg-white"
+                        }`}
+                      >
+                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDot} ${isRunning ? "animate-pulse" : ""}`} />
+                        <div
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white shadow-sm"
+                          style={{ backgroundColor: persona?.color || "#64748b" }}
+                        >
+                          {persona?.avatar || agent.name.slice(0, 1)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-slate-950">{agent.role}</div>
+                          <div className="truncate text-xs text-slate-500">{AGENT_STATUS_LABEL[agent.status]} · {agent.dependency}</div>
+                        </div>
+                        <div className="shrink-0 text-right text-[11px] leading-5 text-slate-500">
+                          <div>{formatDurationMs(agent.duration_ms)}</div>
+                          <div>{agent.confidence ? `${agent.confidence}/5` : "-"}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-slate-950">{agent.role}</div>
-                <div className="truncate text-xs text-slate-500">{agent.wave} · {AGENT_STATUS_LABEL[agent.status]}</div>
-              </div>
-              <div className="shrink-0 text-right text-[11px] text-slate-500">
-                <div>{formatDurationMs(agent.duration_ms)}</div>
-                <div>{agent.confidence ? `${agent.confidence}/5` : "-"}</div>
-              </div>
-            </button>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       {selectedAgent && (
-        <div className="border-t border-slate-200 bg-slate-50/70 p-3">
+        <div className="border-t border-slate-200 bg-white p-3">
           <div className="flex min-w-0 items-start gap-2.5">
             <div
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm font-semibold text-white"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white shadow-sm"
               style={{ backgroundColor: selectedPersona?.color || "#64748b" }}
             >
               {selectedPersona?.avatar || selectedAgent.name.slice(0, 1)}
@@ -1120,7 +1193,7 @@ function CompactAgentFlowPanel({
           {!!selectedAgentEvents.length && (
             <div className="mt-3 grid gap-2">
               {selectedAgentEvents.map((event) => (
-                <div key={event.key} className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
+                <div key={event.key} className="rounded-lg border border-slate-200 bg-slate-50/80 px-2.5 py-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 truncate text-sm font-medium text-slate-900">{event.stage}</div>
                     <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] ${STEP_STATUS_STYLE[event.status]}`}>
@@ -1837,8 +1910,8 @@ export default function BitableWorkflowPlugin() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 p-2 text-slate-900">
-      <div className="mx-auto max-w-[440px] space-y-3">
+    <div className="min-h-screen bg-[#f6f8fb] p-2 text-slate-900">
+      <div className="mx-auto max-w-[420px] space-y-3">
         {/* v8.6.20-r24：顶部 Agent 启动器 — 直接输入任务一键写入分析任务表 */}
         <BitableAgentLauncher
           onLaunched={(rid) => {
@@ -1851,42 +1924,50 @@ export default function BitableWorkflowPlugin() {
           }}
         />
 
-        <div className="rounded-lg border border-slate-200 bg-white/95 p-3 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-xs font-medium text-slate-500">Bitable Workflow</div>
-              <div className="mt-1 truncate text-lg font-semibold text-slate-950">AI 运转流程</div>
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_22px_rgba(15,23,42,0.06)]">
+          <div className="h-1 bg-[linear-gradient(90deg,#0ea5e9,#6366f1,#22c55e)]" />
+          <div className="p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[11px] font-medium text-slate-500">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-white shadow-sm">
+                    <GitBranch className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="truncate">Bitable Workflow</span>
+                </div>
+                <div className="mt-1 truncate text-lg font-semibold text-slate-950">AI 运转流程</div>
+              </div>
+              <div className="min-w-0 shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-right text-xs text-slate-600">
+                <div>{sourceLabel}</div>
+                <div className="max-w-28 truncate font-medium text-slate-900">{title || "未选中"}</div>
+              </div>
             </div>
-            <div className="min-w-0 shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-right text-xs text-slate-600">
-              <div>{sourceLabel}</div>
-              <div className="max-w-32 truncate font-medium text-slate-900">{title || "未选中"}</div>
-            </div>
+
+            {!getRuntimeApiKey() && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs leading-5 text-amber-800">
+                未检测到 API Key，仅显示 Base 状态。
+                <code className="rounded border border-amber-200 bg-white/70 px-1.5 py-0.5">
+                  {API_KEY_STORAGE_KEY}
+                </code>
+              </div>
+            )}
           </div>
 
-          {!getRuntimeApiKey() && (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs leading-5 text-amber-800">
-              未检测到 API Key，仅显示 Base 状态。
-              <code className="rounded border border-amber-200 bg-white/70 px-1.5 py-0.5">
-                {API_KEY_STORAGE_KEY}
-              </code>
-            </div>
-          )}
-
           {loading ? (
-            <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
+            <div className="mx-3 mb-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" />
               正在加载多维表格上下文...
             </div>
           ) : error ? (
-            <div className="mt-4">
+            <div className="mx-3 mb-3">
               <EmptyState text={error} />
             </div>
           ) : !selection.recordId || sourceKind === "unsupported" ? (
-            <div className="mt-4">
+            <div className="mx-3 mb-3">
               <EmptyState text="请选中一条工作流记录。" />
             </div>
           ) : !task ? (
-            <div className="mt-4 grid gap-3">
+            <div className="mx-3 mb-3 grid gap-3">
               <section className="space-y-3">
                 <div className="rounded-lg border border-slate-200 bg-amber-50/70 p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -1913,22 +1994,20 @@ export default function BitableWorkflowPlugin() {
               </section>
             </div>
           ) : (
-            <>
-              <div className="mt-4">
-                <WorkflowCommandBar
-                  title={title}
-                  sourceLabel={sourceLabel}
-                  status={status}
-                  progress={progress}
-                  stage={live?.stage || textValue(task.fields["当前阶段"]) || "等待调度"}
-                  route={textValue(task.fields["工作流路由"]) || "待生成"}
-                  reviewAction={reviewAction}
-                  streamStatus={live?.streamStatus}
-                  healthItems={runtimeHealthItems}
-                  workspaceMode={workspaceMode}
-                  onWorkspaceModeChange={setWorkspaceMode}
-                />
-              </div>
+            <div className="border-t border-slate-100 bg-[#f8fafc] p-3">
+              <WorkflowCommandBar
+                title={title}
+                sourceLabel={sourceLabel}
+                status={status}
+                progress={progress}
+                stage={live?.stage || textValue(task.fields["当前阶段"]) || "等待调度"}
+                route={textValue(task.fields["工作流路由"]) || "待生成"}
+                reviewAction={reviewAction}
+                streamStatus={live?.streamStatus}
+                healthItems={runtimeHealthItems}
+                workspaceMode={workspaceMode}
+                onWorkspaceModeChange={setWorkspaceMode}
+              />
 
               {workspaceMode === "run" && (
                 <section className="mt-3 space-y-3">
@@ -2014,10 +2093,10 @@ export default function BitableWorkflowPlugin() {
                   <RelationObjectsCard relationSections={relationSections} />
                 </section>
               )}
-            </>
+            </div>
           )}
 
-          <div className="mt-4 flex gap-2">
+          <div className="border-t border-slate-100 bg-white p-3">
             <Button
               variant="outline"
               onClick={() => {
