@@ -26,6 +26,7 @@ import type {
   FeishuChat,
   FeishuTask,
 } from '@/services/feishu';
+import { formatCalendarRange, formatDisplayTime } from './feishuWorkspaceUtils';
 
 type TabKey = 'drive' | 'calendar' | 'tasks' | 'chats';
 
@@ -36,48 +37,6 @@ const FILE_TYPE_MAP: Record<string, string> = {
   wiki: '知识库',
   file: '文件',
 };
-
-function formatDateTime(value: string | null) {
-  if (!value) return null;
-  const ts = Number(value);
-  if (Number.isNaN(ts)) return null;
-  return new Date(ts * 1000);
-}
-
-function formatCalendarRange(start: string | null, end: string | null) {
-  const startDate = formatDateTime(start);
-  const endDate = formatDateTime(end);
-  if (!startDate || !endDate) return '时间未知';
-
-  const datePart = startDate.toLocaleDateString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-  });
-  const startPart = startDate.toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  const endPart = endDate.toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-
-  return `${datePart} ${startPart} – ${endPart}`;
-}
-
-function formatDisplayTime(value: string | null) {
-  const date = formatDateTime(value);
-  if (!date) return null;
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-}
 
 function LoadingState() {
   return (

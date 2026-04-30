@@ -5,6 +5,7 @@ import { deleteTask, listTasks } from '../services/api';
 import type { TaskListItem } from '../services/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { formatRelativeTime } from './historyUtils';
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   done: { label: '已完成', cls: 'bg-success/10 text-success' },
@@ -26,17 +27,6 @@ const FILTER_OPTIONS = [
 ] as const;
 
 type StatusFilter = (typeof FILTER_OPTIONS)[number]['value'];
-
-function formatRelativeTime(v: string) {
-  const diff = Date.now() - new Date(v).getTime();
-  const fmt = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' });
-  if (Math.abs(diff) < 60000) return '刚刚';
-  const m = Math.round(diff / 60000);
-  if (Math.abs(m) < 60) return fmt.format(-m, 'minute');
-  const h = Math.round(m / 60);
-  if (Math.abs(h) < 24) return fmt.format(-h, 'hour');
-  return fmt.format(-Math.round(h / 24), 'day');
-}
 
 export default function History() {
   const navigate = useNavigate();

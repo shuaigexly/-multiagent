@@ -82,6 +82,13 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _normalize_task_id(task_id: str) -> str:
+    normalized = task_id.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="task_id 不能为空")
+    return normalized
+
+
 def _resolve_upload_file_path(path: str | None) -> FilePath | None:
     if not path:
         return None
@@ -275,6 +282,7 @@ async def confirm_task(
     db: AsyncSession = Depends(get_db),
 ):
     """用户确认模块选择后正式执行（BackgroundTasks 异步执行）"""
+    task_id = _normalize_task_id(task_id)
     user_instructions = (
         body.user_instructions.strip()
         if body.user_instructions and body.user_instructions.strip()
@@ -357,6 +365,7 @@ async def get_task_status(
     task_id: Annotated[str, ApiPath(min_length=1, max_length=128)],
     db: AsyncSession = Depends(get_db),
 ):
+    task_id = _normalize_task_id(task_id)
     result = await db.execute(select(Task.status).where(Task.id == task_id))
     status = result.scalar_one_or_none()
     if status is None:
@@ -370,6 +379,7 @@ async def delete_task(
     action: str | None = Query(None, max_length=16),
     db: AsyncSession = Depends(get_db),
 ):
+    task_id = _normalize_task_id(task_id)
     if action == "cancel":
         result = await db.execute(
             update(Task)

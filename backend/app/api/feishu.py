@@ -23,6 +23,13 @@ class CreateTaskRequest(BaseModel):
     source_task_id: str | None = Field(None, max_length=128)
 
 
+def _normalize_task_id(task_id: str) -> str:
+    normalized = task_id.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="task_id 不能为空")
+    return normalized
+
+
 @router.post(
     "/api/v1/tasks/{task_id}/publish",
     response_model=PublishResponse,
@@ -33,6 +40,7 @@ async def publish_task(
     body: PublishRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    task_id = _normalize_task_id(task_id)
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:

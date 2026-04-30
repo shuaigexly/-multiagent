@@ -69,6 +69,17 @@ def test_task_and_stream_path_and_query_ids_are_bounded(monkeypatch):
         f"/api/v1/tasks/{long_id}/publish",
         json={"asset_types": ["doc"]},
     ).status_code == 422
+    assert client.post(
+        "/api/v1/tasks/%20%20/confirm",
+        json={"selected_modules": ["data_analyst"]},
+    ).status_code == 400
+    assert client.get("/api/v1/tasks/%20%20/status").status_code == 400
+    assert client.delete("/api/v1/tasks/%20%20").status_code == 400
+    assert client.get("/api/v1/tasks/%20%20/results").status_code == 400
+    assert client.post(
+        "/api/v1/tasks/%20%20/publish",
+        json={"asset_types": ["doc"]},
+    ).status_code == 400
     assert client.post(f"/api/v1/tasks/{long_id}/events-token").status_code == 422
     assert client.get(f"/api/v1/tasks/{long_id}/events").status_code == 422
     assert client.post(f"/api/v1/workflow/stream-token/{long_id}").status_code == 422

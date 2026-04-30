@@ -12,6 +12,13 @@ from app.models.schemas import TaskResultsResponse, AgentResultOut, ResultSectio
 router = APIRouter(prefix="/api/v1/tasks", tags=["results"])
 
 
+def _normalize_task_id(task_id: str) -> str:
+    normalized = task_id.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="task_id 不能为空")
+    return normalized
+
+
 @router.get(
     "/{task_id}/results",
     response_model=TaskResultsResponse,
@@ -21,6 +28,7 @@ async def get_results(
     task_id: Annotated[str, Path(min_length=1, max_length=128)],
     db: AsyncSession = Depends(get_db),
 ):
+    task_id = _normalize_task_id(task_id)
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
