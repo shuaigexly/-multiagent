@@ -10,6 +10,13 @@ VALID_MODULES = {
 VALID_ASSET_TYPES = {"doc", "bitable", "slides", "message", "task", "card"}
 
 
+def _optional_trim(value: object) -> object:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return value
+
+
 class TaskCreate(BaseModel):
     input_text: Optional[str] = Field(None, max_length=5000)
     input_file: Optional[str] = Field(None, max_length=256)   # file_id from upload
@@ -33,6 +40,11 @@ class TaskPlanResponse(BaseModel):
 class TaskConfirm(BaseModel):
     selected_modules: List[str] = Field(..., min_length=1, max_length=len(VALID_MODULES))
     user_instructions: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("user_instructions", mode="before")
+    @classmethod
+    def normalize_user_instructions(cls, v):
+        return _optional_trim(v)
 
     @field_validator("selected_modules")
     @classmethod
@@ -82,6 +94,18 @@ class PublishRequest(BaseModel):
     asset_types: List[str] = Field(..., min_length=1, max_length=len(VALID_ASSET_TYPES))
     doc_title: Optional[str] = Field(None, max_length=100)
     chat_id: Optional[str] = Field(None, max_length=128)
+
+    @field_validator("doc_title", "chat_id", mode="before")
+    @classmethod
+    def normalize_optional_strings(cls, v):
+        return _optional_trim(v)
+
+    @field_validator("asset_types", mode="before")
+    @classmethod
+    def normalize_asset_types(cls, v):
+        if isinstance(v, list):
+            return [item.strip() if isinstance(item, str) else item for item in v]
+        return v
 
     @field_validator("asset_types")
     @classmethod

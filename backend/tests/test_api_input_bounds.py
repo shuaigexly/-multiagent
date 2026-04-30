@@ -120,6 +120,28 @@ def test_task_confirm_payloads_are_bounded():
     with pytest.raises(ValidationError):
         PublishRequest(asset_types=["doc"], chat_id="c" * 129)
 
+    confirm = TaskConfirm(selected_modules=["data_analyst"], user_instructions="  重点看风险  ")
+    assert confirm.user_instructions == "重点看风险"
+    assert TaskConfirm(selected_modules=["data_analyst"], user_instructions="  ").user_instructions is None
+
+    publish = PublishRequest(asset_types=[" doc ", "doc"], doc_title="  ", chat_id=" chat_1 ")
+    assert publish.asset_types == ["doc"]
+    assert publish.doc_title is None
+    assert publish.chat_id == "chat_1"
+
+
+def test_create_feishu_task_request_normalizes_optional_ids():
+    from pydantic import ValidationError
+    from app.api.feishu import CreateTaskRequest
+
+    request = CreateTaskRequest(summary=" 跟进异常 ", source_task_id=" task_1 ")
+    assert request.summary == "跟进异常"
+    assert request.source_task_id == "task_1"
+    assert CreateTaskRequest(summary="ok", source_task_id="  ").source_task_id is None
+
+    with pytest.raises(ValidationError):
+        CreateTaskRequest(summary="   ")
+
 
 def test_workflow_control_payloads_are_bounded():
     from pydantic import ValidationError

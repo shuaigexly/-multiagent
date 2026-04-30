@@ -3,7 +3,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,24 @@ logger = logging.getLogger(__name__)
 class CreateTaskRequest(BaseModel):
     summary: str = Field(..., min_length=1, max_length=500)
     source_task_id: str | None = Field(None, max_length=128)
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def normalize_summary(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("summary 不能为空")
+            return normalized
+        return value
+
+    @field_validator("source_task_id", mode="before")
+    @classmethod
+    def normalize_source_task_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return value
 
 
 def _normalize_task_id(task_id: str) -> str:
@@ -95,16 +113,16 @@ async def create_feishu_task(
     from app.feishu import task as feishu_task
     from app.models.database import PublishedAsset
 
-    if not body.summary or not body.summary.strip():
+    if not body.summary:
         raise HTTPException(400, "summary 不能为空")
 
-    result = await feishu_task.create_task(title=body.summary.strip())
+    result = await feishu_task.create_task(title=body.summary)
 
     if body.source_task_id:
         asset = PublishedAsset(
             task_id=body.source_task_id,
             asset_type="task",
-            title=body.summary.strip(),
+            title=body.summary,
             feishu_url=result.get("url"),
             feishu_id=result.get("task_guid"),
         )
