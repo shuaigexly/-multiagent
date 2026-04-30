@@ -46,6 +46,35 @@ describe('workflow SSE subscription', () => {
     vi.unstubAllGlobals();
   });
 
+  it('marks the stream closed when workflow reaches a terminal event', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ data: { token: 'stream-token' } });
+    const close = vi.fn();
+    const listeners: Record<string, (event: MessageEvent) => void> = {};
+    const addEventListener = vi.fn((eventName: string, handler: EventListener) => {
+      listeners[eventName] = handler as (event: MessageEvent) => void;
+    });
+    const EventSourceMock = vi.fn().mockImplementation(() => ({ addEventListener, close }));
+    vi.stubGlobal('EventSource', EventSourceMock);
+
+    const eventSpy = vi.fn();
+    const statusSpy = vi.fn();
+    const unsubscribe = subscribeTaskProgress('rec_123', eventSpy, statusSpy);
+    await vi.waitFor(() => expect(EventSourceMock).toHaveBeenCalledTimes(1));
+
+    listeners['task.done']({
+      data: JSON.stringify({ event_type: 'task.done', payload: {}, task_id: 'rec_123', ts: '2026-04-30T00:00:00Z' }),
+    } as MessageEvent);
+
+    expect(eventSpy).toHaveBeenCalledWith(expect.objectContaining({ event_type: 'task.done' }));
+    expect(statusSpy).toHaveBeenCalledWith('closed', '工作流已完成');
+    expect(close).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+    expect(statusSpy).toHaveBeenCalledTimes(2);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it('does not log raw token request errors that may contain API headers', async () => {
     const tokenError = Object.assign(new Error('token request failed'), {
       config: { headers: { 'X-API-Key': 'runtime-secret' } },

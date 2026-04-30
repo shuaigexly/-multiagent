@@ -284,15 +284,26 @@ export function subscribeTaskProgress(
 ): () => void {
   let es: EventSource | null = null;
   let closed = false;
+  let terminal = false;
   const encodedRecordId = encodeURIComponent(recordId);
   onStatus?.('connecting');
+
+  const closeStream = (status: WorkflowStreamStatus, message?: string) => {
+    if (terminal) return;
+    terminal = true;
+    onStatus?.(status, message);
+    es?.close();
+  };
 
   const handler = (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data) as ProgressEvent;
       onEvent(data);
       if (data.event_type === 'task.done' || data.event_type === 'task.error') {
-        es?.close();
+        closeStream(
+          'closed',
+          data.event_type === 'task.done' ? '工作流已完成' : '工作流异常结束',
+        );
       }
     } catch (err) {
       console.error('[SSE] parse error:', err);
@@ -318,8 +329,8 @@ export function subscribeTaskProgress(
         'agent.token',
       ].forEach((evt) => es?.addEventListener(evt, handler as EventListener));
       es.onerror = () => {
-        onStatus?.('error', '实时流连接已断开，已回退到 Base 原生日志');
-        es?.close();
+        if (closed || terminal) return;
+        closeStream('error', '实时流连接已断开，已回退到 Base 原生日志');
       };
     })
     .catch((err) => {
@@ -332,7 +343,10 @@ export function subscribeTaskProgress(
 
   return () => {
     closed = true;
-    onStatus?.('closed');
+    if (!terminal) {
+      terminal = true;
+      onStatus?.('closed');
+    }
     es?.close();
   };
 }

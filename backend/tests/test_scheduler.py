@@ -847,6 +847,21 @@ class TestAutomationLog:
 
 
 class TestNativeEventQueue:
+    def test_native_event_queue_drops_new_items_when_full(self, caplog):
+        from app.bitable_workflow.scheduler import _enqueue_native_event
+
+        async def noop():
+            return None
+
+        queue = asyncio.Queue(maxsize=1)
+        _enqueue_native_event(queue, "first", noop)
+
+        with caplog.at_level("WARNING"):
+            _enqueue_native_event(queue, "second", noop)
+
+        assert queue.qsize() == 1
+        assert "native workflow event queue full label=second" in caplog.text
+
     @pytest.mark.asyncio
     async def test_native_event_queue_preserves_enqueue_order(self):
         from app.bitable_workflow.scheduler import (

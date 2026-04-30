@@ -1693,14 +1693,20 @@ async def _native_event_queue_worker(queue: asyncio.Queue, *, label: str) -> Non
             queue.task_done()
 
 
+_NATIVE_EVENT_QUEUE_MAXSIZE = 256
+
+
 def _start_native_event_queue(label: str) -> tuple[asyncio.Queue, asyncio.Task]:
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=_NATIVE_EVENT_QUEUE_MAXSIZE)
     worker = asyncio.create_task(_native_event_queue_worker(queue, label=label))
     return queue, worker
 
 
 def _enqueue_native_event(queue: asyncio.Queue, label: str, factory) -> None:
-    queue.put_nowait((label, factory))
+    try:
+        queue.put_nowait((label, factory))
+    except asyncio.QueueFull:
+        logger.warning("native workflow event queue full label=%s; dropping event", label)
 
 
 async def _drain_native_event_queue(queue: asyncio.Queue, worker: asyncio.Task, *, label: str) -> None:

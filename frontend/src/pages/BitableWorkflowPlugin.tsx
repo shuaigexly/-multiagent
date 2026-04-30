@@ -4,7 +4,6 @@ import {
   Activity,
   BrainCircuit,
   CheckCircle2,
-  CircleDotDashed,
   Clock3,
   GitBranch,
   Loader2,
@@ -176,6 +175,8 @@ const HEALTH_TONE_STYLE: Record<HealthTone, string> = {
   neutral: "border-slate-200 bg-slate-50 text-slate-600",
 };
 
+const TOKEN_PREVIEW_MAX_CHARS = 900;
+
 function textValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number") return String(value);
@@ -261,6 +262,12 @@ function formatDateValue(value: unknown): string {
     minute: "2-digit",
     hour12: false,
   }).format(new Date(parsed));
+}
+
+function appendTokenPreview(current: string | undefined, chunk: string): string {
+  const next = `${current || ""}${chunk}`;
+  if (next.length <= TOKEN_PREVIEW_MAX_CHARS) return next;
+  return `...${next.slice(next.length - TOKEN_PREVIEW_MAX_CHARS)}`;
 }
 
 function buildLiveStepEvent(event: ProgressEvent): LiveStepEvent | null {
@@ -758,257 +765,6 @@ function WorkflowCommandBar({
         </div>
       </div>
     </section>
-  );
-}
-
-function AgentFlowDashboard({
-  agents,
-  progress,
-  stage,
-  route,
-  reviewAction,
-  evidenceCount,
-  pendingDataCount,
-  selectedAgentKey,
-  selectedAgent,
-  timeline,
-  streamStatus,
-  streamMessage,
-  onSelectAgent,
-}: {
-  agents: AgentPipelineSnapshot[];
-  progress: number;
-  stage: string;
-  route: string;
-  reviewAction: string;
-  evidenceCount: number;
-  pendingDataCount: number;
-  selectedAgentKey?: string;
-  selectedAgent: AgentPipelineSnapshot | null;
-  timeline: LiveStepEvent[];
-  streamStatus?: WorkflowStreamStatus;
-  streamMessage?: string;
-  onSelectAgent?: (agentKey: string) => void;
-}) {
-  const doneCount = agents.filter((agent) => agent.status === "done").length;
-  const runningCount = agents.filter((agent) => agent.status === "running").length;
-  const errorCount = agents.filter((agent) => agent.status === "error").length;
-  const waves = ["Wave 1", "Wave 2", "Wave 3"];
-  const waveCaptions: Record<string, string> = {
-    "Wave 1": "五岗并行",
-    "Wave 2": "财务接力",
-    "Wave 3": "CEO 汇总",
-  };
-  const selectedPersona = selectedAgent ? AGENT_PERSONAS[selectedAgent.key] : null;
-  const selectedAgentEvents = selectedAgent
-    ? timeline
-        .filter((event) => {
-          const haystack = `${event.stage} ${event.detail}`;
-          return haystack.includes(selectedAgent.name) || haystack.includes(selectedAgent.role) || haystack.includes(selectedAgent.key);
-        })
-        .slice(0, 2)
-    : [];
-  const selectedMetrics = selectedAgent
-    ? [
-        { label: "耗时", value: formatDurationMs(selectedAgent.duration_ms) },
-        { label: "置信度", value: selectedAgent.confidence ? `${selectedAgent.confidence}/5` : "-" },
-        { label: "证据", value: selectedAgent.evidence_count ?? "-" },
-        { label: "行动项", value: selectedAgent.action_count ?? "-" },
-      ]
-    : [];
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 bg-[linear-gradient(135deg,rgba(2,132,199,0.08),rgba(255,255,255,0.96)_44%,rgba(16,185,129,0.08))] p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-slate-500">
-              <BrainCircuit className="h-4 w-4 text-sky-600" />
-              Agent Command Deck
-            </div>
-            <div className="mt-2 text-2xl font-semibold leading-tight text-slate-950">七岗 AI 运行驾驶舱</div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-              <span className="rounded-md border border-slate-200 bg-white/80 px-3 py-1">{doneCount}/7 已完成</span>
-              <span className="rounded-md border border-sky-200 bg-sky-50 px-3 py-1 text-sky-700">{runningCount || 0} 个运行中</span>
-              {errorCount > 0 && <span className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">{errorCount} 个异常</span>}
-            </div>
-          </div>
-          <div className="min-w-40 rounded-lg border border-white/80 bg-white/90 px-4 py-3 text-right shadow-sm">
-            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Live Progress</div>
-            <div className="mt-1 text-3xl font-semibold tabular-nums text-slate-950">{progress.toFixed(0)}%</div>
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          {[
-            { icon: Radio, label: "当前阶段", value: stage || "等待调度" },
-            { icon: GitBranch, label: "路由", value: route || "待生成" },
-            { icon: Zap, label: "评审动作", value: reviewAction || "待评审" },
-            { icon: TimerReset, label: "证据 / 补数", value: `${evidenceCount} / ${pendingDataCount}` },
-          ].map((item) => (
-            <div key={item.label} className="rounded-lg border border-white/80 bg-white/88 px-3 py-3 shadow-sm">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-slate-400">
-                <item.icon className="h-3.5 w-3.5 text-slate-500" />
-                {item.label}
-              </div>
-              <div className="mt-2 line-clamp-2 text-sm font-medium leading-5 text-slate-800">{item.value}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid gap-0 lg:grid-cols-[1.15fr_0.78fr_0.78fr]">
-        {waves.map((wave, waveIndex) => {
-          const waveAgents = agents.filter((agent) => agent.wave === wave);
-          const waveDone = waveAgents.every((agent) => agent.status === "done");
-          const waveRunning = waveAgents.some((agent) => agent.status === "running");
-          const waveError = waveAgents.some((agent) => agent.status === "error");
-          return (
-            <div key={wave} className={`relative border-slate-200 p-4 ${waveIndex > 0 ? "border-t lg:border-l lg:border-t-0" : ""}`}>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{wave}</div>
-                  <div className="mt-1 text-base font-semibold text-slate-950">{waveCaptions[wave]}</div>
-                </div>
-                <div className={`rounded-md border px-2.5 py-1 text-[11px] font-medium ${
-                  waveError ? AGENT_NODE_STYLE.error : waveDone ? AGENT_NODE_STYLE.done : waveRunning ? AGENT_NODE_STYLE.running : AGENT_NODE_STYLE.pending
-                }`}>
-                  {waveError ? "异常" : waveDone ? "完成" : waveRunning ? "运行中" : "排队"}
-                </div>
-              </div>
-              <div className={wave === "Wave 1" ? "grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2" : "grid gap-2"}>
-                {waveAgents.map((agent) => {
-                  const persona = AGENT_PERSONAS[agent.key];
-                  return (
-                    <button
-                      key={agent.key}
-                      type="button"
-                      onClick={() => onSelectAgent?.(agent.key)}
-                      className={`w-full rounded-lg border px-3 py-3 text-left transition-all ${AGENT_NODE_STYLE[agent.status]} ${
-                        selectedAgentKey === agent.key ? "ring-2 ring-sky-300 ring-offset-2" : "hover:-translate-y-0.5 hover:shadow-sm"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <div
-                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white ${agent.status === "running" ? "animate-pulse" : ""}`}
-                            style={{ backgroundColor: persona?.color || "#64748b" }}
-                          >
-                            {persona?.avatar || agent.name.slice(0, 1)}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-950">{agent.role}</div>
-                            <div className="truncate text-xs text-slate-500">{agent.name}</div>
-                          </div>
-                        </div>
-                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/80">
-                          {agent.status === "done" ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                          ) : agent.status === "error" ? (
-                            <ShieldAlert className="h-3.5 w-3.5 text-rose-600" />
-                          ) : agent.status === "running" ? (
-                            <Sparkles className="h-3.5 w-3.5 text-sky-600" />
-                          ) : (
-                            <CircleDotDashed className="h-3.5 w-3.5 text-slate-400" />
-                          )}
-                        </div>
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        <span className="rounded-md bg-white/80 px-2 py-0.5 text-[11px] font-medium">{AGENT_STATUS_LABEL[agent.status]}</span>
-                        <span className="rounded-md bg-white/70 px-2 py-0.5 text-[11px] text-slate-500">{agent.dependency}</span>
-                        {agent.fallback && (
-                          <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">兜底输出</span>
-                        )}
-                      </div>
-                      <div className="mt-2 grid grid-cols-3 gap-1.5 text-[11px] text-slate-500">
-                        <div className="rounded-lg bg-white/70 px-2 py-1">
-                          <span className="block text-slate-400">耗时</span>
-                          <span className="font-medium text-slate-700">{formatDurationMs(agent.duration_ms)}</span>
-                        </div>
-                        <div className="rounded-lg bg-white/70 px-2 py-1">
-                          <span className="block text-slate-400">置信</span>
-                          <span className="font-medium text-slate-700">{agent.confidence ? `${agent.confidence}/5` : "-"}</span>
-                        </div>
-                        <div className="rounded-lg bg-white/70 px-2 py-1">
-                          <span className="block text-slate-400">证据</span>
-                          <span className="font-medium text-slate-700">{agent.evidence_count ?? "-"}</span>
-                        </div>
-                      </div>
-                      <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
-                        {agent.status === "error" ? agent.reason || agent.summary : agent.summary}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {selectedAgent && (
-        <div className="border-t border-slate-200 bg-slate-50/70 p-4">
-          <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-            <div className="flex min-w-0 items-start gap-3">
-              <div
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-base font-semibold text-white"
-                style={{ backgroundColor: selectedPersona?.color || "#64748b" }}
-              >
-                {selectedPersona?.avatar || selectedAgent.name.slice(0, 1)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="truncate text-base font-semibold text-slate-950">{selectedAgent.role}</div>
-                  <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${AGENT_NODE_STYLE[selectedAgent.status]}`}>
-                    {AGENT_STATUS_LABEL[selectedAgent.status]}
-                  </span>
-                  {streamStatus && (
-                    <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${STREAM_STATUS_STYLE[streamStatus]}`}>
-                      {STREAM_STATUS_LABEL[streamStatus]}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 text-sm text-slate-500">{selectedAgent.wave} · {selectedAgent.name}</div>
-                <div className="mt-2 line-clamp-3 text-sm leading-6 text-slate-700">
-                  {selectedAgent.status === "error" ? selectedAgent.reason || selectedAgent.summary : selectedAgent.summary || "等待该岗位输出。"}
-                </div>
-                {streamMessage && <div className="mt-2 text-xs leading-5 text-slate-500">{streamMessage}</div>}
-              </div>
-            </div>
-            <div className="grid gap-3 md:grid-cols-[0.84fr_1.16fr]">
-              <div className="grid grid-cols-2 gap-2">
-                {selectedMetrics.map((item) => (
-                  <div key={item.label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">{item.label}</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-900">{item.value}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">关联事件</div>
-                {!selectedAgentEvents.length ? (
-                  <div className="mt-2 text-sm leading-6 text-slate-500">暂未命中该岗位的原生或实时事件。</div>
-                ) : (
-                  <div className="mt-2 grid gap-2">
-                    {selectedAgentEvents.map((event) => (
-                      <div key={event.key} className="flex items-start justify-between gap-3 text-sm">
-                        <div className="min-w-0">
-                          <div className="truncate font-medium text-slate-900">{event.stage}</div>
-                          <div className="line-clamp-1 text-xs leading-5 text-slate-500">{event.detail}</div>
-                        </div>
-                        <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] ${STEP_STATUS_STYLE[event.status]}`}>
-                          {event.eventType === "native.log" ? "Base" : "SSE"}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -1750,6 +1506,7 @@ export default function BitableWorkflowPlugin() {
               setLive((prev) => {
                 const nextStep = buildLiveStepEvent(event);
                 const nextHistory = nextStep ? [...(prev?.history || []), nextStep].slice(-10) : prev?.history || [];
+                const tokenChunk = event.event_type === "agent.token" ? textValue(event.payload.chunk) : "";
                 return {
                   stage: String(event.payload.stage || prev?.stage || "等待调度"),
                   progress: safeProgress(event.payload.progress ?? prev?.progress ?? 0),
@@ -1762,10 +1519,7 @@ export default function BitableWorkflowPlugin() {
                   updatedAt: event.ts,
                   streamStatus: prev?.streamStatus || "connecting",
                   streamMessage: prev?.streamMessage,
-                  tokenPreview:
-                    event.event_type === "agent.token"
-                      ? textValue(event.payload.chunk) || prev?.tokenPreview
-                      : prev?.tokenPreview,
+                  tokenPreview: tokenChunk ? appendTokenPreview(prev?.tokenPreview, tokenChunk) : prev?.tokenPreview,
                   activeAgent:
                     event.event_type === "agent.token"
                       ? textValue(event.payload.agent_name || event.payload.agent_id) || prev?.activeAgent
@@ -2033,7 +1787,7 @@ export default function BitableWorkflowPlugin() {
                         <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
                         <span>实时流{live.activeAgent ? ` · ${live.activeAgent}` : ""}</span>
                       </div>
-                      <div className="mt-2 line-clamp-4 text-sm leading-6 text-slate-600">{live.tokenPreview}</div>
+                      <div className="mt-2 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">{live.tokenPreview}</div>
                     </div>
                   )}
 
