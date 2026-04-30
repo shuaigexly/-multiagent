@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -38,3 +39,22 @@ async def test_workflow_stream_generator_stops_after_max_duration(monkeypatch):
 
     assert events == []
     request.is_disconnected.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_progress_broker_preserves_terminal_event_when_subscriber_queue_is_full():
+    from app.bitable_workflow import progress_broker
+
+    progress_broker._subscribers.clear()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+    await queue.put({"event_type": "agent.token", "payload": {"chunk": "old"}})
+    progress_broker._subscribers["rec_1"].append(queue)
+
+    try:
+        await progress_broker.publish("rec_1", "task.done", {"stage": "done"})
+
+        msg = queue.get_nowait()
+        assert msg["event_type"] == "task.done"
+        assert msg["payload"] == {"stage": "done"}
+    finally:
+        progress_broker._subscribers.clear()

@@ -108,7 +108,7 @@ def test_task_confirm_payloads_are_bounded():
 
 def test_workflow_control_payloads_are_bounded():
     from pydantic import ValidationError
-    from app.api.workflow import ApplyNativeRequest, SetupRequest, StartRequest
+    from app.api.workflow import ApplyNativeRequest, ConfirmRequest, SeedRequest, SetupRequest, StartRequest
 
     with pytest.raises(ValidationError):
         SetupRequest(name=" " * 8)
@@ -125,6 +125,33 @@ def test_workflow_control_payloads_are_bounded():
 
     with pytest.raises(ValidationError):
         ApplyNativeRequest(surfaces=["workflow"] * 20)
+
+    with pytest.raises(ValidationError):
+        SeedRequest(app_token="abc", table_id="def", title="   ")
+
+    with pytest.raises(ValidationError):
+        StartRequest(
+            app_token="app",
+            table_ids={" task ": "   ", "report": "report", "performance": "perf"},
+        )
+
+    seed = SeedRequest(app_token=" app ", table_id=" tbl ", title=" 增长诊断 ")
+    assert seed.app_token == "app"
+    assert seed.table_id == "tbl"
+    assert seed.title == "增长诊断"
+
+    start = StartRequest(
+        app_token=" app ",
+        table_ids={" task ": " tbl_task ", "report": " tbl_report ", "performance": " tbl_perf "},
+    )
+    assert start.app_token == "app"
+    assert start.table_ids == {"task": "tbl_task", "report": "tbl_report", "performance": "tbl_perf"}
+
+    confirm = ConfirmRequest(app_token=" app ", table_id=" tbl ", record_id=" rec ", action=" approve ")
+    assert confirm.app_token == "app"
+    assert confirm.table_id == "tbl"
+    assert confirm.record_id == "rec"
+    assert confirm.action == "approve"
 
 
 def test_config_request_values_are_bounded(monkeypatch):

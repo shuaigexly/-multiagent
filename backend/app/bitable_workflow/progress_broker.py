@@ -55,6 +55,16 @@ async def publish(task_id: str, event_type: str, payload: dict) -> None:
         try:
             q.put_nowait(msg)
         except asyncio.QueueFull:
+            if event_type in {"task.done", "task.error"}:
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    q.put_nowait(msg)
+                    continue
+                except asyncio.QueueFull:
+                    pass
             logger.debug("SSE subscriber queue full for task=%s, dropping event", task_id)
 
 

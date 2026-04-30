@@ -70,6 +70,11 @@ export interface WorkflowTraceNode {
   tone: "neutral" | "active" | "success" | "warning";
 }
 
+export interface WorkflowAgentFocusCandidate {
+  key: string;
+  status: string;
+}
+
 function textValue(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
@@ -447,4 +452,21 @@ export function buildTraceChainItems(
   }
 
   return nodes;
+}
+
+export function resolveAgentFocusKey(
+  agents: WorkflowAgentFocusCandidate[],
+  selectedKey: string,
+  pinned: boolean,
+): string {
+  if (!agents.length) return "";
+  if (pinned && agents.some((agent) => agent.key === selectedKey)) {
+    return selectedKey;
+  }
+  return (
+    agents.find((agent) => agent.status === "running")?.key ||
+    agents.find((agent) => agent.status === "error")?.key ||
+    (agents.some((agent) => agent.key === selectedKey) ? selectedKey : "") ||
+    agents[0].key
+  );
 }

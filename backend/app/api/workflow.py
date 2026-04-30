@@ -43,6 +43,15 @@ _ARCHIVE_VERSION_RE = re.compile(r"^v(\d+)$", re.IGNORECASE)
 _state: dict = {}
 
 
+def _strip_required_string(value: object) -> object:
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("不能为空")
+        return normalized
+    return value
+
+
 def _refresh_native_state_artifacts() -> None:
     app_token = str(_state.get("app_token") or "").strip()
     table_ids = _state.get("table_ids") or {}
@@ -96,21 +105,32 @@ class StartRequest(BaseModel):
     interval: int = Field(default=30, ge=1, le=86400)
     analysis_every: int = Field(default=5, ge=1, le=1000)
 
+    @field_validator("app_token", mode="before")
+    @classmethod
+    def strip_app_token(cls, v: object) -> object:
+        return _strip_required_string(v)
+
     @model_validator(mode="after")
     def check_table_ids(self) -> "StartRequest":
+        normalized_table_ids: dict[str, str] = {}
+        for key, val in self.table_ids.items():
+            normalized_key = key.strip() if isinstance(key, str) else key
+            normalized_val = val.strip() if isinstance(val, str) else val
+            if not isinstance(normalized_key, str) or not normalized_key or len(normalized_key) > 64:
+                raise ValueError("table_ids key 必须是 1-64 字符字符串")
+            if not isinstance(normalized_val, str) or not normalized_val:
+                raise ValueError(f"table_ids['{key}'] 不能为空字符串")
+            if len(normalized_val) > 128:
+                raise ValueError(f"table_ids['{key}'] 超过长度限制")
+            normalized_table_ids[normalized_key] = normalized_val
+        self.table_ids = normalized_table_ids
+
         required = {"task", "report", "performance"}
         missing = required - self.table_ids.keys()
         if missing:
             raise ValueError(f"table_ids 缺少必需键: {missing}")
         if len(self.table_ids) > 32:
             raise ValueError("table_ids 数量超过限制")
-        for key, val in self.table_ids.items():
-            if not isinstance(key, str) or not key.strip() or len(key) > 64:
-                raise ValueError("table_ids key 必须是 1-64 字符字符串")
-            if not isinstance(val, str) or not val.strip():
-                raise ValueError(f"table_ids['{key}'] 不能为空字符串")
-            if len(val) > 128:
-                raise ValueError(f"table_ids['{key}'] 超过长度限制")
         return self
 
 
@@ -145,6 +165,11 @@ class SeedRequest(BaseModel):
     template_name: str = Field(default="", max_length=200)
     template: str = Field(default="", max_length=200)
 
+    @field_validator("app_token", "table_id", "title", mode="before")
+    @classmethod
+    def strip_required_strings(cls, v: object) -> object:
+        return _strip_required_string(v)
+
     @field_validator("dimension")
     @classmethod
     def check_dimension(cls, v: str) -> str:
@@ -165,6 +190,11 @@ class ConfirmRequest(BaseModel):
     record_id: str = Field(min_length=1, max_length=128)
     action: str = Field(min_length=1, max_length=32)
     actor: str = Field(default="", max_length=200)
+
+    @field_validator("app_token", "table_id", "record_id", "action", mode="before")
+    @classmethod
+    def strip_required_strings(cls, v: object) -> object:
+        return _strip_required_string(v)
 
     @field_validator("action")
     @classmethod

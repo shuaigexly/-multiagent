@@ -28,6 +28,7 @@ import {
   getWorkflowSourceKind,
   matchesRelatedRecord,
   matchesTaskRecord,
+  resolveAgentFocusKey,
   workflowSourceLabel,
   type WorkflowResolutionDebug,
   type WorkflowRelationSection,
@@ -1256,7 +1257,8 @@ export default function BitableWorkflowPlugin() {
   const [archives, setArchives] = useState<TaskSnapshot[]>([]);
   const [automationLogs, setAutomationLogs] = useState<TaskSnapshot[]>([]);
   const [live, setLive] = useState<LiveState | null>(null);
-  const [selectedAgentKey, setSelectedAgentKey] = useState("data_analyst");
+  const [selectedAgentKey, setSelectedAgentKey] = useState("");
+  const [agentFocusPinned, setAgentFocusPinned] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
   const [selectedTimelineEventKey, setSelectedTimelineEventKey] = useState("");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("run");
@@ -1366,8 +1368,12 @@ export default function BitableWorkflowPlugin() {
           archive: archiveId,
           ...(automationLogId ? { automation_log: automationLogId } : {}),
         });
-        setSelection(await bitable.base.getSelection());
-        const off = bitable.base.onSelectionChange(({ data }) => setSelection(data));
+        const currentSelection = await bitable.base.getSelection();
+        if (!mounted) return null;
+        setSelection(currentSelection);
+        const off = bitable.base.onSelectionChange(({ data }) => {
+          if (mounted) setSelection(data);
+        });
         return off;
       } catch (err) {
         if (!mounted) return null;
@@ -1428,6 +1434,8 @@ export default function BitableWorkflowPlugin() {
       setError("");
       setLive(null);
       setSelectedTimelineEventKey("");
+      setSelectedAgentKey("");
+      setAgentFocusPinned(false);
       try {
         const selectedRecord = await getMappedRecordById(selection.tableId!, selection.recordId!);
         setSelectedRecordSnapshot(selectedRecord);
@@ -1662,13 +1670,11 @@ export default function BitableWorkflowPlugin() {
     [filteredTimelineEvents, selectedTimelineEventKey],
   );
   const selectedAgent = useMemo(
-    () =>
-      agentPipeline.find((agent) => agent.key === selectedAgentKey) ||
-      agentPipeline.find((agent) => agent.status === "running") ||
-      agentPipeline.find((agent) => agent.status === "error") ||
-      agentPipeline[0] ||
-      null,
-    [agentPipeline, selectedAgentKey],
+    () => {
+      const focusKey = resolveAgentFocusKey(agentPipeline, selectedAgentKey, agentFocusPinned);
+      return agentPipeline.find((agent) => agent.key === focusKey) || null;
+    },
+    [agentFocusPinned, agentPipeline, selectedAgentKey],
   );
   const runtimeHealthItems = useMemo(
     () =>
@@ -1799,7 +1805,10 @@ export default function BitableWorkflowPlugin() {
                     timeline={timelineEvents}
                     streamStatus={live?.streamStatus}
                     streamMessage={live?.streamMessage}
-                    onSelectAgent={setSelectedAgentKey}
+                    onSelectAgent={(agentKey) => {
+                      setSelectedAgentKey(agentKey);
+                      setAgentFocusPinned(true);
+                    }}
                   />
 
                   {live?.tokenPreview && (

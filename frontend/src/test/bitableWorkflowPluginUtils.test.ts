@@ -9,6 +9,7 @@ import {
   getWorkflowSourceKind,
   matchesRelatedRecord,
   matchesTaskRecord,
+  resolveAgentFocusKey,
   workflowSourceLabel,
 } from "../pages/bitableWorkflowPluginUtils";
 
@@ -231,5 +232,17 @@ describe("bitable workflow plugin utils", () => {
     expect(nodes.map((item) => item.key)).toEqual(["source", "task", "log"]);
     expect(nodes[2].label).toContain("原生日志");
     expect(nodes[2].title).toBe("Wave 1 · 数据分析师");
+  });
+
+  it("auto-focuses the running agent unless the user pinned another one", () => {
+    const agents = [
+      { key: "data_analyst", status: "done" },
+      { key: "finance_advisor", status: "running" },
+      { key: "ceo_assistant", status: "pending" },
+    ];
+
+    expect(resolveAgentFocusKey(agents, "data_analyst", false)).toBe("finance_advisor");
+    expect(resolveAgentFocusKey(agents, "data_analyst", true)).toBe("data_analyst");
+    expect(resolveAgentFocusKey(agents, "missing", true)).toBe("finance_advisor");
   });
 });
