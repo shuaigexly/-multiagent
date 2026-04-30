@@ -32,16 +32,15 @@ logger = logging.getLogger(__name__)
 # (table_name, view_name, view_type, target_field_name)
 # group_field 用于 kanban；cover_field 用于 gallery
 _VIEW_CONFIG: list[tuple[str, str, str, str]] = [
-    # 分析任务
-    ("分析任务", "📊 状态看板", "kanban", "状态"),
-    ("分析任务", "📇 任务画册", "gallery", "任务图像"),
-    # 岗位分析
+    # 精简工作流视图：只配置默认创建的高频 kanban。
+    ("分析任务", "🧭 工作流路由", "kanban", "工作流路由"),
     ("岗位分析", "👥 岗位看板", "kanban", "岗位角色"),
-    ("岗位分析", "🩺 健康度画册", "gallery", "图表"),
-    # 综合报告
     ("综合报告", "🚦 健康度看板", "kanban", "综合健康度"),
-    # 数字员工效能
-    ("数字员工效能", "🏅 岗位看板", "kanban", "岗位"),
+    ("产出评审", "🧪 评审看板", "kanban", "推荐动作"),
+    ("交付动作", "🧭 动作路由", "kanban", "工作流路由"),
+    ("复核历史", "🧪 复核轮次看板", "kanban", "工作流路由"),
+    ("交付结果归档", "📦 归档看板", "kanban", "归档状态"),
+    ("自动化日志", "🪵 节点日志看板", "kanban", "节点名称"),
 ]
 
 

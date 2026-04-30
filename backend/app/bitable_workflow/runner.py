@@ -41,6 +41,7 @@ NATIVE_ASSET_STATES = {
 _running = False
 _stop_event: Optional[asyncio.Event] = None
 _state_lock = threading.Lock()
+ViewPlanItem = tuple[str, str, str, str | None, str | None]
 
 
 async def setup_workflow(
@@ -89,8 +90,8 @@ async def setup_workflow(
         automation_log_tid = await create_table(app_token, schema.TABLE_AUTOMATION_LOG, schema.AUTOMATION_LOG_FIELDS)
         template_tid = await create_table(app_token, schema.TABLE_TEMPLATE_CENTER, schema.TEMPLATE_CENTER_FIELDS)
 
-        # 为每张表创建附加视图（看板/画册）以提升可视化效果
-        # 每张表的第一个视图是默认网格视图（创建表时自动生成），这里追加额外视图
+        # 只创建一组精简工作流视图：表结构仍保留完整数据能力，但 Base 默认不再铺满
+        # 大量按状态/优先级/健康度拆分的噪声视图。
         view_assets = await _create_extra_views(
             app_token,
             task_tid,
@@ -241,14 +242,12 @@ async def _populate_base_records(
             "进度": 1.0,
             "背景说明": (
                 "📌 看板/画册视图的一次性 UI 配置（飞书 OpenAPI 限制，无法编程实现）：\n\n"
-                "【分析任务/📊 状态看板】点顶部「分组依据」→ 选「状态」字段\n"
                 "【分析任务/🧭 工作流路由】点顶部「分组依据」→ 选「工作流路由」字段\n"
-                "【分析任务/📇 任务画册】点顶部「封面字段」→ 选「任务图像」\n"
                 "【岗位分析/👥 岗位看板】点顶部「分组依据」→ 选「岗位角色」\n"
-                "【岗位分析/🩺 健康度画册】点顶部「封面字段」→ 选「图表」附件\n"
                 "【综合报告/🚦 健康度看板】点顶部「分组依据」→ 选「综合健康度」\n"
-                "【综合报告/📋 报告画册】点顶部「封面字段」→ 选「图表」附件（无则留空）\n"
-                "【数字员工效能/🏅 岗位看板】点顶部「分组依据」→ 选「岗位」\n\n"
+                "【交付动作/🧭 动作路由】点顶部「分组依据」→ 选「工作流路由」字段\n"
+                "【交付结果归档/📦 归档看板】点顶部「分组依据」→ 选「归档状态」字段\n"
+                "【自动化日志/🪵 节点日志看板】点顶部「分组依据」→ 选「节点名称」字段\n\n"
                 f"📦 当前 Base 元信息：type={base_meta['base_type']} / mode={base_meta['mode']} / "
                 f"schema={base_meta['schema_version']} / initialized_at={base_meta['initialized_at']}\n\n"
                 "📌 推荐在多维表格里继续配置 3 条原生自动化：\n"
@@ -553,6 +552,50 @@ async def _cleanup_auto_created_artifacts(app_token: str, keep_table_ids: set[st
                         logger.warning("Failed to delete 多行文本 field: %s", exc)
 
 
+def _build_curated_view_plan(
+    *,
+    task_tid: str,
+    output_tid: str,
+    report_tid: str,
+    evidence_tid: str,
+    review_tid: str,
+    action_tid: str,
+    review_history_tid: str,
+    archive_tid: str,
+    automation_log_tid: str,
+) -> list[ViewPlanItem]:
+    """Base 默认只暴露高频工作流视图，低频诊断维度留在默认网格里用字段筛选。"""
+    return [
+        # 分析任务主表：保留工作流入口、关键队列、异常和时间线。
+        (task_tid, "🧭 工作流路由", "kanban", None, None),
+        (task_tid, "🕐 待分析", "grid", "状态", "待分析"),
+        (task_tid, "⚙️ 分析中", "grid", "状态", "分析中"),
+        (task_tid, "⏳ 待拍板确认", "grid", "待拍板确认", "True"),
+        (task_tid, "🚀 待执行落地", "grid", "待执行确认", "True"),
+        (task_tid, "🗓 待安排复核", "grid", "待安排复核", "True"),
+        (task_tid, "🔁 待进入复盘", "grid", "待复盘确认", "True"),
+        (task_tid, "🟥 已异常任务", "grid", "异常状态", "已异常"),
+        (task_tid, "🟪 复盘滞留", "grid", "异常类型", "复盘滞留"),
+        (task_tid, "📅 任务甘特", "gantt", None, None),
+        (task_tid, "📥 需求收集表", "form", None, None),
+        # 结果与判断面：每张表最多保留一个主看板，必要时补一个硬筛选队列。
+        (output_tid, "👥 岗位看板", "kanban", None, None),
+        (report_tid, "🚦 健康度看板", "kanban", None, None),
+        (evidence_tid, "🧱 硬证据", "grid", "证据等级", "硬证据"),
+        (evidence_tid, "🟡 待验证", "grid", "证据等级", "待验证"),
+        (review_tid, "🧪 评审看板", "kanban", None, None),
+        # 执行、复核、归档和日志：只保留闭环必需入口。
+        (action_tid, "🧭 动作路由", "kanban", None, None),
+        (action_tid, "❌ 失败动作", "grid", "动作状态", "执行失败"),
+        (review_history_tid, "🧪 复核轮次看板", "kanban", None, None),
+        (archive_tid, "🧾 待执行归档", "grid", "归档状态", "待执行"),
+        (archive_tid, "🔁 待复盘归档", "grid", "归档状态", "待复盘"),
+        (archive_tid, "📦 归档看板", "kanban", None, None),
+        (automation_log_tid, "❌ 失败日志", "grid", "执行状态", "执行失败"),
+        (automation_log_tid, "🪵 节点日志看板", "kanban", None, None),
+    ]
+
+
 async def _create_extra_views(
     app_token: str,
     task_tid: str,
@@ -567,7 +610,7 @@ async def _create_extra_views(
     automation_log_tid: str,
     template_tid: str,
 ) -> dict:
-    """为四张业务表创建看板/画册/过滤视图，提升多维表格视觉可读性。
+    """创建精简工作流视图，让 Base 默认入口聚焦在任务流转而不是维度切片。
 
     v8.6.4 真相：飞书 OpenAPI 不公开 kanban group_info / gallery cover_field_id
     （PATCH /views 试 group_info、kanban_field_id、group_field_id 全部 200 OK
@@ -575,106 +618,25 @@ async def _create_extra_views(
     可编程的 property 仅 filter_info / hierarchy_config / hidden_fields(grid)。
 
     因此本版本：
-      - 仍创建 kanban / gallery（首次打开会被 UI 自动选第一个 SingleSelect/Attachment 字段）
-      - 额外提供「过滤型 grid 视图」做兜底 — 它们 100% 通过 API 配置成功，开箱即用
+      - 只创建高频工作流视图，移除健康度/优先级/动作状态等重复切片
+      - 继续提供「过滤型 grid 视图」做兜底，它们 100% 通过 API 配置成功
       - 不再尝试 PATCH group/cover（避免误导日志）
 
     单次视图创建失败不应阻塞整体 setup — 静默降级即可。
     """
-    # v8.6.13 — 同时建 grid filter 视图（API 可配，开箱即用）+ kanban / gallery
-    # 视觉视图（API 不能配 group_field/cover_field 但视图保留，用户在飞书 UI 上点
-    # 一次"分组依据"/"封面字段"即生效，下次打开飞书会持久化记住选择）。
-    # 不再删除 kanban / gallery — 删了等于丢失视图槽位，用户要靠它们做汇报演示。
-    view_plan: list[tuple[str, str, str, str | None, str | None]] = [
-        # 分析任务 — filter grid 切片
-        (task_tid, "🕐 待分析", "grid", "状态", "待分析"),
-        (task_tid, "⚙️ 分析中", "grid", "状态", "分析中"),
-        (task_tid, "✅ 已完成", "grid", "状态", "已完成"),
-        (task_tid, "🟢 可直接汇报", "grid", "最新评审动作", "直接采用"),
-        (task_tid, "🟡 待补数复核", "grid", "最新评审动作", "补数后复核"),
-        (task_tid, "🔁 建议重跑", "grid", "最新评审动作", "建议重跑"),
-        (task_tid, "📣 待发送汇报", "grid", "待发送汇报", "True"),
-        (task_tid, "🧾 待创建执行任务", "grid", "待创建执行任务", "True"),
-        (task_tid, "🗓 待安排复核", "grid", "待安排复核", "True"),
-        (task_tid, "👔 拍板人任务", "grid", "待拍板确认", "True"),
-        (task_tid, "⚙️ 执行人任务", "grid", "待执行确认", "True"),
-        (task_tid, "🧪 复核人任务", "grid", "待安排复核", "True"),
-        (task_tid, "🔁 待进入复盘", "grid", "待复盘确认", "True"),
-        (task_tid, "⏳ 待拍板确认", "grid", "待拍板确认", "True"),
-        (task_tid, "🚀 待执行落地", "grid", "待执行确认", "True"),
-        (task_tid, "🔁 已进入复盘", "grid", "是否进入复盘", "True"),
-        (task_tid, "🧭 当前责任角色", "kanban", None, None),
-        (task_tid, "🟨 需关注任务", "grid", "异常状态", "需关注"),
-        (task_tid, "🟥 已异常任务", "grid", "异常状态", "已异常"),
-        (task_tid, "🟨 责任人待指派", "grid", "异常类型", "责任人待指派"),
-        (task_tid, "🟥 拍板滞留", "grid", "异常类型", "拍板滞留"),
-        (task_tid, "🟥 执行超期", "grid", "异常类型", "执行超期"),
-        (task_tid, "🟧 复核超时", "grid", "异常类型", "复核超时"),
-        (task_tid, "🟪 复盘滞留", "grid", "异常类型", "复盘滞留"),
-        (task_tid, "🧭 工作流路由", "kanban", None, None),
-        (task_tid, "🔥 P0 紧急", "grid", "优先级", "P0 紧急"),
-        (task_tid, "📌 P1 高优", "grid", "优先级", "P1 高"),
-        (task_tid, "📊 状态看板", "kanban", None, None),  # UI 选「状态」做分组
-        (task_tid, "📇 任务画册", "gallery", None, None),  # UI 选「任务图像」做封面
-        # 岗位分析 — filter grid + 视觉视图
-        (output_tid, "🟢 健康岗位", "grid", "健康度评级", "🟢 健康"),
-        (output_tid, "🟡 关注岗位", "grid", "健康度评级", "🟡 关注"),
-        (output_tid, "🔴 预警岗位", "grid", "健康度评级", "🔴 预警"),
-        (output_tid, "👥 岗位看板", "kanban", None, None),  # UI 选「岗位角色」做分组
-        (output_tid, "🩺 健康度画册", "gallery", None, None),  # UI 选「图表」附件做封面
-        # 综合报告 — filter grid + 视觉视图
-        (report_tid, "🟢 健康报告", "grid", "综合健康度", "🟢 健康"),
-        (report_tid, "🟡 关注报告", "grid", "综合健康度", "🟡 关注"),
-        (report_tid, "🔴 预警报告", "grid", "综合健康度", "🔴 预警"),
-        (report_tid, "🚦 健康度看板", "kanban", None, None),  # UI 选「综合健康度」分组
-        (report_tid, "📋 报告画册", "gallery", None, None),
-        # 效能表 — 视觉视图
-        (performance_tid, "🏅 岗位看板", "kanban", None, None),  # UI 选「岗位」做分组
-        (performance_tid, "🏆 效能画册", "gallery", None, None),
-        # 证据链 — 重点看风险/机会与证据类型
-        (evidence_tid, "🧱 硬证据", "grid", "证据等级", "硬证据"),
-        (evidence_tid, "🟡 待验证", "grid", "证据等级", "待验证"),
-        (evidence_tid, "⚠️ 风险证据", "grid", "证据用途", "risk"),
-        (evidence_tid, "🚀 机会证据", "grid", "证据用途", "opportunity"),
-        (evidence_tid, "🧾 证据类型看板", "kanban", None, None),
-        # 产出评审 — 重点看推荐动作
-        (review_tid, "✅ 直接采用", "grid", "推荐动作", "直接采用"),
-        (review_tid, "🟡 补数后复核", "grid", "推荐动作", "补数后复核"),
-        (review_tid, "🔁 建议重跑", "grid", "推荐动作", "建议重跑"),
-        (review_tid, "🧪 评审看板", "kanban", None, None),
-        # 交付动作
-        (action_tid, "📣 汇报动作", "grid", "动作类型", "发送汇报"),
-        (action_tid, "✅ 已完成动作", "grid", "动作状态", "已完成"),
-        (action_tid, "❌ 失败动作", "grid", "动作状态", "执行失败"),
-        (action_tid, "🧭 动作路由", "kanban", None, None),
-        # 复核历史
-        (review_history_tid, "🟡 补数复核历史", "grid", "推荐动作", "补数后复核"),
-        (review_history_tid, "🔁 重跑历史", "grid", "推荐动作", "建议重跑"),
-        (review_history_tid, "✅ 直接采用历史", "grid", "推荐动作", "直接采用"),
-        (review_history_tid, "🧪 复核轮次看板", "kanban", None, None),
-        # 交付归档
-        (archive_tid, "📬 待汇报归档", "grid", "归档状态", "待汇报"),
-        (archive_tid, "🧾 待执行归档", "grid", "归档状态", "待执行"),
-        (archive_tid, "🔁 待复盘归档", "grid", "归档状态", "待复盘"),
-        (archive_tid, "🗓 待复核归档", "grid", "归档状态", "待复核"),
-        (archive_tid, "⏳ 待拍板归档", "grid", "归档状态", "待拍板"),
-        (archive_tid, "📦 归档看板", "kanban", None, None),
-        # 自动化日志
-        (automation_log_tid, "▶ 执行中日志", "grid", "执行状态", "执行中"),
-        (automation_log_tid, "✅ 成功日志", "grid", "执行状态", "已完成"),
-        (automation_log_tid, "🛠 待补完日志", "grid", "执行状态", "待补完"),
-        (automation_log_tid, "❌ 失败日志", "grid", "执行状态", "执行失败"),
-        (automation_log_tid, "⏭ 跳过日志", "grid", "执行状态", "已跳过"),
-        (automation_log_tid, "🪵 节点日志看板", "kanban", None, None),
-        # 模板配置中心
-        (template_tid, "🧩 汇报模板", "grid", "适用工作流路由", "直接汇报"),
-        (template_tid, "⚙️ 执行模板", "grid", "适用工作流路由", "直接执行"),
-        (template_tid, "🗂 模板看板", "kanban", None, None),
-        # v8.6.19 — 甘特视图（用户首次打开 UI 选「创建时间→完成日期」做时间轴）
-        (task_tid, "📅 任务甘特", "gantt", None, None),
-        # v8.6.19 — 表单视图（创建后调 _share_form_view 拿 shared_url）
-        (task_tid, "📥 需求收集表", "form", None, None),
-    ]
+    # 这两张后台表保留创建表时自带的默认网格，不再额外暴露视图。
+    _ = (performance_tid, template_tid)
+    view_plan = _build_curated_view_plan(
+        task_tid=task_tid,
+        output_tid=output_tid,
+        report_tid=report_tid,
+        evidence_tid=evidence_tid,
+        review_tid=review_tid,
+        action_tid=action_tid,
+        review_history_tid=review_history_tid,
+        archive_tid=archive_tid,
+        automation_log_tid=automation_log_tid,
+    )
     created_views: list[dict[str, str]] = []
     form_views: list[dict[str, str]] = []
     for table_id, name, vtype, filter_field, filter_value in view_plan:
@@ -709,6 +671,47 @@ async def _create_extra_views(
                 redact_sensitive_text(exc, max_chars=500),
             )
     return {"views": created_views, "forms": form_views}
+
+
+def _build_base_surface_policy(*, table_ids: dict, view_assets: dict) -> dict:
+    """描述 Base 的前台/后台分层，给驾驶舱和安装包一个统一的精简入口契约。"""
+    frontstage = [
+        ("task", schema.TABLE_TASK, "任务入口、路由、队列和异常总控"),
+        ("output", schema.TABLE_AGENT_OUTPUT, "七岗产出看板"),
+        ("report", schema.TABLE_REPORT, "管理报告与健康度看板"),
+        ("action", schema.TABLE_ACTION, "执行动作与失败补救"),
+        ("archive", schema.TABLE_DELIVERY_ARCHIVE, "交付归档与复盘入口"),
+    ]
+    backstage = [
+        ("performance", schema.TABLE_PERFORMANCE, "岗位效能累计数据"),
+        ("datasource", schema.TABLE_DATASOURCE, "数据源资产库"),
+        ("evidence", schema.TABLE_EVIDENCE, "证据明细"),
+        ("review", schema.TABLE_REVIEW, "评审明细"),
+        ("review_history", schema.TABLE_REVIEW_HISTORY, "复核轮次明细"),
+        ("automation_log", schema.TABLE_AUTOMATION_LOG, "自动化审计日志"),
+        ("template", schema.TABLE_TEMPLATE_CENTER, "模板与默认负责人配置"),
+    ]
+    views = view_assets.get("views") or []
+
+    def _table_item(item: tuple[str, str, str]) -> dict:
+        key, name, purpose = item
+        return {
+            "key": key,
+            "name": name,
+            "table_id": table_ids.get(key, ""),
+            "purpose": purpose,
+        }
+
+    return {
+        "mode": "compact_workflow_surface",
+        "intent": "默认只暴露工作流运行必需入口，低频诊断维度留在表内字段和仪表盘里筛选。",
+        "frontstage_tables": [_table_item(item) for item in frontstage],
+        "backstage_tables": [_table_item(item) for item in backstage],
+        "created_view_count": len(views),
+        "created_view_names": [str(item.get("view_name") or "") for item in views if item.get("view_name")],
+        "default_entry_view": "🧭 工作流路由",
+        "intake_view": "📥 需求收集表",
+    }
 
 
 def _build_native_assets(
@@ -848,6 +851,7 @@ def _build_native_assets(
         "state_descriptions": NATIVE_ASSET_STATES,
         "status_summary": status_summary,
         "asset_groups": status_summary["groups"],
+        "base_surface_policy": _build_base_surface_policy(table_ids=table_ids, view_assets=view_assets),
         "base_meta": base_meta,
         "base_url": base_url,
         "app_token": app_token,

@@ -624,7 +624,7 @@ async def _resolve_seed_template_defaults(
 
 @router.post("/setup", dependencies=[Depends(require_api_key)])
 async def workflow_setup(req: SetupRequest):
-    """创建飞书多维表格结构（12 张业务表、多视图、模板中心）并写入初始分析任务。"""
+    """创建飞书多维表格结构（12 张业务表、精简工作流视图、模板中心）并写入初始分析任务。"""
     if runner.is_running():
         raise HTTPException(
             status_code=409,

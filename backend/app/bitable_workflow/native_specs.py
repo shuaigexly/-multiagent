@@ -1122,7 +1122,7 @@ def build_dashboard_specs() -> list[dict[str, Any]]:
             "name": "证据与评审看板",
             "source_table_name": "证据链",
             "focus_metrics": ["证据链总量", "硬证据数", "待验证证据数", "证据用途分布", "评审推荐动作分布"],
-            "recommended_views": ["🧱 硬证据", "🟡 待验证", "⚠️ 风险证据", "🚀 机会证据", "🧪 评审看板"],
+            "recommended_views": ["🧱 硬证据", "🟡 待验证", "🧪 评审看板"],
             "narrative": "适合给复核人和管理层看结论到底有没有证据，是否还差关键补数。 ",
             "block_specs": [
                 ("evidence_total", "证据链总量", "statistics", {"table_name": "证据链", "count_all": True}),
@@ -1145,7 +1145,7 @@ def build_dashboard_specs() -> list[dict[str, Any]]:
             "name": "交付异常看板",
             "source_table_name": "分析任务",
             "focus_metrics": ["异常任务数", "异常类型分布", "待复盘确认", "待拍板归档", "待执行归档", "待复盘归档", "待复核归档"],
-            "recommended_views": ["🟥 已异常任务", "🟥 拍板滞留", "🟥 执行超期", "🟧 复核超时", "🟪 复盘滞留", "🔁 待复盘归档", "📦 归档看板"],
+            "recommended_views": ["🟥 已异常任务", "🟪 复盘滞留", "🔁 待复盘归档", "📦 归档看板"],
             "narrative": "适合做异常周报和闭环压盘，直接盯最影响交付的阻塞项。 ",
             "block_specs": [
                 ("exception_total", "异常任务数", "statistics", _count_filter("分析任务", "异常状态", "is", "已异常")),
@@ -1173,7 +1173,7 @@ def build_role_specs() -> list[dict[str, Any]]:
     return [
         {
             "name": "高管交付面",
-            "focus_views": ["🧭 工作流路由", "👔 拍板人任务", "⏳ 待拍板确认", "🟥 已异常任务", "🚦 健康度看板"],
+            "focus_views": ["🧭 工作流路由", "⏳ 待拍板确认", "🟥 已异常任务", "🚦 健康度看板"],
             "permissions_focus": ["分析任务", "综合报告", "交付动作", "交付结果归档"],
             "dashboard_focus": ["管理汇报总览", "证据与评审看板", "交付异常看板"],
             "native_goal": "高管只看管理必需的信息和仪表盘，不暴露执行噪音。",
@@ -1181,7 +1181,7 @@ def build_role_specs() -> list[dict[str, Any]]:
         },
         {
             "name": "执行负责人工作面",
-            "focus_views": ["⚙️ 执行人任务", "🚀 待执行落地", "🟥 已异常任务", "📅 任务甘特", "🧭 动作路由"],
+            "focus_views": ["🚀 待执行落地", "🟥 已异常任务", "📅 任务甘特", "🧭 动作路由", "🧾 待执行归档"],
             "permissions_focus": ["分析任务", "交付动作", "交付结果归档"],
             "dashboard_focus": ["管理汇报总览", "交付异常看板"],
             "native_goal": "执行人主要在执行动作、归档回写和异常修复上工作。",
@@ -1189,7 +1189,7 @@ def build_role_specs() -> list[dict[str, Any]]:
         },
         {
             "name": "复核负责人工作面",
-            "focus_views": ["🧪 复核人任务", "🗓 待安排复核", "🟨 需关注任务", "🧱 硬证据", "🟡 待验证", "🧪 评审看板"],
+            "focus_views": ["🗓 待安排复核", "🧱 硬证据", "🟡 待验证", "🧪 评审看板"],
             "permissions_focus": ["分析任务", "证据链", "产出评审", "复核历史"],
             "dashboard_focus": ["证据与评审看板", "交付异常看板"],
             "native_goal": "复核人围绕证据、评审和复核历史工作，不直接暴露高管动作面。",
@@ -1489,10 +1489,10 @@ def _executive_role_config() -> dict[str, Any]:
             "交付异常看板": {"perm": "read_only"},
         },
         "table_rule_map": {
-            "分析任务": _read_only_table_rule(["🧭 工作流路由", "👔 拍板人任务", "⏳ 待拍板确认", "🟥 已异常任务"]),
-            "综合报告": _read_only_table_rule(["🟢 健康报告", "🟡 关注报告", "🔴 预警报告", "🚦 健康度看板"]),
-            "交付动作": _read_only_table_rule(["📣 汇报动作", "✅ 已完成动作", "❌ 失败动作"]),
-            "交付结果归档": _read_only_table_rule(["📬 待汇报归档", "⏳ 待拍板归档", "🔁 待复盘归档", "📦 归档看板"]),
+            "分析任务": _read_only_table_rule(["🧭 工作流路由", "⏳ 待拍板确认", "🟥 已异常任务"]),
+            "综合报告": _read_only_table_rule(["🚦 健康度看板"]),
+            "交付动作": _read_only_table_rule(["🧭 动作路由", "❌ 失败动作"]),
+            "交付结果归档": _read_only_table_rule(["🔁 待复盘归档", "📦 归档看板"]),
         },
     }
 
@@ -1509,13 +1509,13 @@ def _execution_role_config() -> dict[str, Any]:
         },
         "table_rule_map": {
             "分析任务": _filtered_edit_table_rule(
-                ["⚙️ 执行人任务", "🚀 待执行落地", "🟥 已异常任务", "📅 任务甘特"],
+                ["🚀 待执行落地", "🟥 已异常任务", "📅 任务甘特"],
                 _execution_task_field_rule(),
                 filter_field="当前责任角色",
                 filter_values=["执行人"],
             ),
             "交付动作": _filtered_edit_table_rule(
-                ["📣 汇报动作", "✅ 已完成动作", "❌ 失败动作", "🧭 动作路由"],
+                ["🧭 动作路由", "❌ 失败动作"],
                 _execution_action_field_rule(),
                 filter_field="工作流路由",
                 filter_values=["直接执行"],
@@ -1542,18 +1542,18 @@ def _review_role_config() -> dict[str, Any]:
         },
         "table_rule_map": {
             "分析任务": _filtered_edit_table_rule(
-                ["🧪 复核人任务", "🗓 待安排复核", "🟨 需关注任务", "🟥 已异常任务"],
+                ["🗓 待安排复核", "🟥 已异常任务"],
                 _review_task_field_rule(),
                 filter_field="当前责任角色",
                 filter_values=["复核人"],
             ),
-            "证据链": _read_only_table_rule(["🧱 硬证据", "🟡 待验证", "⚠️ 风险证据", "🚀 机会证据", "🧾 证据类型看板"]),
+            "证据链": _read_only_table_rule(["🧱 硬证据", "🟡 待验证"]),
             "产出评审": _filtered_edit_table_rule(
-                ["✅ 直接采用", "🟡 补数后复核", "🔁 建议重跑", "🧪 评审看板"],
+                ["🧪 评审看板"],
                 _review_result_field_rule(),
             ),
             "复核历史": _filtered_edit_table_rule(
-                ["🟡 补数复核历史", "🔁 重跑历史", "✅ 直接采用历史", "🧪 复核轮次看板"],
+                ["🧪 复核轮次看板"],
                 _review_history_field_rule(),
             ),
         },
