@@ -10,6 +10,7 @@ import { getFeishuContext, getChats, type FeishuContext } from '../services/feis
 import type { AgentInfo, SSEEvent, TaskPlanResponse } from '../services/types';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { isTerminalTaskStatus, resolveStreamEndState, type WorkbenchStep } from './workbenchStreamState';
 
 const ALL_AGENT_MODULES = [
   'data_analyst', 'finance_advisor', 'seo_advisor', 'content_manager',
@@ -55,7 +56,7 @@ const WORKFLOW_TEMPLATES = [
     modules: ['seo_advisor', 'content_manager', 'data_analyst'],
   },
 ];
-type Step = 'input' | 'planning' | 'confirm' | 'running' | 'done';
+type Step = WorkbenchStep;
 
 function isSameSelection(a: string[], b: string[]) {
   return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
@@ -174,16 +175,28 @@ export default function Workbench() {
     eventSourceRef.current = es;
     es.onmessage = (e) => {
       const d = JSON.parse(e.data) as SSEEvent;
-      if (d.event_type === 'stream.end') { es.close(); if (eventSourceRef.current === es) eventSourceRef.current = null; setStep('done'); setLoading(false); return; }
+      if (d.event_type === 'stream.end') {
+        es.close();
+        if (eventSourceRef.current === es) eventSourceRef.current = null;
+        const result = resolveStreamEndState((d as SSEEvent & { status?: unknown }).status, recover);
+        setStep(result.step);
+        setError(result.error);
+        setLoading(false);
+        return;
+      }
       if (d.event_type !== 'stream.timeout') setEvents(p => [...p, d]);
     };
     es.onerror = async () => {
       es.close(); if (eventSourceRef.current === es) eventSourceRef.current = null;
       try {
         const s = await getTaskStatus(tid);
-        if (s.status === 'done') setStep('done');
-        else if (s.status === 'failed') { setStep(recover); setError(recover === 'confirm' ? '任务执行失败，请重新确认' : '任务执行失败'); }
-        else setError('连接中断，请刷新页面');
+        if (isTerminalTaskStatus(s.status)) {
+          const result = resolveStreamEndState(s.status, recover);
+          setStep(result.step);
+          setError(result.error);
+        } else {
+          setError('连接中断，请刷新页面');
+        }
       } catch { setStep(recover); setError('连接中断'); }
       finally { setLoading(false); }
     };
