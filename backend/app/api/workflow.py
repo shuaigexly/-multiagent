@@ -65,6 +65,14 @@ def _normalize_path_id(value: str, label: str) -> str:
     return normalized
 
 
+def _normalize_optional_query_string(value: Optional[str]) -> Optional[str]:
+    """Strip optional Query() string；空串/纯空白 → None，便于上层 if 判断。"""
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 def _refresh_native_state_artifacts() -> None:
     app_token = str(_state.get("app_token") or "").strip()
     table_ids = _state.get("table_ids") or {}
@@ -1153,13 +1161,9 @@ async def workflow_records(
     status: Optional[str] = Query(None, max_length=50),
 ):
     """查看多维表格中的记录（可按状态过滤）。"""
-    app_token = app_token.strip()
-    table_id = table_id.strip()
-    status = status.strip() if status is not None else None
-    if not app_token or not table_id:
-        raise HTTPException(status_code=400, detail="app_token/table_id 不能为空")
-    if status == "":
-        status = None
+    app_token = _normalize_path_id(app_token, "app_token")
+    table_id = _normalize_path_id(table_id, "table_id")
+    status = _normalize_optional_query_string(status)
     if status is not None and status not in _VALID_STATUSES:
         raise HTTPException(
             status_code=400,

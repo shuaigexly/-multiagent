@@ -233,6 +233,41 @@ async def test_workflow_records_trims_query_values(monkeypatch):
     assert "待分析" in captured["filter_expr"]
 
 
+@pytest.mark.asyncio
+async def test_workflow_records_rejects_blank_required_query_ids(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api import workflow
+
+    async def fail_list(*_args, **_kwargs):
+        raise AssertionError("list_records 不该被调用")
+
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", fail_list)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflow.workflow_records("   ", "tbl", None)
+    assert exc.value.status_code == 400
+    assert "app_token" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_workflow_records_treats_whitespace_status_as_none(monkeypatch):
+    from app.api import workflow
+
+    captured = {}
+
+    async def fake_list_records(app_token, table_id, filter_expr=None):
+        captured["filter_expr"] = filter_expr
+        return []
+
+    monkeypatch.setattr(workflow.bitable_ops, "list_records", fake_list_records)
+
+    await workflow.workflow_records("app", "tbl", "   ")
+
+    # 纯空白 status → 走 _normalize_optional_query_string → None → filter_expr 不构造
+    assert captured["filter_expr"] is None
+
+
 def test_config_request_values_are_bounded(monkeypatch):
     from app.api import config
     from app.core.settings import settings
