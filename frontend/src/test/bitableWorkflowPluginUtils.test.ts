@@ -10,6 +10,8 @@ import {
   matchesRelatedRecord,
   matchesTaskRecord,
   normalizeWorkflowPage,
+  normalizeWorkflowRecordFields,
+  normalizeWorkflowRecordId,
   resolveAgentFocusKey,
   workflowSourceLabel,
 } from "../pages/bitableWorkflowPluginUtils";
@@ -263,5 +265,19 @@ describe("bitable workflow plugin utils", () => {
       hasMore: false,
       pageToken: undefined,
     });
+    expect(normalizeWorkflowPage(null)).toEqual({
+      records: [],
+      hasMore: false,
+      pageToken: undefined,
+    });
+  });
+
+  it("normalizes record ids and field maps from SDK variants", () => {
+    expect(normalizeWorkflowRecordId({ recordId: " rec_1 " })).toBe("rec_1");
+    expect(normalizeWorkflowRecordId({ id: " rec_2 " })).toBe("rec_2");
+    expect(normalizeWorkflowRecordId({ recordId: "", id: "" }, " rec_fallback ")).toBe("rec_fallback");
+    expect(normalizeWorkflowRecordId({ fields: {} })).toBe("");
+    expect(normalizeWorkflowRecordFields({ fields: { fld_title: "增长诊断" } })).toEqual({ fld_title: "增长诊断" });
+    expect(normalizeWorkflowRecordFields({ fields: null })).toEqual({});
   });
 });

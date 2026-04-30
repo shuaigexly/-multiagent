@@ -53,6 +53,31 @@ interface LauncherPayloadInput {
   outputPurpose: typeof LAUNCHER_OUTPUT_PURPOSES[number];
 }
 
+function recordLike(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+export function normalizeLauncherRecordId(value: unknown): string {
+  const objectValue = recordLike(value);
+  const dataValue = recordLike(objectValue?.data);
+  const candidates = [
+    value,
+    objectValue?.recordId,
+    objectValue?.record_id,
+    objectValue?.id,
+    dataValue?.recordId,
+    dataValue?.record_id,
+    dataValue?.id,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" || typeof candidate === "number") {
+      const normalized = String(candidate).trim();
+      if (normalized) return normalized;
+    }
+  }
+  throw new Error("新增记录未返回有效 recordId");
+}
+
 export function buildLauncherRecordFields(
   fields: LauncherFieldMeta[],
   input: LauncherPayloadInput,

@@ -29,6 +29,8 @@ import {
   matchesRelatedRecord,
   matchesTaskRecord,
   normalizeWorkflowPage,
+  normalizeWorkflowRecordFields,
+  normalizeWorkflowRecordId,
   resolveAgentFocusKey,
   workflowSourceLabel,
   type WorkflowResolutionDebug,
@@ -88,8 +90,9 @@ interface LiveState {
 }
 
 interface BitableRecordValue {
-  recordId?: string;
-  fields: Record<string, unknown>;
+  recordId?: unknown;
+  id?: unknown;
+  fields?: unknown;
 }
 
 interface BitableTableLike {
@@ -1231,13 +1234,13 @@ function getFieldIdByName(fieldMap: Map<string, string>, fieldName: string): str
   return "";
 }
 
-function mapRecordFields(record: BitableRecordValue, fieldMap: Map<string, string>): TaskSnapshot {
+function mapRecordFields(record: BitableRecordValue, fieldMap: Map<string, string>, fallbackRecordId = ""): TaskSnapshot {
   const mapped: Record<string, unknown> = {};
-  Object.entries(record.fields || {}).forEach(([fieldId, value]) => {
+  Object.entries(normalizeWorkflowRecordFields(record)).forEach(([fieldId, value]) => {
     mapped[fieldMap.get(fieldId) || fieldId] = value;
   });
   return {
-    recordId: record.recordId || "",
+    recordId: normalizeWorkflowRecordId(record, fallbackRecordId),
     fields: mapped,
   };
 }
@@ -1288,7 +1291,7 @@ export default function BitableWorkflowPlugin() {
   const getMappedRecordById = useCallback(async (tableId: string, recordId: string): Promise<TaskSnapshot> => {
     const [table, fieldMap] = await Promise.all([getCachedTable(tableId), getCachedFieldMap(tableId)]);
     const record = await table.getRecordById(recordId);
-    return mapRecordFields(record, fieldMap);
+    return mapRecordFields(record, fieldMap, recordId);
   }, [getCachedFieldMap, getCachedTable]);
 
   const collectMappedRecords = useCallback(async (

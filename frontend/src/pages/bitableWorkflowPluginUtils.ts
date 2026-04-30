@@ -81,6 +81,16 @@ export interface WorkflowPageLike<T> {
   pageToken?: unknown;
 }
 
+export interface WorkflowRecordLike {
+  recordId?: unknown;
+  id?: unknown;
+  fields?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function booleanValue(value: unknown): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value > 0;
@@ -89,6 +99,21 @@ function booleanValue(value: unknown): boolean {
     return normalized === "true" || normalized === "1" || normalized === "yes";
   }
   return false;
+}
+
+export function normalizeWorkflowRecordId(record: WorkflowRecordLike | null | undefined, fallback = ""): string {
+  const candidates = [record?.recordId, record?.id, fallback];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" || typeof candidate === "number") {
+      const normalized = String(candidate).trim();
+      if (normalized) return normalized;
+    }
+  }
+  return "";
+}
+
+export function normalizeWorkflowRecordFields(record: WorkflowRecordLike | null | undefined): Record<string, unknown> {
+  return isRecord(record?.fields) ? record.fields : {};
 }
 
 function textValue(value: unknown): string {
@@ -487,11 +512,12 @@ export function resolveAgentFocusKey(
   );
 }
 
-export function normalizeWorkflowPage<T>(page: WorkflowPageLike<T>): { records: T[]; hasMore: boolean; pageToken?: string } {
-  const pageToken = typeof page.pageToken === "string" ? page.pageToken.trim() : "";
+export function normalizeWorkflowPage<T>(page: WorkflowPageLike<T> | null | undefined): { records: T[]; hasMore: boolean; pageToken?: string } {
+  const safePage = isRecord(page) ? page : {};
+  const pageToken = typeof safePage.pageToken === "string" ? safePage.pageToken.trim() : "";
   return {
-    records: Array.isArray(page.records) ? page.records : [],
-    hasMore: booleanValue(page.hasMore),
+    records: Array.isArray(safePage.records) ? safePage.records as T[] : [],
+    hasMore: booleanValue(safePage.hasMore),
     pageToken: pageToken || undefined,
   };
 }

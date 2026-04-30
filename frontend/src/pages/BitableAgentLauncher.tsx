@@ -16,6 +16,7 @@ import {
   LAUNCHER_OUTPUT_PURPOSES,
   LAUNCHER_PRIORITIES,
   buildLauncherRecordFields,
+  normalizeLauncherRecordId,
 } from "./bitableAgentLauncherSchema";
 
 interface Props {
@@ -56,7 +57,7 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
       });
 
       // 3. 写入 record
-      const recordId = await table.addRecord({ fields: cellPayload });
+      const recordId = normalizeLauncherRecordId(await table.addRecord({ fields: cellPayload }));
 
       // 4. 选中该 record，让主面板自动绑定
       try {
@@ -68,8 +69,8 @@ export default function BitableAgentLauncher({ onLaunched }: Props) {
         // 部分 SDK 版本没有 setSelection，忽略
       }
 
-      setSuccess({ recordId: String(recordId), title: title.trim() });
-      onLaunched?.(String(recordId), title.trim());
+      setSuccess({ recordId, title: title.trim() });
+      onLaunched?.(recordId, title.trim());
       setExpanded(false);
 
       // 重置表单

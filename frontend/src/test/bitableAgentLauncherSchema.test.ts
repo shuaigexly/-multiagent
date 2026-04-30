@@ -5,6 +5,7 @@ import {
   LAUNCHER_OUTPUT_PURPOSES,
   LAUNCHER_TASK_SOURCE,
   buildLauncherRecordFields,
+  normalizeLauncherRecordId,
 } from '../pages/bitableAgentLauncherSchema';
 
 describe('bitable agent launcher schema', () => {
@@ -142,5 +143,13 @@ describe('bitable agent launcher schema', () => {
         outputPurpose: '经营诊断',
       }),
     ).toThrow('任务标题不能为空');
+  });
+
+  it('normalizes record ids returned by different Bitable SDK shapes', () => {
+    expect(normalizeLauncherRecordId(' rec_1 ')).toBe('rec_1');
+    expect(normalizeLauncherRecordId({ recordId: ' rec_2 ' })).toBe('rec_2');
+    expect(normalizeLauncherRecordId({ record_id: ' rec_3 ' })).toBe('rec_3');
+    expect(normalizeLauncherRecordId({ data: { id: ' rec_4 ' } })).toBe('rec_4');
+    expect(() => normalizeLauncherRecordId({ data: {} })).toThrow('recordId');
   });
 });
