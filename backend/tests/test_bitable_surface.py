@@ -48,6 +48,16 @@ def test_curated_view_plan_keeps_bitable_surface_compact():
         "🔴 预警报告",
         "⏭ 跳过日志",
         "🧩 汇报模板",
+        # v8.6.20-r26：blueprint §7 历史遗留切片视图，确认已从 curated plan 移除。
+        "⚠️ 风险证据",
+        "🚀 机会证据",
+        "🧠 决策证据",
+        "⭐ 高闭环准备度",
+        "📣 待发送汇报",
+        "🟢 可直接汇报",
+        "🟡 待补数复核",
+        "🩺 健康度画册",
+        "🏅 岗位看板",
     }
     assert noisy_views.isdisjoint(names)
 
