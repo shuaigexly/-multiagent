@@ -182,3 +182,100 @@ def test_concurrent_setup_simulation_does_not_cross_contaminate():
     # 用户 B 同理拿到自己的
     snap_b = workflow._get_state("user_b_base")
     assert snap_b["native_assets"]["customer"] == "B"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_set_state_under_asyncio_gather_holds_isolation():
+    """v8.6.20-r31：把 5 个 _set_state 用 asyncio.gather 并发跑，每 base 独享 bucket。
+
+    这是 multi-tenant 隔离的硬验收：判定 r29 改造在真正 race 下也成立。
+    旧版（_state 单字典）此场景下 native_assets 会因 task switch 互相覆盖。
+    """
+    import asyncio
+    from app.api import workflow
+
+    async def setup_one(token: str, customer: str, n_templates: int) -> None:
+        # 模拟 setup_workflow 内的多步 _set_state（每步 await 让出控制权）
+        workflow._set_state(token, app_token=token)
+        await asyncio.sleep(0)
+        workflow._set_state(token, url=f"https://feishu.cn/base/{token}")
+        await asyncio.sleep(0)
+        workflow._set_state(
+            token,
+            table_ids={"task": f"tbl_{customer}_task"},
+            native_assets={
+                "customer": customer,
+                "automation_templates": [f"{customer.lower()}{i}" for i in range(n_templates)],
+            },
+        )
+
+    tokens = [
+        ("base_alpha", "Alpha", 3),
+        ("base_beta", "Beta", 2),
+        ("base_gamma", "Gamma", 5),
+        ("base_delta", "Delta", 1),
+        ("base_epsilon", "Epsilon", 4),
+    ]
+    await asyncio.gather(*(setup_one(t, c, n) for t, c, n in tokens))
+
+    # 每个 token 自己的快照都正确，没有任何字段串到别的 base
+    for token, customer, n_templates in tokens:
+        snap = workflow._get_state(token)
+        assert snap["app_token"] == token, f"{token} 的 app_token 字段被污染：{snap}"
+        assert snap["url"] == f"https://feishu.cn/base/{token}"
+        assert snap["table_ids"] == {"task": f"tbl_{customer}_task"}
+        assert snap["native_assets"]["customer"] == customer, (
+            f"{token} customer 字段串台 — 期望 {customer} 实际 {snap['native_assets']['customer']}"
+        )
+        assert len(snap["native_assets"]["automation_templates"]) == n_templates
+        # 抽样检查模板内容里没有别 base 的前缀
+        for tpl in snap["native_assets"]["automation_templates"]:
+            assert tpl.startswith(customer.lower()), (
+                f"{token} 模板列表里发现别 base 的内容：{tpl}"
+            )
+
+    # 5 个 bucket 都注册成功
+    assert len(workflow._state_by_token) == 5
+    # _active_token 是最后写的某一个（gather 的完成顺序非确定），但必须是 5 个之一
+    assert workflow._active_token in {t for t, *_ in tokens}
+
+
+@pytest.mark.asyncio
+async def test_get_state_during_concurrent_writes_returns_consistent_snapshot():
+    """v8.6.20-r31：写入 base A 的过程中，读 base B 必须拿到 B 自己的字段，
+    不会因为 _active_token 切换而读到错的 bucket。
+    """
+    import asyncio
+    from app.api import workflow
+
+    workflow._replace_state("base_x", {
+        "app_token": "base_x",
+        "url": "https://x",
+        "native_assets": {"flag": "X"},
+    })
+    workflow._replace_state("base_y", {
+        "app_token": "base_y",
+        "url": "https://y",
+        "native_assets": {"flag": "Y"},
+    })
+
+    read_results: list[tuple[str, str]] = []
+
+    async def write_to_x():
+        for i in range(20):
+            workflow._set_state("base_x", url=f"https://x/v{i}")
+            await asyncio.sleep(0)
+
+    async def read_y_repeatedly():
+        for _ in range(20):
+            snap = workflow._get_state("base_y")
+            read_results.append((snap.get("app_token", ""), snap.get("native_assets", {}).get("flag", "")))
+            await asyncio.sleep(0)
+
+    await asyncio.gather(write_to_x(), read_y_repeatedly())
+
+    # 所有对 base_y 的读取必须始终拿到 base_y 自己的字段，从不被 base_x 污染
+    assert read_results, "至少应有读取记录"
+    for app_token, flag in read_results:
+        assert app_token == "base_y", f"读 base_y 拿到了 app_token={app_token}"
+        assert flag == "Y", f"读 base_y 拿到了 flag={flag}"
