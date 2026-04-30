@@ -645,6 +645,9 @@ function WorkflowCommandBar({
   route,
   reviewAction,
   streamStatus,
+  healthItems,
+  workspaceMode,
+  onWorkspaceModeChange,
 }: {
   title: string;
   sourceLabel: string;
@@ -654,6 +657,9 @@ function WorkflowCommandBar({
   route: string;
   reviewAction: string;
   streamStatus?: WorkflowStreamStatus;
+  healthItems: RuntimeHealthItem[];
+  workspaceMode: WorkspaceMode;
+  onWorkspaceModeChange: (mode: WorkspaceMode) => void;
 }) {
   const statusClass =
     status.includes("完成")
@@ -670,7 +676,7 @@ function WorkflowCommandBar({
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass}`}>{status}</span>
@@ -680,7 +686,7 @@ function WorkflowCommandBar({
               </span>
             )}
           </div>
-          <div className="mt-3 truncate text-2xl font-semibold leading-tight text-slate-950">
+          <div className="mt-2 truncate text-2xl font-semibold leading-tight text-slate-950">
             {title || "未命名任务"}
           </div>
           <div className="mt-3">
@@ -691,72 +697,51 @@ function WorkflowCommandBar({
             </div>
           </div>
         </div>
-        <div className="grid w-full gap-2 sm:grid-cols-2 lg:w-[420px]">
-          {signals.map((item) => (
-            <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-slate-400">
-                <item.icon className="h-3.5 w-3.5 text-slate-500" />
-                {item.label}
-              </div>
-              <div className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-800">{item.value}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function RuntimeHealthStrip({ items }: { items: RuntimeHealthItem[] }) {
-  return (
-    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      {items.map((item) => (
-        <div key={item.key} className={`rounded-xl border p-3 shadow-sm ${HEALTH_TONE_STYLE[item.tone]}`}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.16em] opacity-70">{item.label}</div>
-              <div className="mt-1 truncate text-base font-semibold">{item.value}</div>
-            </div>
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/70">
-              <item.icon className="h-4 w-4" />
-            </div>
+        <div className="w-full lg:w-[430px]">
+          <div className="flex rounded-lg bg-slate-100 p-1">
+            {WORKSPACE_MODES.map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => onWorkspaceModeChange(item)}
+                className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  workspaceMode === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                {WORKSPACE_MODE_LABEL[item]}
+              </button>
+            ))}
           </div>
-          <div className="mt-2 line-clamp-2 text-xs leading-5 opacity-85">{item.caption}</div>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-function WorkspaceModeSwitch({
-  mode,
-  onModeChange,
-}: {
-  mode: WorkspaceMode;
-  onModeChange: (mode: WorkspaceMode) => void;
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex rounded-lg bg-slate-100 p-1">
-          {WORKSPACE_MODES.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => onModeChange(item)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                mode === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              {WORKSPACE_MODE_LABEL[item]}
-            </button>
-          ))}
-        </div>
-        <div className="min-w-0 flex-1 text-sm leading-6 text-slate-500">
-          {WORKSPACE_MODE_CAPTION[mode]}
+          <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">
+            {WORKSPACE_MODE_CAPTION[workspaceMode]}
+          </div>
         </div>
       </div>
-    </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {healthItems.map((item) => (
+          <div key={item.key} className={`rounded-lg border px-3 py-2 ${HEALTH_TONE_STYLE[item.tone]}`}>
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] opacity-70">
+              <item.icon className="h-3.5 w-3.5" />
+              {item.label}
+            </div>
+            <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 grid gap-2 md:grid-cols-4">
+        {signals.map((item) => (
+          <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-slate-400">
+              <item.icon className="h-3.5 w-3.5 text-slate-500" />
+              {item.label}
+            </div>
+            <div className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-800">{item.value}</div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -769,6 +754,10 @@ function AgentFlowDashboard({
   evidenceCount,
   pendingDataCount,
   selectedAgentKey,
+  selectedAgent,
+  timeline,
+  streamStatus,
+  streamMessage,
   onSelectAgent,
 }: {
   agents: AgentPipelineSnapshot[];
@@ -779,6 +768,10 @@ function AgentFlowDashboard({
   evidenceCount: number;
   pendingDataCount: number;
   selectedAgentKey?: string;
+  selectedAgent: AgentPipelineSnapshot | null;
+  timeline: LiveStepEvent[];
+  streamStatus?: WorkflowStreamStatus;
+  streamMessage?: string;
   onSelectAgent?: (agentKey: string) => void;
 }) {
   const doneCount = agents.filter((agent) => agent.status === "done").length;
@@ -790,6 +783,23 @@ function AgentFlowDashboard({
     "Wave 2": "财务接力",
     "Wave 3": "CEO 汇总",
   };
+  const selectedPersona = selectedAgent ? AGENT_PERSONAS[selectedAgent.key] : null;
+  const selectedAgentEvents = selectedAgent
+    ? timeline
+        .filter((event) => {
+          const haystack = `${event.stage} ${event.detail}`;
+          return haystack.includes(selectedAgent.name) || haystack.includes(selectedAgent.role) || haystack.includes(selectedAgent.key);
+        })
+        .slice(0, 2)
+    : [];
+  const selectedMetrics = selectedAgent
+    ? [
+        { label: "耗时", value: formatDurationMs(selectedAgent.duration_ms) },
+        { label: "置信度", value: selectedAgent.confidence ? `${selectedAgent.confidence}/5` : "-" },
+        { label: "证据", value: selectedAgent.evidence_count ?? "-" },
+        { label: "行动项", value: selectedAgent.action_count ?? "-" },
+      ]
+    : [];
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -919,112 +929,69 @@ function AgentFlowDashboard({
           );
         })}
       </div>
-    </div>
-  );
-}
 
-function AgentRunInspector({
-  agent,
-  timeline,
-  streamStatus,
-  streamMessage,
-}: {
-  agent: AgentPipelineSnapshot | null;
-  timeline: LiveStepEvent[];
-  streamStatus?: WorkflowStreamStatus;
-  streamMessage?: string;
-}) {
-  if (!agent) return null;
-  const persona = AGENT_PERSONAS[agent.key];
-  const agentEvents = timeline
-    .filter((event) => {
-      const haystack = `${event.stage} ${event.detail}`;
-      return haystack.includes(agent.name) || haystack.includes(agent.role) || haystack.includes(agent.key);
-    })
-    .slice(0, 4);
-  const metrics = [
-    { label: "耗时", value: formatDurationMs(agent.duration_ms) },
-    { label: "置信度", value: agent.confidence ? `${agent.confidence}/5` : "-" },
-    { label: "证据", value: agent.evidence_count ?? "-" },
-    { label: "行动项", value: agent.action_count ?? "-" },
-  ];
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <div
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-base font-semibold text-white"
-            style={{ backgroundColor: persona?.color || "#64748b" }}
-          >
-            {persona?.avatar || agent.name.slice(0, 1)}
-          </div>
-          <div className="min-w-0">
-            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Selected Agent</div>
-            <div className="mt-1 truncate text-lg font-semibold text-slate-950">{agent.role}</div>
-            <div className="mt-1 text-sm text-slate-500">{agent.wave} · {agent.name}</div>
-          </div>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          <span className={`rounded-md border px-3 py-1 text-xs font-medium ${AGENT_NODE_STYLE[agent.status]}`}>
-            {AGENT_STATUS_LABEL[agent.status]}
-          </span>
-          {streamStatus && (
-            <span className={`rounded-md border px-3 py-1 text-xs font-medium ${STREAM_STATUS_STYLE[streamStatus]}`}>
-              {STREAM_STATUS_LABEL[streamStatus]}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-        {metrics.map((item) => (
-          <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{item.label}</div>
-            <div className="mt-1 text-sm font-semibold text-slate-900">{item.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-3">
-        <div className="text-xs uppercase tracking-[0.16em] text-slate-500">输出摘要</div>
-        <div className="mt-2 text-sm leading-6 text-slate-700">
-          {agent.status === "error" ? agent.reason || agent.summary : agent.summary || "等待该岗位输出。"}
-        </div>
-        {agent.fallback && (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            当前为兜底输出，需要在综合报告前复核证据完整度。
-          </div>
-        )}
-        {streamMessage && (
-          <div className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-500">
-            {streamMessage}
-          </div>
-        )}
-      </div>
-
-      <div className="mt-4">
-        <div className="text-xs uppercase tracking-[0.16em] text-slate-500">关联事件</div>
-        {!agentEvents.length ? (
-          <div className="mt-2 rounded-lg border border-dashed border-slate-200 bg-slate-50/70 px-3 py-3 text-sm text-slate-500">
-            还没有命中该岗位的原生或实时事件。
-          </div>
-        ) : (
-          <div className="mt-2 space-y-2">
-            {agentEvents.map((event) => (
-              <div key={event.key} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium text-slate-900">{event.stage}</div>
-                  <span className={`rounded-md px-2 py-0.5 text-[11px] ${STEP_STATUS_STYLE[event.status]}`}>
-                    {event.eventType === "native.log" ? "Base" : "SSE"}
-                  </span>
-                </div>
-                <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{event.detail}</div>
+      {selectedAgent && (
+        <div className="border-t border-slate-200 bg-slate-50/70 p-4">
+          <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+            <div className="flex min-w-0 items-start gap-3">
+              <div
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-base font-semibold text-white"
+                style={{ backgroundColor: selectedPersona?.color || "#64748b" }}
+              >
+                {selectedPersona?.avatar || selectedAgent.name.slice(0, 1)}
               </div>
-            ))}
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="truncate text-base font-semibold text-slate-950">{selectedAgent.role}</div>
+                  <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${AGENT_NODE_STYLE[selectedAgent.status]}`}>
+                    {AGENT_STATUS_LABEL[selectedAgent.status]}
+                  </span>
+                  {streamStatus && (
+                    <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${STREAM_STATUS_STYLE[streamStatus]}`}>
+                      {STREAM_STATUS_LABEL[streamStatus]}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-sm text-slate-500">{selectedAgent.wave} · {selectedAgent.name}</div>
+                <div className="mt-2 line-clamp-3 text-sm leading-6 text-slate-700">
+                  {selectedAgent.status === "error" ? selectedAgent.reason || selectedAgent.summary : selectedAgent.summary || "等待该岗位输出。"}
+                </div>
+                {streamMessage && <div className="mt-2 text-xs leading-5 text-slate-500">{streamMessage}</div>}
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-[0.84fr_1.16fr]">
+              <div className="grid grid-cols-2 gap-2">
+                {selectedMetrics.map((item) => (
+                  <div key={item.label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">{item.label}</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">关联事件</div>
+                {!selectedAgentEvents.length ? (
+                  <div className="mt-2 text-sm leading-6 text-slate-500">暂未命中该岗位的原生或实时事件。</div>
+                ) : (
+                  <div className="mt-2 grid gap-2">
+                    {selectedAgentEvents.map((event) => (
+                      <div key={event.key} className="flex items-start justify-between gap-3 text-sm">
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-slate-900">{event.stage}</div>
+                          <div className="line-clamp-1 text-xs leading-5 text-slate-500">{event.detail}</div>
+                        </div>
+                        <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] ${STEP_STATUS_STYLE[event.status]}`}>
+                          {event.eventType === "native.log" ? "Base" : "SSE"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1836,13 +1803,10 @@ export default function BitableWorkflowPlugin() {
                   route={textValue(task.fields["工作流路由"]) || "待生成"}
                   reviewAction={reviewAction}
                   streamStatus={live?.streamStatus}
+                  healthItems={runtimeHealthItems}
+                  workspaceMode={workspaceMode}
+                  onWorkspaceModeChange={setWorkspaceMode}
                 />
-              </div>
-              <div className="mt-3">
-                <RuntimeHealthStrip items={runtimeHealthItems} />
-              </div>
-              <div className="mt-3">
-                <WorkspaceModeSwitch mode={workspaceMode} onModeChange={setWorkspaceMode} />
               </div>
 
               {workspaceMode === "run" && (
@@ -1856,14 +1820,11 @@ export default function BitableWorkflowPlugin() {
                     evidenceCount={numberValue(task.fields["证据条数"])}
                     pendingDataCount={numberValue(task.fields["需补数条数"])}
                     selectedAgentKey={selectedAgent?.key}
-                    onSelectAgent={setSelectedAgentKey}
-                  />
-
-                  <AgentRunInspector
-                    agent={selectedAgent}
+                    selectedAgent={selectedAgent}
                     timeline={timelineEvents}
                     streamStatus={live?.streamStatus}
                     streamMessage={live?.streamMessage}
+                    onSelectAgent={setSelectedAgentKey}
                   />
 
                   {live?.tokenPreview && (
