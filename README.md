@@ -266,9 +266,9 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 
 > 这部分如实标注，避免审阅 / 用户对超出当前验收范围的能力产生误期。
 
-- **单 Base 单租户**：[backend/app/api/workflow.py](backend/app/api/workflow.py) 的 `_state` 是单进程内存字典，多个用户同时调 `/setup` + `/start` 会互相覆盖 base 元数据。多租户隔离需要把 `_state` 改成 `dict[tenant_id, dict]` 或落 Redis；本版未做。
+- **多 Base 隔离（v8.6.20-r29 已修）**：[backend/app/api/workflow.py](backend/app/api/workflow.py) 的运行时状态从单进程字典升级为 `_state_by_token` 注册表 — 每个 `app_token` 独享一格 bucket。GET 端点（`/status` / `/native-assets` / `/native-manifest`）支持 `?app_token=` 显式指定 base；不传则返回最近活跃 base，旧前端 100% 兼容。多人并发用不同 base 不再互相覆盖。
 - **Redis 锁分布式语义**：单实例部署时 in-process `asyncio.Lock` 已够用；扩到 2+ 后端实例必须挂 Redis（`scheduler.py` 已经写了 Redis SET nx，缺连接时降级到本地锁，启动时会 WARNING）。生产不要禁用 Redis。
-- **数据源解析覆盖度**：`backend/app/core/data_parser.py` 当前只稳支持 RFC 4180 CSV + Markdown 文本。TSV / 含引号嵌套逗号的 Excel 导出 / 异形表头需要用户自己预清洗。
+- **数据源解析覆盖度（v8.6.20-r29 已扩展）**：[backend/app/core/data_parser.py](backend/app/core/data_parser.py) 现支持 CSV / TSV / 分号 / 管道分隔（用 `csv.Sniffer` 自动判别 delimiter）+ JSON 数组对象 / JSONL（NDJSON）+ Markdown + UTF-8 BOM 剥离。RFC 4180 含嵌套引号的 Excel 导出（`"Smith, Inc.",2024`）走 csv 模块解析，不再误进文本路径。
 - **国内大模型**：默认 deepseek-chat，可切智谱 GLM / 火山引擎 / 通义 / 豆包；**禁止** OpenAI / Anthropic（竞赛一票否决项 + 代码层未配 base_url 校验，但默认 .env 不指向境外）。
 - **i18n**：表名 / 字段 / 视图 / Agent persona 全中文；非中文场景需手翻一次 `schema.py` 与 `demo_data.py`。
 

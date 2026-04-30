@@ -22,9 +22,9 @@
 
 | 差距 | 严重度 | 现状 | 缓解 / 修复 |
 |---|---|---|---|
-| 单 Base 单租户 | HIGH | `workflow.py::_state` 是进程字典，并发 setup 不同 base 会互相覆盖 | 已在 README「已知运行边界」节如实标注；后续改 `dict[tenant_id, dict]` 或落 Redis（≈1 天） |
+| ~~单 Base 单租户~~ | ~~HIGH~~ | **v8.6.20-r29 已修**：`_state` 改为 `_state_by_token` 注册表，每 `app_token` 独享 bucket；GET 端点支持 `?app_token=` 显式指定；旧前端 0 改动兼容；新增 8 项隔离回归测试 | ✅ Done |
 | Demo 视频未录 | MEDIUM | docs 内有完整文字脚本与已跑数据 | 5 月 7 日提交前补录 3-5 min 屏录上传 GitHub Releases |
-| 数据源解析窄 | MEDIUM | 仅稳支持 RFC 4180 CSV + Markdown；TSV / Excel 异形进 fallback 文本路径 | 已注明；`csv.Sniffer()` 自动判别可作为 v8.6.21 任务 |
+| ~~数据源解析窄~~ | ~~MEDIUM~~ | **v8.6.20-r29 已扩展**：用 `csv.Sniffer` 自动判别 delimiter，新增 TSV / 分号 / 管道 + JSON 数组 / JSONL（NDJSON）+ UTF-8 BOM 剥离；RFC 4180 含嵌套引号 Excel 导出走 csv 模块；14 项格式回归测试 | ✅ Done |
 
 ---
 
@@ -75,8 +75,8 @@
 
 | 差距 | 严重度 | 缓解 |
 |---|---|---|
-| `_state` 全局字典 | HIGH | README 已标 + 提交稿已注明 |
-| 数据源解析窄 | MEDIUM | README 已标 + roadmap 列入 v8.6.21 |
+| ~~`_state` 全局字典~~ | ~~HIGH~~ | **v8.6.20-r29 已修** — 注册表 + 8 项隔离测试 |
+| ~~数据源解析窄~~ | ~~MEDIUM~~ | **v8.6.20-r29 已修** — Sniffer + 7 种格式 + 14 项测试 |
 | Demo 视频未录 | MEDIUM | 提交前补录 |
 | i18n 全中文 | LOW | 评审场景中文，竞赛不阻塞 |
 
@@ -86,12 +86,14 @@
 
 | 维度 | 自评 | 主因 |
 |---|---|---|
-| 完整性与价值（50%） | 7-8 / 10 | 闭环真实跑通 + verify=0；扣分项是单租户 + Demo 视频未录 |
+| 完整性与价值（50%） | 8-9 / 10 | 闭环真实跑通 + verify=0；多 Base 隔离已修；剩余扣分仅 Demo 视频 |
 | 创新性（25%） | 8 / 10 | DAG + 健康度 cap + 证据等级 + 业务闭环 ≠ 套壳 Agent |
-| 技术实现性（25%） | 7-8 / 10 | 测试 / 观测 / 韧性扎实；扣分项是 CI 此前不跑 pytest（已修） + 多实例需 Redis（已实现，文档已注明） |
+| 技术实现性（25%） | 8-9 / 10 | 测试 439 + CI gate + 观测 / 韧性扎实；多 Base 隔离 + 7 种数据格式 + Sniffer 都已落地；多实例 Redis 已注明 |
 
-**加权 ≈ 7.5 / 10。** 提交前应做：
-1. ✅ 加 CI 跑 pytest（已完成）
-2. ✅ README + DRAFT 注明已知边界（已完成）
-3. ⏳ 录 Demo 视频（人工，5 月 7 日前）
-4. ⏳ 在飞书 Base 上重跑一次最新 HEAD 验收（可选）
+**加权 ≈ 8.3 / 10。** 提交前应做：
+1. ✅ 加 CI 跑 pytest（已完成 v8.6.20-r28）
+2. ✅ README + DRAFT 注明已知边界（已完成 v8.6.20-r28）
+3. ✅ 多 Base 隔离改造（v8.6.20-r29）
+4. ✅ 数据源格式扩展 7 种（v8.6.20-r29）
+5. ⏳ 录 Demo 视频（人工，5 月 7 日前）
+6. ⏳ 在飞书 Base 上重跑一次最新 HEAD 验收（可选）

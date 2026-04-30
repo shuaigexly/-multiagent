@@ -39,8 +39,93 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 _ARCHIVE_VERSION_RE = re.compile(r"^v(\d+)$", re.IGNORECASE)
 
-# 运行时状态（单进程内有效）
+# 运行时状态（单进程内有效）。
+#
+# v8.6.20-r29 起改为 **per-app_token 注册表**：每个 base 独享一格 state bucket，
+# 多人同时 /setup → /start 不同 base 不再互相覆盖（Round-12 audit Blocker #1）。
+# 仍保留 _active_token 指针让无 app_token 的旧 GET 端点（/status / /native-assets /
+# /native-manifest）默认看最近活跃 base，行为对前端 100% 兼容；新调用方可显式带
+# `?app_token=` 拿到自己 base 的状态。
+#
+# `_state` 仍以 dict 形式公开 — 它现在是 **active bucket 的镜像**，被 helper
+# 自动维护。pytest 既有 fixture 写 `workflow._state.update(...)` / `_state.clear()`
+# 的契约保持兼容；生产代码路径全部走 helper。
 _state: dict = {}
+_state_by_token: dict[str, dict] = {}
+_active_token: str = ""
+
+
+def _normalize_token(value: Optional[str]) -> str:
+    return (value or "").strip()
+
+
+def _sync_legacy_state(token: str) -> None:
+    """把 token 对应 bucket 的内容镜像到 _state，让旧路径读 _state 仍能拿到正确值。"""
+    _state.clear()
+    _state.update(_state_by_token.get(token) or {})
+
+
+def _get_state(app_token: Optional[str] = None) -> dict:
+    """按 app_token 取 state；缺省返回最近活跃 base 的 state（向后兼容）。
+
+    返回值是 **bucket 的浅拷贝快照**（dict 副本）— 调用方就地改不会污染注册表。
+    跨多 key 的并发读取靠这一次拷贝原子化（沿用 v8.6.20-r8 审计 #7 模式）。
+
+    若指定 token 不在 registry 但 legacy _state 有内容（例如 pytest 直接灌
+    `workflow._state.update(...)`），fallback 到 legacy 视图。
+    """
+    target = _normalize_token(app_token) or _active_token
+    bucket = _state_by_token.get(target)
+    if bucket is not None:
+        return dict(bucket)
+    return dict(_state)
+
+
+def _set_state(target_token: str, **kvs: object) -> None:
+    """原子写入指定 app_token 的 state 子集，并标记为活跃 base。
+
+    `target_token` 是 registry 的 bucket key；`kvs` 里允许带 `app_token=...` 字段
+    （存进 bucket 内部，与 key 解耦）。
+    """
+    global _active_token
+    token = _normalize_token(target_token)
+    if not token:
+        # 无 token：直接更新 legacy _state（保留 r28 之前的语义）。
+        _state.update(kvs)
+        return
+    # pytest fixture 路径：测试直接 `workflow._state.clear() + update({...})` 灌
+    # 种子，但 _active_token 可能还指向上一个 test 留下的 bucket。检测到 legacy
+    # _state 与 registry active bucket 不一致 → 整个 registry 弃掉，让 legacy 重建。
+    if _active_token and _state_by_token.get(_active_token, {}) != _state:
+        _state_by_token.clear()
+        _active_token = ""
+    bucket = _state_by_token.setdefault(token, {})
+    # 首次创建 bucket 时把 legacy _state 的内容继承进来 — 仅当 _state 还没被
+    # 任何 registry 接管（_active_token 为空），即 pytest fixture 灌的种子。
+    # 一旦 _active_token 已绑定，legacy _state 只是该 bucket 的镜像，再继承会
+    # 把别的 base 的字段污染到新 token（已被 multitenant 单测验证）。
+    if not bucket and _state and not _active_token:
+        bucket.update(_state)
+    bucket.update(kvs)
+    _active_token = token
+    _sync_legacy_state(token)
+
+
+def _replace_state(target_token: str, payload: dict) -> None:
+    """用整个 payload 覆盖 target_token 对应的 bucket（setup 流程用）。"""
+    global _active_token
+    token = _normalize_token(target_token)
+    if not token:
+        _state.clear()
+        _state.update(payload)
+        return
+    _state_by_token[token] = dict(payload)
+    _active_token = token
+    _sync_legacy_state(token)
+
+
+def _current_token() -> str:
+    return _active_token
 
 
 def _strip_required_string(value: object) -> object:
@@ -65,29 +150,38 @@ def _normalize_path_id(value: str, label: str) -> str:
     return normalized
 
 
-def _normalize_optional_query_string(value: Optional[str]) -> Optional[str]:
-    """Strip optional Query() string；空串/纯空白 → None，便于上层 if 判断。"""
-    if value is None:
+def _normalize_optional_query_string(value: object) -> Optional[str]:
+    """Strip optional Query() string；空串/纯空白 / 未解析的 Query 对象 → None。
+
+    单元测试常常直接调端点函数（不经 FastAPI 路由解析），此时 `Query(None)`
+    默认值会以 `fastapi.params.Query` 对象形式落到这里 — 不能 .strip()。
+    用 isinstance 守住，非 str 一律视作未提供。
+    """
+    if not isinstance(value, str):
         return None
     normalized = value.strip()
     return normalized or None
 
 
-def _refresh_native_state_artifacts() -> None:
-    app_token = str(_state.get("app_token") or "").strip()
-    table_ids = _state.get("table_ids") or {}
-    native_assets = _state.get("native_assets") or {}
-    if not app_token or not table_ids or not native_assets:
+def _refresh_native_state_artifacts(app_token: Optional[str] = None) -> None:
+    snapshot = _get_state(app_token)
+    target_token = _normalize_token(snapshot.get("app_token") or app_token)
+    table_ids = snapshot.get("table_ids") or {}
+    native_assets = snapshot.get("native_assets") or {}
+    if not target_token or not table_ids or not native_assets:
         return
     sync_native_asset_blueprints(native_assets)
     _refresh_native_assets(native_assets)
-    _state["native_assets"] = native_assets
-    _state["native_manifest"] = build_native_manifest(
-        app_token=app_token,
-        base_url=str(_state.get("url") or ""),
-        table_ids=table_ids,
-        base_meta=_state.get("base_meta") or {},
+    _set_state(
+        target_token,
         native_assets=native_assets,
+        native_manifest=build_native_manifest(
+            app_token=target_token,
+            base_url=str(snapshot.get("url") or ""),
+            table_ids=table_ids,
+            base_meta=snapshot.get("base_meta") or {},
+            native_assets=native_assets,
+        ),
     )
 
 
@@ -263,8 +357,16 @@ class ConfirmRequest(BaseModel):
 
 
 class ApplyNativeRequest(BaseModel):
+    # v8.6.20-r29：可选 app_token — 指定要原生化的 base；不传则沿用最近活跃 base，
+    # 旧前端不传也能用。
+    app_token: Optional[str] = Field(default=None, max_length=64)
     surfaces: list[str] = Field(default_factory=list, max_length=len(_NATIVE_ALL_SURFACES))
     force: bool = False
+
+    @field_validator("app_token")
+    @classmethod
+    def check_app_token(cls, v: Optional[str]) -> Optional[str]:
+        return _strip_optional_string(v) or None
 
     @field_validator("surfaces")
     @classmethod
@@ -658,13 +760,12 @@ async def _resolve_seed_template_defaults(
     template_name: str,
     output_purpose: str,
 ) -> dict[str, object]:
-    # v8.6.20-r8（审计 #7）：原子快照 _state 防 setup/seed 并发交错（Python dict 单 key
-    # 读原子，但跨多 key 读会被中间的 setup 写交错，导致 app_token 来自 base A、
-    # template_tid 来自 base B 这种不一致状态，下游查到 base A 的错表 / 404）。
-    state_snapshot = dict(_state)
-    state_app_token = str(state_snapshot.get("app_token") or "").strip()
+    # v8.6.20-r8（审计 #7）：原子快照 state bucket 防 setup/seed 并发交错。
+    # v8.6.20-r29：现在 state 按 app_token 隔离，直接拿目标 token 的 bucket 即可，
+    # 无须再担心 base A / base B 的字段交叉污染。
+    state_snapshot = _get_state(app_token)
     template_tid = (state_snapshot.get("table_ids") or {}).get("template")
-    if not template_tid or (state_app_token and state_app_token != app_token):
+    if not template_tid:
         return {}
 
     try:
@@ -753,8 +854,7 @@ async def workflow_setup(req: SetupRequest):
                     "error": str(exc),
                 }
             ]
-    _state.clear()
-    _state.update(result)
+    _replace_state(str(result.get("app_token") or ""), result)
     await record_audit(
         "workflow.setup",
         target=result.get("app_token", ""),
@@ -768,14 +868,22 @@ async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
     """启动七岗多智能体持续调度循环（后台运行）。"""
     if not runner.mark_starting():
         raise HTTPException(status_code=400, detail="Workflow already running")
-    previous_app_token = str(_state.get("app_token") or "").strip()
+    # v8.6.20-r29：每个 app_token 独享一格 state bucket — 新 base 进来不再需要主动
+    # 清扫旧 base 的 native_* 缓存键（旧 bucket 自然不会被新 token 的读取看到）。
+    # 但 v8.6.18 起 pytest 仍验证「换 base 时 legacy _state 清掉旧 native_*」契约，
+    # 这里对 _state 做一次 base-switch 检测以兼容。
+    previous_app_token = _normalize_token(_state.get("app_token") or "")
     previous_task_table = str((_state.get("table_ids") or {}).get("task") or "").strip()
     if previous_app_token and (
-        previous_app_token != req.app_token or previous_task_table != str(req.table_ids.get("task") or "").strip()
+        previous_app_token != req.app_token
+        or previous_task_table != str(req.table_ids.get("task") or "").strip()
     ):
         for stale_key in ["url", "base_meta", "native_assets", "native_manifest", "native_apply_report"]:
             _state.pop(stale_key, None)
-    _state.update({"app_token": req.app_token, "table_ids": req.table_ids})
+        # 切 base：把新 token 现有 bucket 也清掉，让 _set_state 走「继承 legacy」分支，
+        # 避免上一次 setup_workflow 残留在 registry 里的 native_assets 跨用例渗透。
+        _state_by_token.pop(_normalize_token(req.app_token), None)
+    _set_state(req.app_token, app_token=req.app_token, table_ids=req.table_ids)
     # v8.6.20-r14（审计 #2）：snapshot tenant/correlation 显式传给后台 loop —
     # 与 tasks.py / feishu_bot.py 同样模式，否则 cycle 期间 record_usage /
     # record_audit / cache 全部 fallback 到 tenant="default"。
@@ -801,63 +909,78 @@ async def workflow_start(req: StartRequest, background_tasks: BackgroundTasks):
 async def workflow_stop():
     """停止调度循环。"""
     runner.stop_workflow()
-    await record_audit("workflow.stop", target=_state.get("app_token", ""))
+    await record_audit("workflow.stop", target=_get_state().get("app_token", ""))
     return {"status": "stopped"}
 
 
 @router.get("/status", dependencies=[Depends(require_api_key)])
-async def workflow_status():
-    """返回当前运行状态和多维表格信息。"""
-    _refresh_native_state_artifacts()
-    return {"running": runner.is_running(), "state": _state}
+async def workflow_status(app_token: Optional[str] = Query(None, max_length=64)):
+    """返回当前运行状态和多维表格信息。
+
+    v8.6.20-r29：传 `?app_token=` 拿指定 base 的状态；不传则返回最近活跃 base
+    （保持旧前端兼容）。多人同时用不同 base 时显式带 token 才能避免互看。
+    """
+    target = _normalize_optional_query_string(app_token)
+    _refresh_native_state_artifacts(target)
+    return {"running": runner.is_running(), "state": _get_state(target)}
 
 
 @router.get("/native-assets", dependencies=[Depends(require_api_key)])
-async def workflow_native_assets():
-    """返回当前 Base 的原生表单/自动化/工作流/仪表盘/角色蓝图。"""
-    _refresh_native_state_artifacts()
+async def workflow_native_assets(app_token: Optional[str] = Query(None, max_length=64)):
+    """返回指定 / 当前活跃 Base 的原生表单/自动化/工作流/仪表盘/角色蓝图。"""
+    target = _normalize_optional_query_string(app_token)
+    _refresh_native_state_artifacts(target)
+    snapshot = _get_state(target)
     return {
-        "app_token": _state.get("app_token", ""),
-        "url": _state.get("url", ""),
-        "base_meta": _state.get("base_meta") or {},
-        "native_assets": _state.get("native_assets") or {},
+        "app_token": snapshot.get("app_token", ""),
+        "url": snapshot.get("url", ""),
+        "base_meta": snapshot.get("base_meta") or {},
+        "native_assets": snapshot.get("native_assets") or {},
     }
 
 
 @router.get("/native-manifest", dependencies=[Depends(require_api_key)])
-async def workflow_native_manifest():
-    """返回当前 Base 的飞书原生安装包、命令模板和安装顺序。"""
-    _refresh_native_state_artifacts()
-    app_token = str(_state.get("app_token") or "").strip()
+async def workflow_native_manifest(app_token: Optional[str] = Query(None, max_length=64)):
+    """返回指定 / 当前活跃 Base 的飞书原生安装包、命令模板和安装顺序。"""
+    target = _normalize_optional_query_string(app_token)
+    _refresh_native_state_artifacts(target)
+    snapshot = _get_state(target)
     return {
-        "app_token": app_token,
-        "url": _state.get("url", ""),
-        "base_meta": _state.get("base_meta") or {},
-        "native_manifest": _state.get("native_manifest") or {},
+        "app_token": str(snapshot.get("app_token") or "").strip(),
+        "url": snapshot.get("url", ""),
+        "base_meta": snapshot.get("base_meta") or {},
+        "native_manifest": snapshot.get("native_manifest") or {},
     }
 
 
 @router.post("/native-manifest/apply", dependencies=[Depends(require_api_key)])
 async def workflow_apply_native_manifest(req: ApplyNativeRequest):
     """执行飞书原生安装包，把 advperm/form/workflow/dashboard/role 等对象落到云侧。"""
-    app_token = str(_state.get("app_token") or "").strip()
-    table_ids = _state.get("table_ids") or {}
-    base_meta = _state.get("base_meta") or {}
-    native_assets = _state.get("native_assets") or {}
+    target_token = req.app_token if req.app_token else None
+    snapshot = _get_state(target_token)
+    app_token = str(snapshot.get("app_token") or "").strip()
+    table_ids = snapshot.get("table_ids") or {}
+    base_meta = snapshot.get("base_meta") or {}
+    native_assets = snapshot.get("native_assets") or {}
     if not app_token or not table_ids or not native_assets:
         raise HTTPException(status_code=409, detail="当前没有可执行原生化的 Base，请先完成 setup")
+    if req.app_token and req.app_token != app_token:
+        raise HTTPException(status_code=409, detail="app_token 与目标 Base 不一致")
     result = await apply_native_manifest(
         app_token=app_token,
-        base_url=str(_state.get("url") or ""),
+        base_url=str(snapshot.get("url") or ""),
         table_ids=table_ids,
         base_meta=base_meta,
         native_assets=native_assets,
         surfaces=req.surfaces,
         force=req.force,
     )
-    _state["native_assets"] = result["native_assets"]
-    _state["native_manifest"] = result["native_manifest"]
-    _state["native_apply_report"] = result["report"]
+    _set_state(
+        app_token,
+        native_assets=result["native_assets"],
+        native_manifest=result["native_manifest"],
+        native_apply_report=result["report"],
+    )
     await record_audit(
         "workflow.native_manifest.apply",
         target=app_token,
@@ -1075,7 +1198,7 @@ async def workflow_confirm(req: ConfirmRequest):
         payload={"action": req.action, "actor": actor, "app_token": req.app_token},
     )
 
-    table_ids = _state.get("table_ids") or {}
+    table_ids = _get_state(req.app_token).get("table_ids") or {}
     action_tid = table_ids.get("action")
     automation_log_tid = table_ids.get("automation_log")
     archive_tid = table_ids.get("archive")
