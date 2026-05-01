@@ -1361,6 +1361,61 @@ async def workflow_stream(
     )
 
 
+@router.get("/similar", dependencies=[Depends(require_api_key)])
+async def workflow_similar_tasks(
+    title: str = Query(..., min_length=1, max_length=200),
+    dimension: str = Query("", max_length=50),
+    background: str = Query("", max_length=2000),
+    app_token: Optional[str] = Query(None, max_length=64),
+    limit: int = Query(3, ge=1, le=10),
+):
+    """跨任务相似度检索 — AI 多智能体的长期记忆能力。
+
+    给定新任务的 title / dimension / background，扫历史「已完成」+「已归档」
+    任务，按 Jaccard 加权打分（title × 2 + dimension × 0.5 + background × 0.3）
+    返回 top_k 最相似的过往任务。
+
+    用途：
+    - 创建任务前提示用户「6 个月前已分析过类似的 [xxx]」
+    - CEO 决策时参考过往同维度结论
+    - 评审场景演示 AI 的连续学习
+    """
+    from app.bitable_workflow.task_similarity import find_similar_completed_tasks
+
+    target_token = _normalize_optional_query_string(app_token)
+    snapshot = _get_state(target_token)
+    resolved_token = str(snapshot.get("app_token") or "").strip()
+    table_ids = snapshot.get("table_ids") or {}
+    task_tid = table_ids.get("task")
+    if not resolved_token or not task_tid:
+        raise HTTPException(status_code=409, detail="当前 base 未完成 setup，无法检索历史")
+
+    similar = await find_similar_completed_tasks(
+        app_token=resolved_token,
+        table_id=task_tid,
+        query_title=title.strip(),
+        query_dimension=dimension.strip(),
+        query_background=background.strip(),
+        top_k=limit,
+    )
+    return {
+        "query": {"title": title, "dimension": dimension, "limit": limit},
+        "count": len(similar),
+        "matches": [
+            {
+                "record_id": m.record_id,
+                "title": m.title,
+                "dimension": m.dimension,
+                "score": m.score,
+                "health": m.health,
+                "completed_at": m.completed_at,
+                "summary": m.summary,
+            }
+            for m in similar
+        ],
+    }
+
+
 @router.get("/audit", dependencies=[Depends(require_api_key)])
 async def workflow_audit(
     target: Optional[str] = Query(None, max_length=256),
