@@ -235,6 +235,7 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 | `GET`  | `/api/v1/workflow/status` | 查看运行状态、表格信息与当前 native state |
 | `POST` | `/api/v1/workflow/seed` | 向分析任务表写入一条新的待处理任务（自动拒绝同 title × dimension 的重复待分析；`?force=true` 跳过） |
 | `POST` | `/api/v1/workflow/cancel/{record_id}` | **主动取消 in-flight 任务**：进程内取消注册表 + Bitable 主表标记「异常状态=用户取消」，下一个 agent 入口立即抛 TaskCancelled |
+| `POST` | `/api/v1/workflow/replay/{record_id}` | **复跑已完成 / 已取消 / 已归档的任务**：拉回「待分析」+ 清异常字段 + 清 cancellation 标记；`?fresh=true` 强制清 agent_cache 重打 LLM |
 | `POST` | `/api/v1/workflow/confirm` | 回写拍板 / 执行完成 / 进入复盘等管理确认字段 |
 | `GET`  | `/api/v1/workflow/records` | 查询多维表格记录，支持 `?status=` 过滤 |
 | `GET`  | `/api/v1/workflow/export/{record_id}` | 把一条任务的全量产出（CEO 报告 + 七岗输出 + 证据链 + 行动项 + 复核历史）拼成 Markdown 下载，支持 `?app_token=` + `?download=1` |

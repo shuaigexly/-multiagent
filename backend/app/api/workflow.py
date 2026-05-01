@@ -1361,6 +1361,98 @@ async def workflow_stream(
     )
 
 
+@router.post("/replay/{record_id}", dependencies=[Depends(require_api_key)])
+async def workflow_replay_task(
+    record_id: Annotated[str, Path(min_length=1, max_length=128)],
+    app_token: Optional[str] = Query(None, max_length=64),
+    fresh: bool = Query(False),
+):
+    """复跑一条已完成 / 已异常 / 已取消的任务（v8.6.20-r44）。
+
+    使用场景：
+      - 用户 /cancel 之后想重新跑（fix 数据后再 replay）
+      - 模板 / prompt 被更新过，想用新 prompt 复评同一条任务
+      - CEO 报告写错了 / 用户拍板后又改主意
+
+    行为：
+      1. 拉记录验证当前不在 「分析中」（in-flight 时 409）
+      2. 清掉 cancellation 注册表里的标记（防 r43 残留把 replay 后的 cycle 立刻 cancel）
+      3. 把主表状态拉回「待分析」+ 清「异常状态/异常类型/异常说明」+ 进度=0
+      4. `?fresh=true` 时还清 task-level agent_cache，强制下一轮所有 agent 真打 LLM
+         （默认不清缓存：能复用就复用，省 tokens）
+
+    端点本身不直接触发 cycle — 等下一轮调度循环（默认 30s）自动接手。
+    多租户：可选 `?app_token=` 显式定位 base，缺省最近活跃 base。
+    """
+    from app.bitable_workflow import cancellation
+
+    record_id_norm = _normalize_path_id(record_id, "record_id")
+    target_token = _normalize_optional_query_string(app_token)
+    snapshot = _get_state(target_token)
+    resolved_token = str(snapshot.get("app_token") or "").strip()
+    table_ids = snapshot.get("table_ids") or {}
+    task_tid = table_ids.get("task")
+    if not resolved_token or not task_tid:
+        raise HTTPException(status_code=409, detail="当前 base 未完成 setup，无法复跑任务")
+
+    # 1. 拉当前状态，禁止复跑 in-flight
+    try:
+        record = await bitable_ops.get_record(resolved_token, task_tid, record_id_norm)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"任务 {record_id_norm} 不存在或读取失败") from exc
+    fields_raw = record.get("fields") or {}
+    from app.bitable_workflow.scheduler import _flatten_record_fields
+
+    flat = _flatten_record_fields(fields_raw)
+    current_status = str(flat.get("状态") or "").strip()
+    if current_status == Status.ANALYZING:
+        raise HTTPException(status_code=409, detail="任务正在分析中，请先 /cancel 再 /replay")
+
+    # 2. 清取消标记（前提：用户先 cancel 后 replay 是合法路径）
+    cancellation.clear_cancelled(record_id_norm)
+
+    # 3. 重置主表字段
+    fields_to_write = {
+        "状态": Status.PENDING,
+        "进度": 0.0,
+        "异常状态": "",
+        "异常类型": "",
+        "异常说明": "",
+        "当前阶段": "",
+    }
+    optional_keys = ["进度", "异常状态", "异常类型", "异常说明", "当前阶段"]
+    try:
+        await bitable_ops.update_record_optional_fields(
+            resolved_token, task_tid, record_id_norm, fields_to_write, optional_keys=optional_keys
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"主表回写失败：{exc}") from exc
+
+    # 4. fresh 模式：清 task-level agent cache，让下一轮真打 LLM
+    cache_cleared = 0
+    if fresh:
+        try:
+            from app.bitable_workflow.agent_cache import invalidate_task_cache
+
+            cache_cleared = await invalidate_task_cache(record_id_norm)
+        except Exception as exc:
+            logger.warning("replay: invalidate_task_cache failed: %s", exc)
+
+    await record_audit(
+        "workflow.replay",
+        target=record_id_norm,
+        payload={"fresh": fresh, "cache_cleared": cache_cleared, "previous_status": current_status},
+    )
+    return {
+        "record_id": record_id_norm,
+        "replayed": True,
+        "previous_status": current_status,
+        "fresh": fresh,
+        "cache_entries_cleared": cache_cleared,
+        "next_step": "等待下一轮调度循环接手（默认 30s 内）",
+    }
+
+
 @router.post("/cancel/{record_id}", dependencies=[Depends(require_api_key)])
 async def workflow_cancel_task(
     record_id: Annotated[str, Path(min_length=1, max_length=128)],
