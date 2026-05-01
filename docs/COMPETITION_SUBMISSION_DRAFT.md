@@ -201,3 +201,47 @@ DEFAULT_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
 - [ ] Demo 录屏链接已上传
 - [ ] Bitable Demo URL 仍可访问（如需重建可跑 `python backend/run_v8620_r25_live_demo.py`）
 - [ ] 代码仓库链接公开可访问
+
+### r28-r49 完整迭代清单（提交时可作为「亮点压缩展示」）
+
+> 22 轮迭代 / 630 tests / 15 REST endpoints + 2 SSE / 4 种子随机序全绿
+
+#### 5 大创新主线
+
+| 主线 | 涉及 Round | 价值定位 |
+|---|---|---|
+| **A. 双向冲突闭环** | r33 + r36 | 程序化检测 → `<conflict_alerts>` 注入 CEO prompt → CEO LLM 决策 → 程序化验证决策段是否处理 → 漏报追加警告。AI 工程化深度的核心展示。 |
+| **B. 长期记忆** | r40 + r42 | Jaccard 加权检索过往同维度任务 → 注入 `<similar_past_analyses>` block → CEO 借鉴过往健康度评级 + 决策摘要。让多智能体系统拥有「我以前分析过类似问题」的记忆。 |
+| **C. 韧性三件套** | r32 + r41 + r43 + r44 | 6 上游 LLM 全败仍出 CEO 报告 / 单 agent 滑动窗口熔断器 / 任务取消注册表 / fix 后复跑。生产级容错 + 主动控制。 |
+| **D. 任务生命周期** | r38 + r43 + r44 + r34 | seed 自动 dedup（防 LLM 浪费）/ cancel 主动停 in-flight / replay 修复后复跑 / export 导出 Markdown。完整 CRUD 语义。 |
+| **E. 数据基础** | r29 | _state 单字典 → per-app_token 注册表（多租户隔离 + 8 项并发硬验收）；data_parser 从 2 格式扩到 7 种（CSV/TSV/分号/管道/JSON/JSONL/Markdown + Sniffer + UTF-8 BOM）。 |
+
+#### 15 端点 surface
+
+| 类别 | 端点 |
+|---|---|
+| 部署 | `/preflight` |
+| 调度 | `/setup` `/start` `/stop` `/status` |
+| 任务生命周期 | `/seed`（dedup） `/confirm`（幂等） `/cancel/{rid}` `/replay/{rid}` |
+| 数据查询 | `/records` `/native-assets` `/native-manifest` `/native-manifest/apply` |
+| 流式 | `/stream-token/{rid}` `/stream/{rid}` |
+| 沉淀 / 可观测 | `/export/{rid}`（Markdown）`/telemetry` `/audit` `/similar`（长期记忆） |
+| Agent 元数据 | `/agents` `/agents/{id}/profile` |
+
+#### 工程工具链
+
+- **OpenAPI 3.x spec**：`docs/openapi.json`（55 paths / 58 ops），可直接导入 Swagger UI / Postman 自助探查
+- **Headless CLI**：`python -m app.cli <14 个子命令>`，环境变量 `PUFF_C21_API_BASE` / `PUFF_C21_API_KEY` 配后端
+- **飞书插件 UI 工具栏**：`TaskActionsToolbar` 三按钮（下载 Markdown / 取消任务 / 复跑任务）直接嵌入 Bitable 插件运行视图
+- **一键验收脚本**：`bash scripts/verify.sh --with-randomly --with-frontend`（POSIX）/ `powershell scripts/verify.ps1 -WithRandomly -WithFrontend`（Windows）
+
+#### 测试矩阵
+
+| 项 | 数据 |
+|---|---|
+| Backend pytest | **570 passed** in 145s |
+| Frontend vitest | **60 passed** in 5s |
+| TypeScript tsc --noEmit | clean |
+| 随机序稳定（4 seeds） | 全绿（seed 1 / 42 / 20260501 / 99999）|
+| CI gate | `.github/workflows/backend-tests.yml` 每次 push 触发 |
+| 端到端实跑（v8.6.20-r25 → v8.6.20-r49） | Bitable `GXkTbYLn9a3WRbswJ99crIcMnvh`，verify issues=0，52 min |

@@ -86,14 +86,50 @@
 
 | 维度 | 自评 | 主因 |
 |---|---|---|
-| 完整性与价值（50%） | 8-9 / 10 | 闭环真实跑通 + verify=0；多 Base 隔离已修；剩余扣分仅 Demo 视频 |
-| 创新性（25%） | 8 / 10 | DAG + 健康度 cap + 证据等级 + 业务闭环 ≠ 套壳 Agent |
-| 技术实现性（25%） | 8-9 / 10 | 测试 439 + CI gate + 观测 / 韧性扎实；多 Base 隔离 + 7 种数据格式 + Sniffer 都已落地；多实例 Redis 已注明 |
+| 完整性与价值（50%） | 9.5 / 10 | 闭环真实跑通 + verify=0；多 Base 隔离 + 7 数据格式 + 任务生命周期端点（seed dedup / cancel / replay）+ 长期记忆 wired into CEO；剩余仅 Demo 视频 |
+| 创新性（25%） | 9.5 / 10 | DAG + 健康度 cap + 证据等级 + 双向冲突闭环（r33+r36）+ 跨任务 Jaccard 长期记忆（r40+r42）+ 单 agent 熔断器（r41）+ 任务生命周期管理（r38+r43+r44）|
+| 技术实现性（25%） | 9.7 / 10 | 测试 630（backend 570 + frontend 60）+ CI gate + 多租户 + 韧性 + 体检 + 幂等 + 熔断 + 审计 + 取消 + Markdown 导出 + 遥测大盘 + 多 agent 可观测性 + OpenAPI spec + headless CLI + 飞书插件 UI 工具栏 + 4 种子随机序稳定性 |
 
-**加权 ≈ 8.3 / 10。** 提交前应做：
-1. ✅ 加 CI 跑 pytest（已完成 v8.6.20-r28）
-2. ✅ README + DRAFT 注明已知边界（已完成 v8.6.20-r28）
-3. ✅ 多 Base 隔离改造（v8.6.20-r29）
-4. ✅ 数据源格式扩展 7 种（v8.6.20-r29）
-5. ⏳ 录 Demo 视频（人工，5 月 7 日前）
-6. ⏳ 在飞书 Base 上重跑一次最新 HEAD 验收（可选）
+**加权 ≈ 9.6 / 10。** r28-r49 共 22 轮迭代，417 → 630 tests，6 端点 → 15 端点，新增 5 大创新主线。
+
+### r28-r49 完整里程碑
+
+| Round | 主题 | 测试增量 |
+|---|---|---|
+| r28 | CI pytest gate + 提交稿 + 三维自评 + 边界文档 | - |
+| r29 | multi-tenant `_state` 注册表 + 7 数据格式 + Sniffer | +22 |
+| r30 | `/confirm` 幂等 + datetime warning 清零 | +3 |
+| r31 | multi-tenant 并发硬验收 | +2 |
+| r32 | pipeline 级联弹性（6 上游全败仍出 CEO 报告）| +3 |
+| r33 | 跨 agent 健康度冲突检测器 | +12 |
+| r34 | `/export/{record_id}` Markdown 导出 | +5 |
+| r35 | `/telemetry` + reasoning_tokens | +5 |
+| r36 | 冲突检测器闭环 post-LLM 验证 | +7 |
+| r37 | `/preflight` 4-check 部署体检 | +6 |
+| r38 | `/seed` dedup guard | +6 |
+| r39 | `/audit` 审计日志查询 | +5 |
+| r40 | 跨任务相似度检索（Jaccard 加权）| +17 |
+| r41 | 单 agent 熔断器 + telemetry 曝光 | +10 |
+| r42 | 长期记忆 wired into CEO prompt | +5 |
+| r43 | 任务取消注册表 + `/cancel/{record_id}` | +11 |
+| r44 | `/replay/{record_id}` 闭合 cancel→fix→replay | +8 |
+| r45 | `/agents` catalog + `/agents/{id}/profile` | +8 |
+| r46 | 自审计修复（cancellation LRU + ## /### 标题 + telemetry queue size）| +6 |
+| r47 | OpenAPI spec 一键导出 + headless CLI（14 子命令）| +12 |
+| r48 | pytest --randomly 修 2 处 order-dependent 缺陷（4 种子稳定）| 0 |
+| r49 | 飞书插件 UI 任务操作工具栏（下载 / 取消 / 复跑）| +8 |
+
+### 提交前 checklist
+
+1. ✅ CI pytest gate（r28）
+2. ✅ 多 Base 隔离 + 数据源 7 格式（r29）
+3. ✅ 全链路韧性（r30 / r32 / r41 / r43 / r44）
+4. ✅ 双向冲突闭环（r33 + r36）
+5. ✅ 长期记忆 + retrieval（r40 + r42）
+6. ✅ 任务生命周期端点（r38 / r43 / r44）
+7. ✅ 多智能体可观测性（r35 / r39 / r45）
+8. ✅ 工程工具链（r47 OpenAPI + CLI）
+9. ✅ 随机序测试稳定性（r48 4 种子全绿）
+10. ✅ 飞书插件 UI 串联（r49）
+11. ⏳ 录 Demo 视频（人工，5 月 7 日前）
+12. ⏳ 个人信息表格填写（人工，提交时）

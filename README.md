@@ -251,6 +251,7 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 - **OpenAPI spec 一键导出**：`cd backend && python -m scripts.export_openapi --pretty --out ../docs/openapi.json` → 拿到完整 OpenAPI 3.x JSON（55 paths / 58 operations / 115 KB），导入 Swagger UI / Postman 自助探查
 - **CLI 工具**：`python -m app.cli <command>` 14 个子命令覆盖全部端点（preflight / setup / start / stop / status / telemetry / agents / agent-profile / similar / cancel / replay / export / audit / seed）；环境变量 `PUFF_C21_API_BASE` + `PUFF_C21_API_KEY` 配置目标后端
 - **飞书插件 UI 工具栏**（v8.6.20-r49）：[`TaskActionsToolbar`](frontend/src/components/TaskActionsToolbar.tsx) 在 Bitable 插件运行视图里直接暴露三按钮 — 「下载 Markdown」/「取消任务」/「复跑任务（含 fresh 清缓存 checkbox）」— 不用切到 Swagger / CLI
+- **一键验收脚本**（v8.6.20-r50）：`bash scripts/verify.sh --with-randomly --with-frontend`（POSIX）/ `powershell -File scripts\verify.ps1 -WithRandomly -WithFrontend`（Windows）— 8 步把 git / pytest / compileall / 前端 / OpenAPI 导出 / CLI smoke / 提交清单全部过一遍
 | `GET`  | `/api/v1/workflow/native-assets` | 查看当前 Base 的原生蓝图状态 |
 | `GET`  | `/api/v1/workflow/native-manifest` | 查看原生安装顺序、命令包和 Markdown 安装说明 |
 | `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包，把蓝图落到飞书云侧 |
