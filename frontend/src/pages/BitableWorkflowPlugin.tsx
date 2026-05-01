@@ -46,6 +46,7 @@ import {
   TraceChainCard,
 } from "./bitableWorkflowPluginCards";
 import BitableAgentLauncher from "./BitableAgentLauncher";
+import TaskActionsToolbar from "@/components/TaskActionsToolbar";
 
 type StepStatus = "done" | "running" | "pending" | "error";
 type TimelineFilter = "all" | "base" | "sse" | "error";
@@ -1837,6 +1838,13 @@ export default function BitableWorkflowPlugin() {
                       selectedEvent={selectedTimelineEvent}
                       onSelectEvent={setSelectedTimelineEventKey}
                     />
+                    {task?.recordId && (
+                      <TaskActionsToolbar
+                        recordId={task.recordId}
+                        appToken={selection.baseId || undefined}
+                        taskStatus={textValue(task.fields["状态"]) || textValue(task.fields["当前阶段"])}
+                      />
+                    )}
                   </div>
                 </section>
               )}

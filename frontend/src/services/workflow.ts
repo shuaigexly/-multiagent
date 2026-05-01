@@ -202,6 +202,102 @@ export async function confirmTaskWorkflow(
   });
 }
 
+
+// v8.6.20-r49：暴露 r34 / r37 / r43 / r44 给 Bitable 插件 UI 调用 — 让用户在
+// 飞书插件里直接点按钮触发部署体检 / 取消任务 / 复跑任务 / 下载任务报告 Markdown，
+// 不用再切到 Swagger 或 CLI。
+
+export interface PreflightCheck {
+  name: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+  advisory: string;
+  elapsed_ms: number;
+}
+
+export interface PreflightReport {
+  ok: boolean;
+  started_at: string;
+  elapsed_ms: number;
+  checks: PreflightCheck[];
+}
+
+export async function runPreflight(): Promise<PreflightReport> {
+  const resp = await api.get<PreflightReport>('/api/v1/workflow/preflight');
+  return resp.data;
+}
+
+export interface CancelTaskResponse {
+  record_id: string;
+  cancelled: boolean;
+  already_pending: boolean;
+  bitable_marked: boolean;
+  queue_size: number;
+}
+
+export async function cancelTask(
+  record_id: string,
+  app_token?: string,
+): Promise<CancelTaskResponse> {
+  const params: Record<string, string> = {};
+  if (app_token) params.app_token = app_token;
+  const resp = await api.post<CancelTaskResponse>(
+    `/api/v1/workflow/cancel/${encodeURIComponent(record_id)}`,
+    null,
+    { params },
+  );
+  return resp.data;
+}
+
+export interface ReplayTaskResponse {
+  record_id: string;
+  replayed: boolean;
+  previous_status: string;
+  fresh: boolean;
+  cache_entries_cleared: number;
+  next_step: string;
+}
+
+export async function replayTask(
+  record_id: string,
+  options: { app_token?: string; fresh?: boolean } = {},
+): Promise<ReplayTaskResponse> {
+  const params: Record<string, string> = {
+    fresh: options.fresh ? 'true' : 'false',
+  };
+  if (options.app_token) params.app_token = options.app_token;
+  const resp = await api.post<ReplayTaskResponse>(
+    `/api/v1/workflow/replay/${encodeURIComponent(record_id)}`,
+    null,
+    { params },
+  );
+  return resp.data;
+}
+
+/**
+ * 下载任务全量产出 Markdown — 走 download=1 触发浏览器另存为，避免在标签页里
+ * 直接渲染长文档。返回 blob URL 供调用方做 anchor click。
+ */
+export async function downloadTaskMarkdown(
+  record_id: string,
+  app_token?: string,
+): Promise<{ blobUrl: string; filename: string }> {
+  const params: Record<string, string | boolean> = { download: true };
+  if (app_token) params.app_token = app_token;
+  const resp = await api.get<string>(
+    `/api/v1/workflow/export/${encodeURIComponent(record_id)}`,
+    { params, responseType: 'text' },
+  );
+  // FastAPI 返 Content-Disposition: attachment; filename="puff-c21-task-XXX.md"
+  const dispo = (resp.headers as Record<string, string> | undefined)?.['content-disposition'] || '';
+  const match = dispo.match(/filename="?([^";]+)"?/);
+  const filename = match ? match[1] : `puff-c21-task-${record_id.slice(0, 8)}.md`;
+  const blob = new Blob([resp.data], { type: 'text/markdown;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  return { blobUrl, filename };
+}
+
 export interface ProgressEvent {
   task_id: string;
   event_type:
