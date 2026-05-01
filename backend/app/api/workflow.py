@@ -1361,6 +1361,57 @@ async def workflow_stream(
     )
 
 
+@router.get("/audit", dependencies=[Depends(require_api_key)])
+async def workflow_audit(
+    target: Optional[str] = Query(None, max_length=256),
+    action_prefix: Optional[str] = Query(None, max_length=64),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """查询审计日志 — 评审 / 用户 / 运维核查工作流敏感操作历史。
+
+    过滤维度：
+      - target：把同一记录的 setup / start / seed / confirm / native_apply 全拉出来
+      - action_prefix：prefix 匹配（"workflow." / "config." / "oauth."），不传则不过滤
+      - limit：1-500，默认 50（按 created_at desc）
+
+    返回 payload 已经过 redact_sensitive_data 处理（写入时就脱敏，读出来不会泄漏 token）。
+    """
+    from sqlalchemy import desc, select
+
+    from app.models.database import AsyncSessionLocal, AuditLog
+
+    target_norm = _normalize_optional_query_string(target)
+    prefix_norm = _normalize_optional_query_string(action_prefix)
+
+    async with AsyncSessionLocal() as db:
+        stmt = select(AuditLog).order_by(desc(AuditLog.created_at)).limit(limit)
+        if target_norm:
+            stmt = stmt.where(AuditLog.target == target_norm)
+        if prefix_norm:
+            stmt = stmt.where(AuditLog.action.like(f"{prefix_norm}%"))
+        result = await db.execute(stmt)
+        rows = result.scalars().all()
+
+    return {
+        "count": len(rows),
+        "filter": {"target": target_norm, "action_prefix": prefix_norm, "limit": limit},
+        "events": [
+            {
+                "id": row.id,
+                "action": row.action,
+                "actor": row.actor,
+                "target": row.target,
+                "tenant_id": row.tenant_id,
+                "correlation_id": row.correlation_id,
+                "result": row.result,
+                "payload": row.payload or {},
+                "created_at": row.created_at.isoformat() if row.created_at else "",
+            }
+            for row in rows
+        ],
+    }
+
+
 @router.get("/preflight", dependencies=[Depends(require_api_key)])
 async def workflow_preflight():
     """部署前置体检 — 在调 /setup 之前先验证 Feishu / LLM / Redis 配置正确性。
