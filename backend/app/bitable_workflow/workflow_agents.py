@@ -400,6 +400,13 @@ async def _safe_analyze(
         except Exception as cache_exc:
             logger.debug("shared cache read skipped: %s", cache_exc)
 
+    # v8.6.20-r43：每个 agent 入口先检查取消信号 — 用户在 /cancel 端点点了取消
+    # 后，本任务后续的 agent 调用立即终止，避免浪费 LLM tokens。
+    if task_id:
+        from app.bitable_workflow import cancellation
+
+        cancellation.raise_if_cancelled(task_id)
+
     # v8.6.20-r41：熔断器先于 LLM 调用 — 若该 agent 已被标记 OPEN，跳过 LLM
     # 直接走 fallback，避免每条任务都被 broken pipe 拖 1-3 分钟超时。
     from app.agents import circuit_breaker

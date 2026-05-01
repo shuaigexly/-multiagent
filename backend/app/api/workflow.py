@@ -1361,6 +1361,66 @@ async def workflow_stream(
     )
 
 
+@router.post("/cancel/{record_id}", dependencies=[Depends(require_api_key)])
+async def workflow_cancel_task(
+    record_id: Annotated[str, Path(min_length=1, max_length=128)],
+    app_token: Optional[str] = Query(None, max_length=64),
+):
+    """主动取消一条 in-flight 任务（v8.6.20-r43）。
+
+    幂等：调用多次返回同样结果。`already_pending: true` 表示任务此前已被标记取消。
+
+    取消信号是进程内 set，所以：
+      - 单实例部署：本调度循环立即看到，下一个 agent 入口抛 TaskCancelled
+        → pipeline 走清理路径 → 主表回写 异常状态/异常类型 = 用户取消
+      - 多实例部署：取消请求只对处理本任务的实例生效；其他实例不受影响
+        （未来可换 Redis pub/sub 全局广播）
+
+    可选 `?app_token=` 用于把 Bitable 主表也立即标记 异常状态=已异常 + 异常类型=用户取消，
+    避免下一轮 cycle 仍把这条 cancel 任务当 PENDING 重启。
+    """
+    from app.bitable_workflow import cancellation
+
+    record_id_norm = _normalize_path_id(record_id, "record_id")
+    newly_added = cancellation.mark_cancelled(record_id_norm)
+
+    bitable_marked = False
+    target_token = _normalize_optional_query_string(app_token)
+    snapshot = _get_state(target_token)
+    resolved_token = str(snapshot.get("app_token") or "").strip()
+    table_ids = snapshot.get("table_ids") or {}
+    task_tid = table_ids.get("task")
+    if resolved_token and task_tid:
+        try:
+            await bitable_ops.update_record_optional_fields(
+                resolved_token,
+                task_tid,
+                record_id_norm,
+                {
+                    "异常状态": "已异常",
+                    "异常类型": "用户取消",
+                    "异常说明": "用户主动取消，已停止后续 agent 调用",
+                },
+                optional_keys=["异常状态", "异常类型", "异常说明"],
+            )
+            bitable_marked = True
+        except Exception as exc:
+            logger.warning("cancel: bitable mark failed: %s", exc)
+
+    await record_audit(
+        "workflow.cancel",
+        target=record_id_norm,
+        payload={"newly_added": newly_added, "bitable_marked": bitable_marked},
+    )
+    return {
+        "record_id": record_id_norm,
+        "cancelled": True,
+        "already_pending": not newly_added,
+        "bitable_marked": bitable_marked,
+        "queue_size": len(cancellation.list_cancelled()),
+    }
+
+
 @router.get("/similar", dependencies=[Depends(require_api_key)])
 async def workflow_similar_tasks(
     title: str = Query(..., min_length=1, max_length=200),
