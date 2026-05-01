@@ -1526,6 +1526,18 @@ async def workflow_telemetry():
         logger.debug("telemetry: sse subscribers fetch failed: %s", exc)
         sse_subscriber_counts = {}
 
+    # v8.6.20-r41：曝光每个 agent 的熔断器状态，让运维 / 评审能立刻看到哪个
+    # agent 持续失败被自动短路（OPEN）/ 在 cooldown 之后探活（HALF_OPEN）。
+    try:
+        from app.agents import circuit_breaker
+
+        agent_ids = ("data_analyst", "content_manager", "seo_advisor", "product_manager",
+                     "operations_manager", "finance_advisor", "ceo_assistant")
+        breakers = [circuit_breaker.get_status(aid) for aid in agent_ids]
+    except Exception as exc:
+        logger.debug("telemetry: circuit breaker fetch failed: %s", exc)
+        breakers = []
+
     return {
         "workflow": {
             "running": runner.is_running(),
@@ -1538,6 +1550,7 @@ async def workflow_telemetry():
             "active_streams": len(sse_subscriber_counts),
             "total_subscribers": sum(sse_subscriber_counts.values()),
         },
+        "circuit_breakers": breakers,
         "snapshot_at": datetime.now(tz=timezone.utc).isoformat(),
     }
 

@@ -400,13 +400,34 @@ async def _safe_analyze(
         except Exception as cache_exc:
             logger.debug("shared cache read skipped: %s", cache_exc)
 
+    # v8.6.20-r41：熔断器先于 LLM 调用 — 若该 agent 已被标记 OPEN，跳过 LLM
+    # 直接走 fallback，避免每条任务都被 broken pipe 拖 1-3 分钟超时。
+    from app.agents import circuit_breaker
+
+    if circuit_breaker.is_open(agent.agent_id):
+        logger.warning("[%s] circuit breaker OPEN — short-circuit to fallback", agent.agent_id)
+        try:
+            from app.agents.fallback import build_fallback_result
+
+            return build_fallback_result(
+                agent_id=agent.agent_id,
+                agent_name=agent.agent_name,
+                task_description=task_description,
+                upstream=upstream,
+                error_reason="circuit_breaker_open",
+            )
+        except Exception as fb_exc:
+            logger.warning("[%s] fallback build failed during CB short-circuit: %s", agent.agent_id, fb_exc)
+
     try:
         result = await agent.analyze(
             task_description=task_description,
             data_summary=data_summary,
             upstream_results=upstream or [],
         )
+        circuit_breaker.record_success(agent.agent_id)
     except Exception as exc:
+        circuit_breaker.record_failure(agent.agent_id)
         logger.error("[%s] analyze failed: %s", agent.agent_id, exc)
         # 规则引擎降级：返回基于 persona + upstream 的骨架报告，避免任务全空
         try:
