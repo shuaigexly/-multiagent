@@ -1292,6 +1292,57 @@ async def workflow_stream(
     )
 
 
+@router.get("/export/{record_id}", dependencies=[Depends(require_api_key)])
+async def workflow_export_task(
+    record_id: Annotated[str, Path(min_length=1, max_length=128)],
+    app_token: Optional[str] = Query(None, max_length=64),
+    download: bool = Query(False),
+):
+    """导出一条任务的全量产出为 Markdown — 供用户离线复盘 / 知识沉淀 / 评审下载。
+
+    路径 record_id 是「分析任务」表的主表 record_id；可选 ?app_token= 显式指定
+    base，缺省走最近活跃 base。`?download=1` 触发浏览器下载（带 Content-Disposition
+    attachment 头），不传则按 text/markdown 直接渲染。
+
+    汇编内容：任务元数据 / 背景 / CEO 综合报告 / 七岗 Agent 分析 / 证据链 /
+    交付动作 / 复核历史。任一从表缺失或读失败不影响其他段落。
+    """
+    from fastapi.responses import Response
+
+    from app.bitable_workflow.report_export import assemble_task_markdown
+
+    record_id_norm = _normalize_path_id(record_id, "record_id")
+    target_token = _normalize_optional_query_string(app_token)
+    snapshot = _get_state(target_token)
+    resolved_token = str(snapshot.get("app_token") or "").strip()
+    table_ids = snapshot.get("table_ids") or {}
+    if not resolved_token or not table_ids.get("task"):
+        raise HTTPException(status_code=409, detail="当前 base 未完成 setup，无法导出")
+
+    try:
+        markdown = await assemble_task_markdown(
+            app_token=resolved_token,
+            table_ids=table_ids,
+            record_id=record_id_norm,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("export task markdown failed: %s", exc)
+        raise HTTPException(status_code=502, detail="导出失败，请稍后重试") from exc
+
+    headers = {}
+    if download:
+        # 文件名只用 record_id 前缀避免 i18n 编码问题；浏览器拿到后会保存为 .md
+        safe_name = re.sub(r"[^A-Za-z0-9_-]", "", record_id_norm)[:32] or "task"
+        headers["Content-Disposition"] = f'attachment; filename="puff-c21-task-{safe_name}.md"'
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers=headers,
+    )
+
+
 @router.get("/records", dependencies=[Depends(require_api_key)])
 async def workflow_records(
     app_token: str = Query(..., min_length=1, max_length=64),

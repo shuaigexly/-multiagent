@@ -236,6 +236,7 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 | `POST` | `/api/v1/workflow/seed` | 向分析任务表写入一条新的待处理任务 |
 | `POST` | `/api/v1/workflow/confirm` | 回写拍板 / 执行完成 / 进入复盘等管理确认字段 |
 | `GET`  | `/api/v1/workflow/records` | 查询多维表格记录，支持 `?status=` 过滤 |
+| `GET`  | `/api/v1/workflow/export/{record_id}` | 把一条任务的全量产出（CEO 报告 + 七岗输出 + 证据链 + 行动项 + 复核历史）拼成 Markdown 下载，支持 `?app_token=` + `?download=1` |
 | `GET`  | `/api/v1/workflow/native-assets` | 查看当前 Base 的原生蓝图状态 |
 | `GET`  | `/api/v1/workflow/native-manifest` | 查看原生安装顺序、命令包和 Markdown 安装说明 |
 | `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包，把蓝图落到飞书云侧 |
