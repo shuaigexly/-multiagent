@@ -15,7 +15,7 @@
 | 痛点定义清楚 | 复杂经营 / 立项 / 风险 / 内容协作任务，单 Agent + 单工具不够；7 岗 DAG 一站式协同 |
 | AI 起到关键作用 | 7 岗每岗独立 LLM 调用 + 证据等级标注 + 健康度 cap 机制；CEO 助理基于上游汇总而非裸调 LLM |
 | 流程闭环 | 真实 Bitable 实跑确认 — CEO 行动项 → 写回主表「待分析」→ 调度循环下一轮接手；`scheduler.py::_create_followup_tasks` 限定前 3 条 + `[跟进]` 前缀防无限循环 |
-| Demo 稳定性 | v8.6.20-r25 在 `GXkTbYLn9a3WRbswJ99crIcMnvh` 跑通 52 min 端到端，verify_bitable issues=0 |
+| Demo 稳定性 | v8.6.20-r51（2026-05-01）最新实跑：`T2QibqZe5aZa6mseY1UcF5A0n1f`，50 min / verify issues=0 / 12 表 / 业务闭环成立。v8.6.20-r25 基线（2026-04-30）：`GXkTbYLn9a3WRbswJ99crIcMnvh`，52 min / verify issues=0 |
 | 实际价值 | 7 岗并行 ≤1 h vs 传统 50 h 人工复盘；证据全沉淀「证据链」表硬证据 / 待验证 / 风险机会分级 |
 
 ### ⚠️ 已知差距

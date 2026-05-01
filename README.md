@@ -272,7 +272,7 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 1. 本地后端回归测试 — `pytest backend/tests` **417 passed**（v8.6.20-r27）
 2. 模板中心 / 调度 / 输入边界 / 工作流流式 / 多维表面回归
 3. 前端生产构建 + GitHub Pages 部署
-4. **真实飞书多维表格端到端实跑** — v8.6.20-r25 在 `GXkTbYLn9a3WRbswJ99crIcMnvh` 跑通 setup_workflow + 1 轮 cycle，3153 s 内 verify_bitable issues=0、3 条 SEED 任务由 7 岗 DAG 完成、CEO 行动项写回主表生成新「待分析」任务，闭环成立
+4. **真实飞书多维表格端到端实跑** — v8.6.20-r51（最新 / 2026-05-01）在 `T2QibqZe5aZa6mseY1UcF5A0n1f` 跑通 setup_workflow + 1 轮 cycle，3014 s 内 verify_bitable issues=0、3 条 SEED 任务由 7 岗 DAG 完成、CEO 综合「健康=🟡 关注 紧急度=4」、follow-up + review_recheck 自动跟进任务都生效；v8.6.20-r25 基线 `GXkTbYLn9a3WRbswJ99crIcMnvh` 同样 verify=0
 
 详见：
 

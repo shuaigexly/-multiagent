@@ -3,7 +3,8 @@
 > **项目名称**：Puff C21 · 多维表格上的多智能体虚拟组织
 > **赛道**：AI 产品赛道
 > **代码仓库**：https://github.com/shuaigexly/-multiagent
-> **可访问 Bitable Demo**：https://feishu.cn/base/GXkTbYLn9a3WRbswJ99crIcMnvh
+> **最新可访问 Bitable Demo**：https://feishu.cn/base/T2QibqZe5aZa6mseY1UcF5A0n1f （v8.6.20-r51 实跑，含 r28-r49 全量特性）
+> **历史 Bitable Demo**：https://feishu.cn/base/GXkTbYLn9a3WRbswJ99crIcMnvh （v8.6.20-r25 实跑，对比基线）
 > **GitHub Pages 插件入口**：https://shuaigexly.github.io/-multiagent/bitable.html
 
 ---
@@ -37,13 +38,26 @@
 5. CEO 助理汇总报告写回「综合报告」表 → 飞书群收到富文本卡片
 6. CEO 行动项自动生成新「待分析」任务 → 形成业务闭环
 
-**已运行交付物（v8.6.20-r25 实跑结果）**
+**已运行交付物**
+
+##### v8.6.20-r51 最新实跑（含 r28-r49 全量特性 / 2026-05-01）
+
+- 🆔 app_token：`T2QibqZe5aZa6mseY1UcF5A0n1f`
+- 🔗 Bitable URL：https://feishu.cn/base/T2QibqZe5aZa6mseY1UcF5A0n1f
+- ⏱️ 端到端耗时：3014.5 s（≈50 min，含 setup + cycle + audit）
+- ✅ verify_bitable issues：**0**
+- 📊 cycle 处理任务数 = 3，状态分布 `{已归档: 1, 已完成: 3, 待分析: 15}`，CEO 示例报告：「InsightHub 三月运营复盘 健康=🟡 关注 紧急度=4」
+- 📊 落库数据：12 张表（task / output / report / performance / datasource / evidence / review / action / review_history / archive / automation_log / template）/ ~24 视图 / 业务闭环（CEO 行动项 → follow-up + review_recheck 自动跟进任务都生效）/ 65 条自动化日志
+
+##### v8.6.20-r25 历史实跑（对比基线 / 2026-04-30）
 
 - 🆔 app_token：`GXkTbYLn9a3WRbswJ99crIcMnvh`
 - 🔗 Bitable URL：https://feishu.cn/base/GXkTbYLn9a3WRbswJ99crIcMnvh
-- ⏱️ 端到端耗时：3153.9 s（≈52 min，含 setup + cycle + audit）
+- ⏱️ 端到端耗时：3153.9 s（≈52 min）
 - ✅ verify_bitable issues：**0**
 - 📊 落库数据：12 张表 / 24 视图 / 20 任务 / 21 岗位输出 / 35 证据链 / 66 自动化日志
+
+> 两次端到端实跑 verify issues 都是 0，说明 r28-r49 累积的 22 轮迭代没有引入新 Bitable 落库 bug。
 
 #### 2）核心部分代码展示
 
@@ -268,4 +282,5 @@ DEFAULT_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
 | TypeScript tsc --noEmit                 | clean                                                          |
 | 随机序稳定（4 seeds）                   | 全绿（seed 1 / 42 / 20260501 / 99999）                         |
 | CI gate                                 | `.github/workflows/backend-tests.yml` 每次 push 触发           |
-| 端到端实跑（v8.6.20-r25 → v8.6.20-r49） | Bitable `GXkTbYLn9a3WRbswJ99crIcMnvh`，verify issues=0，52 min |
+| 端到端实跑（v8.6.20-r51 / 2026-05-01） | Bitable `T2QibqZe5aZa6mseY1UcF5A0n1f`，verify issues=0，50 min（最新 / 含 r28-r49 全量特性）|
+| 端到端实跑（v8.6.20-r25 / 2026-04-30） | Bitable `GXkTbYLn9a3WRbswJ99crIcMnvh`，verify issues=0，52 min（基线对比）|
