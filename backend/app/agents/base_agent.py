@@ -419,6 +419,19 @@ class BaseAgent(ABC):
                 + upstream_content
                 + "\n</upstream_analysis>\n"
             )
+            # v8.6.20-r33：仅对综合岗（CEO 助理）启用程序化冲突检测。规则引擎扫
+            # 上游 health_hint × confidence_hint，硬冲突（颜色差 ≥ 2 且双方 conf ≥ 3）
+            # 显式注入 <conflict_alerts> 块，强制 CEO 在「需拍板的决策」里处理 —
+            # 兜底 LLM 在长上下文里漏看冲突的盲区。
+            if self.agent_id == "ceo_assistant":
+                from app.agents.conflict_detector import (
+                    detect_health_conflicts,
+                    format_conflicts_for_prompt,
+                )
+                conflicts = detect_health_conflicts(upstream_results)
+                conflict_block = format_conflicts_for_prompt(conflicts)
+                if conflict_block:
+                    upstream_section += conflict_block
 
         # Load and inject matching skills
         from app.core.skill_loader import format_skills_for_prompt, get_skills_for_agent
