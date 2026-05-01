@@ -146,12 +146,40 @@ class CEOAssistantAgent(BaseAgent):
 """
 
     def _parse_output(self, raw: str):
-        """CEO助理特殊处理：提取管理摘要作为首个action_item，便于飞书消息推送。"""
+        """CEO助理特殊处理：
+        1. 提取管理摘要作为首个 action_item，便于飞书消息推送
+        2. v8.6.20-r36：验证 r33 注入的 <conflict_alerts> 是否被 LLM 在决策段落
+           显式处理；未处理的冲突追加到 thinking_process 警告，让前端 / 用户能看到
+           "AI 漏掉了这条冲突，请人工补一下取舍依据"。
+        """
         result = super()._parse_output(raw)
         for section in result.sections:
             if "管理摘要" in section.title or "一段话" in section.title:
                 result.action_items.insert(0, f"[摘要] {section.content.strip()}")
                 break
+
+        # 程序化冲突闭环验证
+        try:
+            from app.agents.conflict_detector import (
+                format_unresolved_warning,
+                get_active_conflicts,
+                verify_conflicts_addressed,
+            )
+
+            active = get_active_conflicts()
+            if active:
+                unresolved = verify_conflicts_addressed(raw, active)
+                if unresolved:
+                    warning = format_unresolved_warning(unresolved)
+                    # 把警告插到 thinking_process 末尾（前端原本就用这字段做侧栏）
+                    if result.thinking_process:
+                        result.thinking_process = result.thinking_process + "\n\n" + warning
+                    else:
+                        result.thinking_process = warning
+        except Exception:
+            # 验证逻辑不该让 CEO 输出失败
+            pass
+
         return result
 
 

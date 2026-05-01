@@ -137,3 +137,88 @@ def format_conflicts_for_prompt(conflicts: list[HealthConflict]) -> str:
         + "\n".join(lines)
         + "\n</conflict_alerts>\n"
     )
+
+
+# v8.6.20-r36：把当前任务检测到的硬冲突存进 ContextVar，让 CEOAssistantAgent
+# 在 _parse_output 阶段验证 LLM 是否真的处理了它们。形成"程序化注入 → LLM 决策
+# → 程序化验证"完整闭环。
+import contextvars
+
+_active_conflicts: contextvars.ContextVar[Optional[list[HealthConflict]]] = contextvars.ContextVar(
+    "active_health_conflicts", default=None
+)
+
+
+def set_active_conflicts(conflicts: list[HealthConflict]) -> "contextvars.Token":
+    """把检测出的硬冲突注入当前 asyncio context；返回 token，调用方 reset() 清理。"""
+    return _active_conflicts.set(list(conflicts))
+
+
+def clear_active_conflicts(token: "contextvars.Token") -> None:
+    _active_conflicts.reset(token)
+
+
+def get_active_conflicts() -> list[HealthConflict]:
+    return list(_active_conflicts.get() or [])
+
+
+from typing import Optional  # noqa: E402  (re-import for type alias above)
+
+
+def verify_conflicts_addressed(
+    raw_output: str,
+    conflicts: list[HealthConflict],
+) -> list[HealthConflict]:
+    """检查 CEO LLM 输出里每个冲突是否在「需拍板的决策」附近被 explicit 提到。
+
+    判定规则（保守版，避免误报）：
+      1. 抽出 raw_output 里 `## CEO 需拍板的决策` 标题之后到下一个 `##` 或文末
+         的内容作为决策段落
+      2. 对每个冲突：要求决策段落里同时出现 agent_a_name + agent_b_name
+         （或对应的 agent_id 也算），其中至少一个 agent_a/b 名字必须出现在该段
+      3. 任何不满足的冲突 → 返回；调用方据此追加 thinking_process 警告
+
+    Args:
+        raw_output: CEO LLM 完整输出文本
+        conflicts: r33 detect_health_conflicts 返回的 HealthConflict 列表
+
+    Returns:
+        list[HealthConflict] — 未在决策段落里被处理的冲突；空 = 全处理。
+    """
+    if not conflicts or not raw_output:
+        return list(conflicts)
+
+    # 按 ## 标题切，找包含「需拍板」/「决策」的段落
+    decision_block = ""
+    parts = raw_output.split("\n## ")
+    for part in parts:
+        # 第一个 part 不会带 "## "（可能是文档前缀）；其他 part 形如 "标题\n正文..."
+        head_line, _, body = part.partition("\n")
+        if "需拍板" in head_line or ("决策" in head_line and "整合" not in head_line):
+            decision_block += "\n" + body
+
+    # 兜底：找不到决策段落 → 用整段输出（保守，避免漏报）
+    if not decision_block.strip():
+        decision_block = raw_output
+
+    unresolved: list[HealthConflict] = []
+    for c in conflicts:
+        a_present = c.agent_a_name in decision_block or c.agent_a_id in decision_block
+        b_present = c.agent_b_name in decision_block or c.agent_b_id in decision_block
+        # 至少需要双方都被提到一次
+        if not (a_present and b_present):
+            unresolved.append(c)
+    return unresolved
+
+
+def format_unresolved_warning(unresolved: list[HealthConflict]) -> str:
+    """生成给 thinking_process 追加的警告文本。空列表返空串。"""
+    if not unresolved:
+        return ""
+    lines = [
+        "⚠️ 系统检测到以下硬冲突未在「CEO 需拍板的决策」一栏被显式处理 —",
+        "请补充取舍依据，避免决策被误读：",
+    ]
+    for c in unresolved:
+        lines.append(f"  · {c.render()}")
+    return "\n".join(lines)

@@ -427,8 +427,13 @@ class BaseAgent(ABC):
                 from app.agents.conflict_detector import (
                     detect_health_conflicts,
                     format_conflicts_for_prompt,
+                    set_active_conflicts,
                 )
                 conflicts = detect_health_conflicts(upstream_results)
+                # v8.6.20-r36：把硬冲突注入 ContextVar，CEO _parse_output 阶段会读取
+                # 并验证 LLM 是否真的在「需拍板的决策」段落显式处理了每一项。
+                # 即便没冲突也调一次（清空旧值），避免跨任务串台。
+                set_active_conflicts(conflicts)
                 conflict_block = format_conflicts_for_prompt(conflicts)
                 if conflict_block:
                     upstream_section += conflict_block
