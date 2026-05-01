@@ -73,11 +73,27 @@ def _get_state(app_token: Optional[str] = None) -> dict:
 
     若指定 token 不在 registry 但 legacy _state 有内容（例如 pytest 直接灌
     `workflow._state.update(...)`），fallback 到 legacy 视图。
+
+    v8.6.20-r48（pytest --randomly audit 修复）：当未传 app_token 时，pytest fixture
+    路径常常直接 `workflow._state.update({...})` 灌种子但不动 _active_token。如果
+    _active_token 还指向上一 test 的 bucket，返回的是错的状态。规则：未传 app_token
+    且 legacy _state 与 active bucket 不一致 → 优先 legacy（test 意图）。
     """
-    target = _normalize_token(app_token) or _active_token
-    bucket = _state_by_token.get(target)
-    if bucket is not None:
-        return dict(bucket)
+    explicit_token = _normalize_token(app_token)
+    if explicit_token:
+        bucket = _state_by_token.get(explicit_token)
+        if bucket is not None:
+            return dict(bucket)
+        return dict(_state)
+
+    # 未传 app_token：检测 legacy 是否被外部直接修改（divergence）
+    if _active_token:
+        active_bucket = _state_by_token.get(_active_token, {})
+        if dict(active_bucket) != dict(_state) and _state:
+            # legacy 有内容且与 active bucket 不一致 → 测试 / 旧路径写了 legacy，优先它
+            return dict(_state)
+        if active_bucket:
+            return dict(active_bucket)
     return dict(_state)
 
 

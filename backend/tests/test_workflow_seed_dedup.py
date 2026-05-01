@@ -201,8 +201,15 @@ async def test_seed_dedup_check_failure_does_not_block_create(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_find_duplicate_handles_richtext_title():
-    """辅助函数级别：飞书富文本数组 [{text:"Q3"},...] 应被正确拍平。"""
+async def test_find_duplicate_handles_richtext_title(monkeypatch):
+    """辅助函数级别：飞书富文本数组 [{text:"Q3"},...] 应被正确拍平。
+
+    v8.6.20-r48（pytest --randomly audit 修复）：原实现用 `bitable_ops.list_records = fake_list`
+    + finally 中 `importlib.reload(bitable_ops)`。reload 会替换 bitable_ops 模块全部
+    属性引用 → 其他测试文件 `from bitable_ops import _FIELD_CACHE, field_exists` 早已
+    绑定的 OLD 引用瞬间失效，导致 test_v8619_phase0 在 random order 下失败。
+    改用 monkeypatch.setattr 配 pytest 自动 restore，零污染。
+    """
     from app.api import workflow
     from app.bitable_workflow import bitable_ops
 
@@ -218,17 +225,12 @@ async def test_find_duplicate_handles_richtext_title():
             }
         ]
 
-    bitable_ops.list_records = fake_list  # 临时直接注入
-    try:
-        result = await workflow._find_duplicate_pending_task(
-            "app", "tbl", "Q3 经营复盘", "综合分析"
-        )
-        assert result is not None
-        assert result["record_id"] == "rec_x"
-    finally:
-        # 测试后还原 — 避免污染其他用例
-        import importlib
-        importlib.reload(bitable_ops)
+    monkeypatch.setattr(bitable_ops, "list_records", fake_list)
+    result = await workflow._find_duplicate_pending_task(
+        "app", "tbl", "Q3 经营复盘", "综合分析"
+    )
+    assert result is not None
+    assert result["record_id"] == "rec_x"
 
 
 # ---- helpers ----
