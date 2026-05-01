@@ -237,6 +237,40 @@ def test_verify_flags_conflict_when_only_one_agent_named_in_decisions():
     assert len(unresolved) == 1, "只提单方面 → 不算 explicit 处理冲突"
 
 
+def test_verify_handles_h3_decision_section_header():
+    """v8.6.20-r46（自审计修复）：LLM 用 ### 三级标题时也应该被识别为决策段。"""
+    from app.agents.conflict_detector import HealthConflict, verify_conflicts_addressed
+
+    conflict = HealthConflict(
+        agent_a_id="data_analyst", agent_a_name="数据分析师", color_a="🟢", confidence_a=5,
+        agent_b_id="finance_advisor", agent_b_name="财务顾问", color_b="🔴", confidence_b=4,
+    )
+    raw = (
+        "## 执行仪表盘\n表格略\n\n"
+        "### CEO 需拍板的决策\n"  # 三级标题（不少 LLM 输出实际这样）
+        "数据分析师认为 🟢，财务顾问认为 🔴，倾向财务判断；现金流量化更可信。\n"
+        "\n## 跨部门整合洞察\n略"
+    )
+    unresolved = verify_conflicts_addressed(raw, [conflict])
+    assert unresolved == [], "## 或 ### 决策段都应被识别为已处理"
+
+
+def test_verify_handles_mixed_h2_h3_levels():
+    """有些 LLM 输出的标题层级混合，必须容错。"""
+    from app.agents.conflict_detector import HealthConflict, verify_conflicts_addressed
+
+    conflict = HealthConflict(
+        agent_a_id="seo_advisor", agent_a_name="SEO 顾问", color_a="🟢", confidence_a=4,
+        agent_b_id="operations_manager", agent_b_name="运营负责人", color_b="🔴", confidence_b=4,
+    )
+    raw = (
+        "### 决策事项\n"
+        "SEO 顾问 vs 运营负责人 评级冲突 — 建议优先信任运营。\n"
+    )
+    unresolved = verify_conflicts_addressed(raw, [conflict])
+    assert unresolved == []
+
+
 def test_format_unresolved_warning_empty_list_returns_empty():
     from app.agents.conflict_detector import format_unresolved_warning
     assert format_unresolved_warning([]) == ""

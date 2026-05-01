@@ -85,6 +85,51 @@ def test_list_cancelled_returns_sorted():
     assert cancellation.list_cancelled() == ["rec_a", "rec_b", "rec_c"]
 
 
+def test_queue_size_reflects_pending_cancellations():
+    from app.bitable_workflow import cancellation
+    assert cancellation.queue_size() == 0
+    cancellation.mark_cancelled("rec_x")
+    cancellation.mark_cancelled("rec_y")
+    assert cancellation.queue_size() == 2
+    cancellation.clear_cancelled("rec_x")
+    assert cancellation.queue_size() == 1
+
+
+def test_lru_bound_evicts_oldest_when_overflow(monkeypatch):
+    """v8.6.20-r46：恶意 caller 用随机 record_id 反复 mark_cancelled 不应吃满进程内存。
+    超过 _MAX_SIZE → 弹出最旧条目。"""
+    from app.bitable_workflow import cancellation
+
+    cancellation.reset_for_tests()
+    monkeypatch.setattr(cancellation, "_MAX_SIZE", 3)
+
+    cancellation.mark_cancelled("oldest")
+    cancellation.mark_cancelled("middle_a")
+    cancellation.mark_cancelled("middle_b")
+    cancellation.mark_cancelled("newest")  # 触发 evict oldest
+
+    assert cancellation.queue_size() == 3
+    assert cancellation.is_cancelled("oldest") is False  # 被 LRU 弹出
+    assert cancellation.is_cancelled("newest") is True
+    assert cancellation.is_cancelled("middle_a") is True
+    assert cancellation.is_cancelled("middle_b") is True
+
+
+def test_lru_bound_does_not_evict_when_below_capacity(monkeypatch):
+    from app.bitable_workflow import cancellation
+
+    cancellation.reset_for_tests()
+    monkeypatch.setattr(cancellation, "_MAX_SIZE", 100)
+
+    for i in range(50):
+        cancellation.mark_cancelled(f"rec_{i}")
+
+    # 50 条全部留在表内
+    assert cancellation.queue_size() == 50
+    assert cancellation.is_cancelled("rec_0") is True
+    assert cancellation.is_cancelled("rec_49") is True
+
+
 # ---------- _safe_analyze 与 cancellation 的集成 ----------
 
 

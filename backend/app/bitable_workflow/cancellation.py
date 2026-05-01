@@ -26,6 +26,9 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import OrderedDict
+
+from app.core.env import get_int_env
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,11 @@ class TaskCancelled(RuntimeError):
     """
 
 
-_cancelled_ids: set[str] = set()
+# v8.6.20-r46（自审计修复）：用 OrderedDict 实现 LRU bounded 集合，防止恶意 caller
+# 用随机 record_id 反复调 /cancel 把进程内存吃满。MAX_SIZE 默认 10000，环境变量
+# CANCELLATION_MAX_SIZE 可调；超出上限 → 弹出最旧条目（FIFO）。
+_MAX_SIZE = get_int_env("CANCELLATION_MAX_SIZE", 10000, minimum=10, maximum=1_000_000)
+_cancelled_ids: OrderedDict[str, None] = OrderedDict()
 _lock = threading.Lock()
 
 
@@ -49,15 +56,28 @@ def _normalize(record_id: object) -> str:
 
 
 def mark_cancelled(record_id: str) -> bool:
-    """把 record_id 标记为待取消。返回 True 表示新加，False 表示已经在表里。"""
+    """把 record_id 标记为待取消。返回 True 表示新加，False 表示已经在表里。
+
+    LRU 模式：超过 _MAX_SIZE 时弹出最旧条目，保证内存有界。新加的条目放队尾。
+    """
     rid = _normalize(record_id)
     if not rid:
         return False
     with _lock:
         if rid in _cancelled_ids:
             return False
-        _cancelled_ids.add(rid)
-        logger.info("[cancel] task=%s queued for cancellation", rid)
+        _cancelled_ids[rid] = None
+        evicted = ""
+        while len(_cancelled_ids) > _MAX_SIZE:
+            evicted_id, _ = _cancelled_ids.popitem(last=False)  # FIFO 弹最旧
+            evicted = evicted_id
+        if evicted:
+            logger.warning(
+                "[cancel] queue overflow — evicted oldest %s; new entry %s",
+                evicted, rid,
+            )
+        else:
+            logger.info("[cancel] task=%s queued for cancellation", rid)
         return True
 
 
@@ -82,7 +102,7 @@ def clear_cancelled(record_id: str) -> bool:
         return False
     with _lock:
         if rid in _cancelled_ids:
-            _cancelled_ids.discard(rid)
+            _cancelled_ids.pop(rid, None)
             return True
         return False
 
@@ -90,7 +110,13 @@ def clear_cancelled(record_id: str) -> bool:
 def list_cancelled() -> list[str]:
     """运维 / telemetry 看当前还有多少 in-flight 取消请求。"""
     with _lock:
-        return sorted(_cancelled_ids)
+        return sorted(_cancelled_ids.keys())
+
+
+def queue_size() -> int:
+    """运维探针：当前 cancellation 注册表里有几条 in-flight 取消请求。"""
+    with _lock:
+        return len(_cancelled_ids)
 
 
 def reset_for_tests() -> None:

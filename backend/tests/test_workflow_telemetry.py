@@ -161,3 +161,32 @@ async def test_telemetry_counts_active_sse_subscribers(monkeypatch):
         assert resp["sse"]["total_subscribers"] == 3
     finally:
         progress_broker._subscribers.clear()
+
+
+@pytest.mark.asyncio
+async def test_telemetry_exposes_cancellation_queue_state(monkeypatch):
+    """v8.6.20-r46（自审计补全）：cancellation 队列大小 + 前 20 个 ID 应在 telemetry 里曝光。"""
+    _ensure_sse_stub(monkeypatch)
+    from app.api import workflow
+    from app.bitable_workflow import cancellation
+    from app.core import budget
+
+    monkeypatch.setattr(workflow.runner, "is_running", lambda: False)
+
+    async def fake_status():
+        return {"tenant_today": {"used": 0}, "global_today": {"used": 0}}
+
+    monkeypatch.setattr(budget, "get_status", fake_status)
+
+    cancellation.reset_for_tests()
+    cancellation.mark_cancelled("rec_pending_a")
+    cancellation.mark_cancelled("rec_pending_b")
+
+    try:
+        resp = await workflow.workflow_telemetry()
+        assert "cancellation" in resp
+        assert resp["cancellation"]["queue_size"] == 2
+        assert "rec_pending_a" in resp["cancellation"]["pending_record_ids"]
+        assert "rec_pending_b" in resp["cancellation"]["pending_record_ids"]
+    finally:
+        cancellation.reset_for_tests()

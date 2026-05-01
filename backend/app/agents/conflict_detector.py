@@ -188,12 +188,17 @@ def verify_conflicts_addressed(
     if not conflicts or not raw_output:
         return list(conflicts)
 
-    # 按 ## 标题切，找包含「需拍板」/「决策」的段落
+    # v8.6.20-r46（自审计修复）：原实现只 split("\n## ")，LLM 用 "### " 三级标题
+    # 时整段输出会落到第一个 part 里，决策段判断失效。改用正则同时匹配 ## / ###
+    # 两级标题；这两级在 CEO prompt template 模板里都会出现。
+    import re as _re
     decision_block = ""
-    parts = raw_output.split("\n## ")
+    # 拆分点：行首 ## 或 ###（不含 ####+）
+    parts = _re.split(r"\n#{2,3}\s+", "\n" + raw_output)
     for part in parts:
-        # 第一个 part 不会带 "## "（可能是文档前缀）；其他 part 形如 "标题\n正文..."
         head_line, _, body = part.partition("\n")
+        if not head_line:
+            continue
         if "需拍板" in head_line or ("决策" in head_line and "整合" not in head_line):
             decision_block += "\n" + body
 

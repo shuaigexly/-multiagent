@@ -1784,6 +1784,19 @@ async def workflow_telemetry():
         logger.debug("telemetry: circuit breaker fetch failed: %s", exc)
         breakers = []
 
+    # v8.6.20-r46（自审计补全）：cancellation 注册表大小也应可观测。线上若发现
+    # queue_size 持续上涨说明有大量 /cancel 但任务没真正进入终态清表 → 内存压力。
+    try:
+        from app.bitable_workflow import cancellation
+
+        cancellation_state = {
+            "queue_size": cancellation.queue_size(),
+            "pending_record_ids": cancellation.list_cancelled()[:20],  # 只露前 20 个
+        }
+    except Exception as exc:
+        logger.debug("telemetry: cancellation fetch failed: %s", exc)
+        cancellation_state = {"queue_size": 0, "pending_record_ids": []}
+
     return {
         "workflow": {
             "running": runner.is_running(),
@@ -1797,6 +1810,7 @@ async def workflow_telemetry():
             "total_subscribers": sum(sse_subscriber_counts.values()),
         },
         "circuit_breakers": breakers,
+        "cancellation": cancellation_state,
         "snapshot_at": datetime.now(tz=timezone.utc).isoformat(),
     }
 
