@@ -243,6 +243,8 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 | `GET`  | `/api/v1/workflow/preflight` | 部署前置体检：Feishu token / LLM 可达性 / 国内模型合规 / Redis（4 项并发检查 + 修复建议） |
 | `GET`  | `/api/v1/workflow/audit` | 审计日志查询：`?target=record_id` 拉一条任务全部敏感操作历史；`?action_prefix=workflow.` 按命名空间过滤；payload 已脱敏 |
 | `GET`  | `/api/v1/workflow/similar` | **跨任务相似度检索（多智能体长期记忆）**：`?title=&dimension=&background=` Jaccard 加权打分扫已完成 / 已归档历史，返回 top_k 相似任务 + 健康度 + 决策摘要 |
+| `GET`  | `/api/v1/workflow/agents` | **七岗 Agent 目录**：每条返 id / name / description / DAG 依赖 / 加载技能数 / 激活 prompt hint 数 / 熔断器状态 |
+| `GET`  | `/api/v1/workflow/agents/{agent_id}/profile` | **单岗位完整画像**：身份 + 模型配置（max_tokens / temperature / plan_execute）+ 全部技能元数据 + 激活的 prompt 演化 hint + 熔断状态 |
 | `GET`  | `/api/v1/workflow/native-assets` | 查看当前 Base 的原生蓝图状态 |
 | `GET`  | `/api/v1/workflow/native-manifest` | 查看原生安装顺序、命令包和 Markdown 安装说明 |
 | `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包，把蓝图落到飞书云侧 |

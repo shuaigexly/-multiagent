@@ -1361,6 +1361,100 @@ async def workflow_stream(
     )
 
 
+@router.get("/agents", dependencies=[Depends(require_api_key)])
+async def workflow_agents_catalog():
+    """七岗 Agent 完整目录（v8.6.20-r45）— 评审 / 用户 / 运维一眼看清系统装了哪些 agent。
+
+    每个 agent 返回：id / name / description / dependencies / 加载的技能数 /
+    激活的 prompt 提示数 / 熔断器状态。深入查单个岗位走 /agents/{id}/profile。
+    """
+    from app.agents import circuit_breaker
+    from app.agents.registry import AGENT_DEPENDENCIES, AGENT_INFO
+    from app.core.prompt_evolution import fetch_active_hints
+    from app.core.skill_loader import get_skills_for_agent
+
+    out: list[dict] = []
+    for info in AGENT_INFO:
+        aid = info["id"]
+        try:
+            skills = get_skills_for_agent(aid)
+        except Exception:
+            skills = []
+        try:
+            hints = await fetch_active_hints(aid)
+        except Exception:
+            hints = []
+        out.append({
+            "id": aid,
+            "name": info["name"],
+            "description": info["description"],
+            "suitable_for": info.get("suitable_for", []),
+            "downstream_dependencies": sorted(AGENT_DEPENDENCIES.get(aid, [])),
+            "loaded_skills_count": len(skills),
+            "active_hints_count": len(hints),
+            "circuit_breaker": circuit_breaker.get_status(aid),
+        })
+    return {"count": len(out), "agents": out}
+
+
+@router.get("/agents/{agent_id}/profile", dependencies=[Depends(require_api_key)])
+async def workflow_agent_profile(
+    agent_id: Annotated[str, Path(min_length=1, max_length=64)],
+):
+    """单个 agent 的完整画像：身份 + DAG 依赖 + 加载的技能内容 +
+    激活的 prompt 自演化 hint + 熔断状态。
+
+    用途：评审 / 用户 想看「数据分析师到底装了什么 prompt 模板」。
+    """
+    from app.agents import circuit_breaker
+    from app.agents.registry import AGENT_DEPENDENCIES, AGENT_INFO, AGENT_REGISTRY
+    from app.core.prompt_evolution import fetch_active_hints
+    from app.core.skill_loader import get_skills_for_agent
+
+    aid = _normalize_path_id(agent_id, "agent_id")
+    if aid not in AGENT_REGISTRY:
+        raise HTTPException(status_code=404, detail=f"agent_id={aid} 不存在")
+
+    info = next((i for i in AGENT_INFO if i["id"] == aid), {})
+    agent = AGENT_REGISTRY[aid]
+
+    skills = []
+    try:
+        for s in get_skills_for_agent(aid):
+            skills.append({
+                "skill_id": s.meta.skill_id,
+                "name": s.meta.name,
+                "tags": s.meta.tags,
+                "priority": s.meta.priority,
+                "description": s.meta.description,
+                "content_chars": len(s.content or ""),
+            })
+    except Exception as exc:
+        logger.warning("agent profile: skill load failed: %s", exc)
+
+    try:
+        hints = await fetch_active_hints(aid)
+    except Exception:
+        hints = []
+
+    return {
+        "id": aid,
+        "name": info.get("name", agent.agent_name),
+        "description": info.get("description", agent.agent_description),
+        "suitable_for": info.get("suitable_for", []),
+        "downstream_dependencies": sorted(AGENT_DEPENDENCIES.get(aid, [])),
+        "model_config": {
+            "max_tokens": agent.max_tokens,
+            "temperature": agent.temperature,
+            "plan_execute_enabled": agent.plan_execute_enabled,
+            "ab_judge_enabled": agent.ab_judge_enabled,
+        },
+        "skills": skills,
+        "active_prompt_hints": hints,
+        "circuit_breaker": circuit_breaker.get_status(aid),
+    }
+
+
 @router.post("/replay/{record_id}", dependencies=[Depends(require_api_key)])
 async def workflow_replay_task(
     record_id: Annotated[str, Path(min_length=1, max_length=128)],
