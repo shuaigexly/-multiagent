@@ -1292,6 +1292,62 @@ async def workflow_stream(
     )
 
 
+@router.get("/telemetry", dependencies=[Depends(require_api_key)])
+async def workflow_telemetry():
+    """运维 / 评审用：返回当前进程内多 base 工作流的综合遥测数据。
+
+    覆盖维度：
+      - workflow runner 状态（running / paused / 调度统计）
+      - 多租户注册表：当前 base 数 + 活跃 base（app_token 经 redact）
+      - LLM 用量（task / tenant_today / global_today，含 reasoning 单独维度）
+      - SSE 订阅队列规模（progress_broker 进程内对单机健康度的代理指标）
+
+    没有时间窗回溯（避免拉 Bitable 重；日级用量靠 Redis 计数器自然滚动）。
+    路由不带 ?app_token= — 用 ContextVar 里的 tenant_id；评审场景多用 default 租户。
+    """
+    from app.core.budget import get_status as get_budget_status
+
+    redacted_active_token = (
+        redact_sensitive_text(_active_token, max_chars=120) if _active_token else ""
+    )
+    redacted_registry = [
+        redact_sensitive_text(token, max_chars=120) for token in _state_by_token.keys()
+    ]
+
+    try:
+        budget_snapshot = await get_budget_status()
+    except Exception as exc:
+        logger.debug("telemetry: budget status fetch failed: %s", exc)
+        budget_snapshot = {"error": "budget snapshot unavailable"}
+
+    # SSE 订阅器规模（broker 内部 dict 直接读，不锁；只是粗略计数用于运维）
+    try:
+        from app.bitable_workflow import progress_broker
+
+        sse_subscriber_counts = {
+            task_id: len(queues)
+            for task_id, queues in progress_broker._subscribers.items()
+        }
+    except Exception as exc:
+        logger.debug("telemetry: sse subscribers fetch failed: %s", exc)
+        sse_subscriber_counts = {}
+
+    return {
+        "workflow": {
+            "running": runner.is_running(),
+            "active_token": redacted_active_token,
+            "tenants_registered": len(_state_by_token),
+            "tenants_redacted": redacted_registry,
+        },
+        "budget": budget_snapshot,
+        "sse": {
+            "active_streams": len(sse_subscriber_counts),
+            "total_subscribers": sum(sse_subscriber_counts.values()),
+        },
+        "snapshot_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
 @router.get("/export/{record_id}", dependencies=[Depends(require_api_key)])
 async def workflow_export_task(
     record_id: Annotated[str, Path(min_length=1, max_length=128)],

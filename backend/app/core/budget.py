@@ -226,7 +226,12 @@ async def check_budget(strict: bool = False) -> Optional[BudgetStatus]:
 
 
 async def get_status() -> dict:
-    """返回当前 task + tenant + global 三个维度用量，便于 /readyz / 监控面板查看。"""
+    """返回当前 task + tenant + global 三个维度用量，便于 /readyz / 监控面板查看。
+
+    v8.6.20-r35：reasoning_tokens 同步暴露 — 火山方舟豆包等推理模型按 reasoning
+    单价 1-3× completion 计费，单独看 day reasoning 用量是判断是否触发 reasoning
+    回路的运维指标。
+    """
     task_id = get_task_id()
     tenant_id = get_tenant_id() or "default"
     out: dict[str, dict] = {}
@@ -234,14 +239,17 @@ async def get_status() -> dict:
         out["task"] = {
             "id": task_id,
             "used": await _get(_key_task(task_id)),
+            "reasoning": await _get(_key_task(task_id) + ":reasoning"),
             "limit": settings.per_task_token_budget,
         }
     out["tenant_today"] = {
         "id": tenant_id,
         "used": await _get(_key_daily("tenant", tenant_id)),
+        "reasoning": await _get(_key_daily("tenant", tenant_id) + ":reasoning"),
         "limit": settings.daily_token_budget,
     }
     out["global_today"] = {
         "used": await _get(_key_daily("global", "all")),
+        "reasoning": await _get(_key_daily("global", "all") + ":reasoning"),
     }
     return out
