@@ -755,6 +755,48 @@ async def _sync_delivery_archive(
     )
 
 
+async def _find_duplicate_pending_task(
+    app_token: str,
+    table_id: str,
+    title: str,
+    dimension: str,
+) -> Optional[dict]:
+    """检测分析任务表里是否已存在 (title, dimension) 相同且未归档的记录。
+
+    返回首条命中（dict 含 record_id），无命中返 None。
+    Bitable filter 表达式做 server-side 过滤，性能可接受；同时保险叠加客户端
+    比较拍平后的 title — 飞书 search/list 偶尔把 text 字段返成富文本数组。
+    """
+    if not title or not title.strip():
+        return None
+    safe_title = title.strip().replace('"', '\\"')
+    # 只查未完成（待分析 / 分析中）状态。已归档 / 已完成不算冲突，让用户能复跑。
+    filter_expr = (
+        f'AND(CurrentValue.[任务标题]="{safe_title}",'
+        f'OR(CurrentValue.[状态]="{Status.PENDING}",CurrentValue.[状态]="{Status.ANALYZING}"))'
+    )
+    try:
+        records = await bitable_ops.list_records(
+            app_token, table_id, filter_expr=filter_expr, max_records=10
+        )
+    except Exception:
+        return None
+    if not records:
+        return None
+    # 客户端复检：拍平 title 字段；同时核对 dimension（filter 没法 server-side AND
+    # 三段，这里用 client-side 收紧）。
+    from app.bitable_workflow.scheduler import _flatten_text_value
+
+    norm_dim = dimension.strip()
+    for row in records:
+        fields_raw = row.get("fields") or {}
+        row_title = str(_flatten_text_value(fields_raw.get("任务标题")) or "").strip()
+        row_dim = str(_flatten_text_value(fields_raw.get("分析维度")) or "").strip()
+        if row_title == title.strip() and (not norm_dim or row_dim == norm_dim):
+            return row
+    return None
+
+
 async def _resolve_seed_template_defaults(
     app_token: str,
     template_name: str,
@@ -993,8 +1035,35 @@ async def workflow_apply_native_manifest(req: ApplyNativeRequest):
 
 
 @router.post("/seed", dependencies=[Depends(require_api_key)])
-async def workflow_seed(req: SeedRequest):
-    """向分析任务表写入一条新的待处理任务。"""
+async def workflow_seed(req: SeedRequest, force: bool = Query(False)):
+    """向分析任务表写入一条新的待处理任务。
+
+    v8.6.20-r38：默认开启**重复任务保护** — 相同 title × dimension 已存在
+    `待分析` 或 `分析中` 状态的记录时返 409，避免双击 / 网络重试 / 自动化误触发
+    导致 7 岗 LLM 链路重复跑（每条任务约 12-18k tokens）。
+
+    传 `?force=true` 显式跳过这一保护（例如：批量导入 / 真就是要复跑）。
+    """
+    if not force:
+        try:
+            existing = await _find_duplicate_pending_task(
+                req.app_token, req.table_id, req.title, req.dimension
+            )
+        except Exception as exc:
+            logger.debug("seed dedup check skipped: %s", exc)
+            existing = None
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "已有相同标题且未完成的分析任务，避免重复触发 7 岗 LLM 链路",
+                    "existing_record_id": existing.get("record_id", ""),
+                    "existing_title": req.title,
+                    "existing_dimension": req.dimension,
+                    "advice": "如确实要重新分析，加 `?force=true`；或先把旧任务标记为「已归档」",
+                },
+            )
+
     fields = {
         "任务标题": req.title,
         "分析维度": req.dimension,
