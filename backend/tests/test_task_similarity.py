@@ -322,3 +322,107 @@ async def test_similar_endpoint_returns_matches(monkeypatch):
     assert resp["matches"][0]["record_id"] == "rec_old"
     assert resp["matches"][0]["score"] == 2.5
     assert resp["matches"][0]["health"] == "🟡 关注"
+
+
+# ---------- r42: 长期记忆 wired into CEO prompt ----------
+
+
+def test_format_similar_for_prompt_returns_empty_when_no_matches():
+    from app.bitable_workflow.task_similarity import format_similar_for_prompt
+    assert format_similar_for_prompt([]) == ""
+
+
+def test_format_similar_for_prompt_renders_xml_block():
+    from app.bitable_workflow.task_similarity import SimilarTask, format_similar_for_prompt
+    matches = [
+        SimilarTask(
+            record_id="rec_a",
+            title="Q3 经营复盘",
+            dimension="数据复盘",
+            score=2.5,
+            health="🔴 预警",
+            completed_at="2026-03-31",
+            summary="过往结论：付费召回优先",
+        ),
+    ]
+    block = format_similar_for_prompt(matches)
+    assert "<similar_past_analyses>" in block
+    assert "</similar_past_analyses>" in block
+    assert "Q3 经营复盘" in block
+    assert "数据复盘" in block
+    assert "🔴 预警" in block
+    assert "付费召回优先" in block
+    assert "需拍板" not in block  # 不和冲突 alerts 混淆
+
+
+def test_workflow_context_set_get_clear():
+    from app.bitable_workflow.task_similarity import (
+        clear_workflow_context,
+        get_workflow_context,
+        set_workflow_context,
+    )
+    assert get_workflow_context() is None
+    token = set_workflow_context(app_token="app_xx", task_tid="tbl_xx")
+    ctx = get_workflow_context()
+    assert ctx == {"app_token": "app_xx", "task_tid": "tbl_xx"}
+    clear_workflow_context(token)
+    assert get_workflow_context() is None
+
+
+@pytest.mark.asyncio
+async def test_ceo_prompt_injects_similar_past_analyses_when_context_set(monkeypatch):
+    """端到端：scheduler 设了 workflow_context → CEO _build_prompt 自动 retrieval
+    + 注入 <similar_past_analyses> 块。"""
+    from app.agents.ceo_assistant import ceo_assistant_agent
+    from app.bitable_workflow import bitable_ops, task_similarity
+
+    # 模拟 list_records 返回一条相似度高的过往任务
+    async def fake_list(_app, _tid, *, filter_expr=None, max_records=200):
+        return [
+            {
+                "record_id": "rec_past",
+                "fields": {
+                    "任务标题": "Q3 经营复盘",
+                    "分析维度": "数据复盘",
+                    "背景说明": "GMV 下滑",
+                    "综合健康度": "🔴 预警",
+                    "完成时间": "2026-03-31",
+                    "决策摘要": "暂缓投入 + 优先召回",
+                },
+            }
+        ]
+
+    monkeypatch.setattr(bitable_ops, "list_records", fake_list)
+
+    token = task_similarity.set_workflow_context(app_token="app_x", task_tid="tbl_task_x")
+    try:
+        prompt = await ceo_assistant_agent._build_prompt(
+            task_description="Q3 经营复盘 — GMV 持续下滑",
+            data_summary=None,
+            upstream_results=[],
+            feishu_context=None,
+            user_instructions=None,
+        )
+    finally:
+        task_similarity.clear_workflow_context(token)
+
+    assert "<similar_past_analyses>" in prompt
+    assert "Q3 经营复盘" in prompt  # 命中过往任务的标题
+    assert "暂缓投入" in prompt  # 过往决策摘要
+    assert "🔴 预警" in prompt
+
+
+@pytest.mark.asyncio
+async def test_ceo_prompt_skips_similar_block_when_context_not_set():
+    """没 set_workflow_context → 不调 list_records，prompt 不含 similar 块。"""
+    from app.agents.ceo_assistant import ceo_assistant_agent
+
+    # 无 context — 函数应安全跳过
+    prompt = await ceo_assistant_agent._build_prompt(
+        task_description="Q3 复盘",
+        data_summary=None,
+        upstream_results=[],
+        feishu_context=None,
+        user_instructions=None,
+    )
+    assert "<similar_past_analyses>" not in prompt

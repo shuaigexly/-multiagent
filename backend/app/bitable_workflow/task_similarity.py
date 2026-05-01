@@ -28,6 +28,7 @@
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import re
 from dataclasses import dataclass
@@ -38,6 +39,28 @@ from app.bitable_workflow.scheduler import _flatten_text_value
 from app.bitable_workflow.schema import Status
 
 logger = logging.getLogger(__name__)
+
+
+# v8.6.20-r42：让 CEO _build_prompt 在 LLM 调用前能拉到当前任务的 base /
+# task_table 信息，供 find_similar_completed_tasks 使用。scheduler 在每条任务
+# 进入 pipeline 前 set_workflow_context(...)，prompt builder 读取。
+_workflow_context: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "active_workflow_context", default=None
+)
+
+
+def set_workflow_context(*, app_token: str, task_tid: str) -> "contextvars.Token":
+    """把当前任务的 base / task table 信息注入 asyncio context；返回 token，
+    调用方在任务结束后 reset() 清理，避免跨任务串台。"""
+    return _workflow_context.set({"app_token": app_token, "task_tid": task_tid})
+
+
+def clear_workflow_context(token: "contextvars.Token") -> None:
+    _workflow_context.reset(token)
+
+
+def get_workflow_context() -> Optional[dict]:
+    return _workflow_context.get()
 
 
 # 中文常见连接词 / 助词 / 量词，过滤掉避免拉高所有任务的相似度
@@ -206,3 +229,33 @@ async def find_similar_completed_tasks(
 
     scored.sort(key=lambda x: (-x.score, x.title))
     return scored[:top_k]
+
+
+def format_similar_for_prompt(matches: list[SimilarTask]) -> str:
+    """把相似过往任务渲染成可注入 CEO prompt 的 XML 块；空列表返空串。
+
+    用途：让 CEO LLM 在做新任务决策时，能借鉴几个月前同维度任务的健康度评级
+    + 决策摘要，避免每次都从零起步。这是多智能体长期记忆的实际兑现。
+    """
+    if not matches:
+        return ""
+    lines = ["⚠️ 系统检测到下列过往同维度 / 同主题任务（按相似度倒序）。"]
+    lines.append("请在你的决策里**引用过往结论**或**说明为何本次结论与过往不同**：\n")
+    for i, m in enumerate(matches, start=1):
+        lines.append(f"{i}. 《{m.title}》[相似度 {m.score:.2f}]")
+        meta_bits = []
+        if m.dimension:
+            meta_bits.append(f"维度 {m.dimension}")
+        if m.health:
+            meta_bits.append(f"当时评级 {m.health}")
+        if m.completed_at:
+            meta_bits.append(f"完成于 {m.completed_at}")
+        if meta_bits:
+            lines.append("   " + " · ".join(meta_bits))
+        if m.summary:
+            lines.append(f"   过往结论摘要：{m.summary}")
+    return (
+        "\n<similar_past_analyses>\n"
+        + "\n".join(lines)
+        + "\n</similar_past_analyses>\n"
+    )

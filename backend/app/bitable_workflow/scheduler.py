@@ -2798,6 +2798,10 @@ async def _run_one_cycle_locked(app_token: str, table_ids: dict) -> int:
 
         # 绑定 task_id 上下文 — 此后所有 logger.* 调用自动带上 task_id，便于聚合查询
         set_task_context(task_id=rid)
+        # v8.6.20-r42：把 (app_token, task_tid) 注入 ContextVar，让 CEO _build_prompt
+        # 在 LLM 调用前能拉到本 base 的过往同维度任务做长期记忆 retrieval。
+        from app.bitable_workflow.task_similarity import set_workflow_context as _set_wf_ctx
+        _set_wf_ctx(app_token=app_token, task_tid=task_tid)
 
         # 任务依赖检查：「依赖任务编号」中的所有任务必须 已完成 才能启动
         unmet_deps = _unmet_dependencies(fields.get("依赖任务编号"), dep_index)

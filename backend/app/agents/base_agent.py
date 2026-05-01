@@ -438,6 +438,34 @@ class BaseAgent(ABC):
                 if conflict_block:
                     upstream_section += conflict_block
 
+        # v8.6.20-r42：长期记忆 retrieval — 即便 upstream_results 为空也尝试 retrieval，
+        # 因为长期记忆在"用户手动让 CEO 直接出摘要"或"budget mode"等场景同样有价值。
+        # 仅 CEO 注入；其他 6 岗不需要长期记忆（他们专注本任务领域分析）。
+        if self.agent_id == "ceo_assistant":
+            try:
+                from app.bitable_workflow.task_similarity import (
+                    find_similar_completed_tasks,
+                    format_similar_for_prompt,
+                    get_workflow_context,
+                )
+
+                wf_ctx = get_workflow_context()
+                if wf_ctx and wf_ctx.get("app_token") and wf_ctx.get("task_tid"):
+                    similar = await find_similar_completed_tasks(
+                        app_token=wf_ctx["app_token"],
+                        table_id=wf_ctx["task_tid"],
+                        query_title=task_description[:200],
+                        query_dimension="",  # 维度信息混在 task_description 里
+                        query_background=task_description[:1000],
+                        top_k=2,
+                        min_score=0.5,  # CEO prompt 召回门槛比 /similar 端点严，避免噪声
+                    )
+                    similar_block = format_similar_for_prompt(similar)
+                    if similar_block:
+                        upstream_section += similar_block
+            except Exception as exc:
+                logger.debug("[%s] similar past analyses lookup skipped: %s", self.agent_id, exc)
+
         # Load and inject matching skills
         from app.core.skill_loader import format_skills_for_prompt, get_skills_for_agent
         skills = await asyncio.to_thread(get_skills_for_agent, self.agent_id)
