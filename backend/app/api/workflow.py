@@ -1292,6 +1292,25 @@ async def workflow_stream(
     )
 
 
+@router.get("/preflight", dependencies=[Depends(require_api_key)])
+async def workflow_preflight():
+    """部署前置体检 — 在调 /setup 之前先验证 Feishu / LLM / Redis 配置正确性。
+
+    并发跑 4 个 check（30s 总超时）：
+      - Feishu tenant_access_token：app_id/secret 配置生效
+      - LLM 可达性：fast 档调一次最短 prompt
+      - 国内模型合规：base_url 不在 openai/anthropic 黑名单（竞赛一票否决）
+      - Redis 分布式锁：未配 REDIS_URL 视为单实例合规
+
+    端点永远返 200；payload `ok` 字段表示是否全部通过，`checks[].advisory` 给
+    每条失败的修复建议。前端拿来直接渲染体检报告。
+    """
+    from app.bitable_workflow.preflight import report_to_dict, run_preflight
+
+    report = await run_preflight()
+    return report_to_dict(report)
+
+
 @router.get("/telemetry", dependencies=[Depends(require_api_key)])
 async def workflow_telemetry():
     """运维 / 评审用：返回当前进程内多 base 工作流的综合遥测数据。
