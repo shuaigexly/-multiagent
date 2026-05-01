@@ -1,0 +1,4130 @@
+{
+  "components": {
+    "schemas": {
+      "AgentResultOut": {
+        "properties": {
+          "action_items": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Action Items",
+            "type": "array"
+          },
+          "agent_id": {
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "agent_name": {
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "chart_data": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Chart Data",
+            "type": "array"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/ResultSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "agent_id",
+          "agent_name",
+          "sections",
+          "action_items"
+        ],
+        "title": "AgentResultOut",
+        "type": "object"
+      },
+      "ApplyNativeRequest": {
+        "properties": {
+          "app_token": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Token"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "surfaces": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Surfaces",
+            "type": "array"
+          }
+        },
+        "title": "ApplyNativeRequest",
+        "type": "object"
+      },
+      "Body_create_task_api_v1_tasks_post": {
+        "properties": {
+          "feishu_context": {
+            "anyOf": [
+              {
+                "maxLength": 200000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feishu Context"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "format": "binary",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "input_text": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Text"
+          }
+        },
+        "title": "Body_create_task_api_v1_tasks_post",
+        "type": "object"
+      },
+      "ConfigItem": {
+        "properties": {
+          "key": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "ConfigItem",
+        "type": "object"
+      },
+      "ConfigStatus": {
+        "properties": {
+          "set": {
+            "title": "Set",
+            "type": "boolean"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "set",
+          "value"
+        ],
+        "title": "ConfigStatus",
+        "type": "object"
+      },
+      "ConfirmRequest": {
+        "properties": {
+          "action": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Actor",
+            "type": "string"
+          },
+          "app_token": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "App Token",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "table_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Table Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_token",
+          "table_id",
+          "record_id",
+          "action"
+        ],
+        "title": "ConfirmRequest",
+        "type": "object"
+      },
+      "CreateTaskRequest": {
+        "properties": {
+          "source_task_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Task Id"
+          },
+          "summary": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "title": "CreateTaskRequest",
+        "type": "object"
+      },
+      "FeishuTestRequest": {
+        "properties": {
+          "app_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Id"
+          },
+          "app_secret": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Secret"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cn",
+                  "intl"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          }
+        },
+        "title": "FeishuTestRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LLMTestRequest": {
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "title": "LLMTestRequest",
+        "type": "object"
+      },
+      "PublishRequest": {
+        "properties": {
+          "asset_types": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Asset Types",
+            "type": "array"
+          },
+          "chat_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chat Id"
+          },
+          "doc_title": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Title"
+          }
+        },
+        "required": [
+          "asset_types"
+        ],
+        "title": "PublishRequest",
+        "type": "object"
+      },
+      "PublishResponse": {
+        "properties": {
+          "errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "object"
+          },
+          "published": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Published",
+            "type": "array"
+          }
+        },
+        "required": [
+          "published"
+        ],
+        "title": "PublishResponse",
+        "type": "object"
+      },
+      "ResultSection": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "content"
+        ],
+        "title": "ResultSection",
+        "type": "object"
+      },
+      "SaveConfigRequest": {
+        "properties": {
+          "configs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConfigItem"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configs"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "title": "SaveConfigRequest",
+        "type": "object"
+      },
+      "SeedRequest": {
+        "properties": {
+          "app_token": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "App Token",
+            "type": "string"
+          },
+          "approval_owner": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Approval Owner",
+            "type": "string"
+          },
+          "approval_owner_open_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Approval Owner Open Id",
+            "type": "string"
+          },
+          "audience_level": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Audience Level",
+            "type": "string"
+          },
+          "background": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Background",
+            "type": "string"
+          },
+          "business_owner": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Business Owner",
+            "type": "string"
+          },
+          "business_stage": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Business Stage",
+            "type": "string"
+          },
+          "constraints": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Constraints",
+            "type": "string"
+          },
+          "dimension": {
+            "default": "综合分析",
+            "maxLength": 50,
+            "title": "Dimension",
+            "type": "string"
+          },
+          "execution_owner": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Execution Owner",
+            "type": "string"
+          },
+          "execution_owner_open_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Execution Owner Open Id",
+            "type": "string"
+          },
+          "output_purpose": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Output Purpose",
+            "type": "string"
+          },
+          "referenced_dataset": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Referenced Dataset",
+            "type": "string"
+          },
+          "report_audience": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Report Audience",
+            "type": "string"
+          },
+          "report_audience_open_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Report Audience Open Id",
+            "type": "string"
+          },
+          "retrospective_owner": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Retrospective Owner",
+            "type": "string"
+          },
+          "retrospective_owner_open_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Retrospective Owner Open Id",
+            "type": "string"
+          },
+          "review_owner": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Review Owner",
+            "type": "string"
+          },
+          "review_owner_open_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Review Owner Open Id",
+            "type": "string"
+          },
+          "review_sla_hours": {
+            "default": 0,
+            "maximum": 8760.0,
+            "minimum": 0.0,
+            "title": "Review Sla Hours",
+            "type": "integer"
+          },
+          "success_criteria": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Success Criteria",
+            "type": "string"
+          },
+          "table_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Table Id",
+            "type": "string"
+          },
+          "target_audience": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Target Audience",
+            "type": "string"
+          },
+          "task_source": {
+            "default": "手工创建",
+            "maxLength": 50,
+            "title": "Task Source",
+            "type": "string"
+          },
+          "template": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Template",
+            "type": "string"
+          },
+          "template_name": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Template Name",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_token",
+          "table_id",
+          "title"
+        ],
+        "title": "SeedRequest",
+        "type": "object"
+      },
+      "SetupRequest": {
+        "properties": {
+          "apply_native": {
+            "default": false,
+            "title": "Apply Native",
+            "type": "boolean"
+          },
+          "base_type": {
+            "default": "validation",
+            "title": "Base Type",
+            "type": "string"
+          },
+          "mode": {
+            "default": "seed_demo",
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "default": "内容运营虚拟组织",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "title": "SetupRequest",
+        "type": "object"
+      },
+      "StartRequest": {
+        "properties": {
+          "analysis_every": {
+            "default": 5,
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Analysis Every",
+            "type": "integer"
+          },
+          "app_token": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "App Token",
+            "type": "string"
+          },
+          "interval": {
+            "default": 30,
+            "maximum": 86400.0,
+            "minimum": 1.0,
+            "title": "Interval",
+            "type": "integer"
+          },
+          "table_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 32,
+            "minProperties": 3,
+            "title": "Table Ids",
+            "type": "object"
+          }
+        },
+        "required": [
+          "app_token",
+          "table_ids"
+        ],
+        "title": "StartRequest",
+        "type": "object"
+      },
+      "TaskConfirm": {
+        "properties": {
+          "selected_modules": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 7,
+            "minItems": 1,
+            "title": "Selected Modules",
+            "type": "array"
+          },
+          "user_instructions": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Instructions"
+          }
+        },
+        "required": [
+          "selected_modules"
+        ],
+        "title": "TaskConfirm",
+        "type": "object"
+      },
+      "TaskListItem": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Text"
+          },
+          "status": {
+            "description": "任务状态：planning、pending、running、done、failed、cancelled",
+            "title": "Status",
+            "type": "string"
+          },
+          "task_type_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type Label"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "task_type_label",
+          "input_text",
+          "created_at"
+        ],
+        "title": "TaskListItem",
+        "type": "object"
+      },
+      "TaskPlanResponse": {
+        "properties": {
+          "reasoning": {
+            "title": "Reasoning",
+            "type": "string"
+          },
+          "selected_modules": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selected Modules",
+            "type": "array"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "task_type": {
+            "title": "Task Type",
+            "type": "string"
+          },
+          "task_type_label": {
+            "title": "Task Type Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "task_type",
+          "task_type_label",
+          "selected_modules",
+          "reasoning"
+        ],
+        "title": "TaskPlanResponse",
+        "type": "object"
+      },
+      "TaskResultsResponse": {
+        "properties": {
+          "agent_results": {
+            "items": {
+              "$ref": "#/components/schemas/AgentResultOut"
+            },
+            "title": "Agent Results",
+            "type": "array"
+          },
+          "published_assets": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Published Assets",
+            "type": "array"
+          },
+          "result_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Summary"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "task_type_label": {
+            "title": "Task Type Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "task_type_label",
+          "status",
+          "result_summary",
+          "agent_results",
+          "published_assets"
+        ],
+        "title": "TaskResultsResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "面向复杂任务的飞书 AI 工作台 — 自动识别任务类型，调用多 Agent 模块，结果返回飞书",
+    "title": "飞书 AI 工作台",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/config": {
+      "get": {
+        "operationId": "get_config_status_api_v1_config_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/ConfigStatus"
+                  },
+                  "title": "Response Get Config Status Api V1 Config Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Config Status",
+        "tags": [
+          "config"
+        ]
+      },
+      "post": {
+        "operationId": "save_config_api_v1_config_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Config",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/v1/config/test-bot": {
+      "post": {
+        "operationId": "test_bot_api_v1_config_test_bot_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Bot",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/v1/config/test-feishu": {
+      "post": {
+        "operationId": "test_feishu_api_v1_config_test_feishu_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeishuTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Feishu",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/v1/config/test-llm": {
+      "post": {
+        "operationId": "test_llm_api_v1_config_test_llm_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Llm",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/v1/feishu/bot/event": {
+      "post": {
+        "description": "飞书事件回调入口。\n要求在 3 秒内返回 200，实际任务执行放到 BackgroundTasks。",
+        "operationId": "feishu_bot_event_api_v1_feishu_bot_event_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Feishu Bot Event",
+        "tags": [
+          "feishu-bot"
+        ]
+      }
+    },
+    "/api/v1/feishu/calendar": {
+      "get": {
+        "operationId": "get_calendar_events_api_v1_feishu_calendar_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Calendar Events",
+        "tags": [
+          "feishu-context"
+        ]
+      }
+    },
+    "/api/v1/feishu/chats": {
+      "get": {
+        "operationId": "get_chats_api_v1_feishu_chats_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Chats",
+        "tags": [
+          "feishu-context"
+        ]
+      }
+    },
+    "/api/v1/feishu/chats/{chat_id}/messages": {
+      "get": {
+        "operationId": "get_chat_messages_api_v1_feishu_chats__chat_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Chat Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Chat Messages",
+        "tags": [
+          "feishu-context"
+        ]
+      }
+    },
+    "/api/v1/feishu/context": {
+      "get": {
+        "operationId": "get_feishu_context_api_v1_feishu_context_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Feishu Context",
+        "tags": [
+          "feishu-context"
+        ]
+      }
+    },
+    "/api/v1/feishu/doc/{token}/content": {
+      "get": {
+        "operationId": "get_doc_content_api_v1_feishu_doc__token__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Doc Content",
+        "tags": [
+          "feishu-context"
+        ]
+      }
+    },
+    "/api/v1/feishu/drive": {
+      "get": {
+        "operationId": "get_drive_files_api_v1_feishu_drive_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Drive Files",
+        "tags": [
+          "feishu-context"
+        ]
+      }
+    },
+    "/api/v1/feishu/oauth/apply-view-config": {
+      "post": {
+        "operationId": "apply_view_config_api_v1_feishu_oauth_apply_view_config_post",
+        "parameters": [
+          {
+            "description": "bitable app_token",
+            "in": "query",
+            "name": "app_token",
+            "required": true,
+            "schema": {
+              "description": "bitable app_token",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "App Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply View Config",
+        "tags": [
+          "feishu-oauth"
+        ]
+      }
+    },
+    "/api/v1/feishu/oauth/callback": {
+      "get": {
+        "description": "接收飞书 OAuth 回调，交换 user_access_token 并存入数据库",
+        "operationId": "oauth_callback_api_v1_feishu_oauth_callback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "title": "State",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oauth Callback",
+        "tags": [
+          "feishu-oauth"
+        ]
+      }
+    },
+    "/api/v1/feishu/oauth/list-bases": {
+      "get": {
+        "operationId": "list_user_bases_endpoint_api_v1_feishu_oauth_list_bases_get",
+        "parameters": [
+          {
+            "description": "optional folder token",
+            "in": "query",
+            "name": "folder_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "optional folder token",
+              "title": "Folder Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List User Bases Endpoint",
+        "tags": [
+          "feishu-oauth"
+        ]
+      }
+    },
+    "/api/v1/feishu/oauth/list-dashboards": {
+      "get": {
+        "description": "v8.6.19：列出 base 已有 Dashboards。\n\n优先 user_access_token（走 _with_user_token_retry，过期自动 refresh 一次），\nuser 不可用或失败时回退 tenant_access_token。",
+        "operationId": "list_dashboards_endpoint_api_v1_feishu_oauth_list_dashboards_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "App Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Dashboards Endpoint",
+        "tags": [
+          "feishu-oauth"
+        ]
+      }
+    },
+    "/api/v1/feishu/oauth/list-tables": {
+      "get": {
+        "operationId": "list_tables_endpoint_api_v1_feishu_oauth_list_tables_get",
+        "parameters": [
+          {
+            "description": "bitable app_token",
+            "in": "query",
+            "name": "app_token",
+            "required": true,
+            "schema": {
+              "description": "bitable app_token",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "App Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tables Endpoint",
+        "tags": [
+          "feishu-oauth"
+        ]
+      }
+    },
+    "/api/v1/feishu/oauth/refresh": {
+      "post": {
+        "description": "使用服务端保存的 refresh_token 刷新用户 OAuth token",
+        "operationId": "refresh_oauth_token_api_v1_feishu_oauth_refresh_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Oauth Token",
+        "tags": [
+          "feishu-oauth"
+        ]
+      }
+    },
+    "/api/v1/feishu/oauth/status": {
+      "get": {
+        "description": "检查用户 OAuth 授权状态",
+        "operationId": "get_oauth_status_api_v1_feishu_oauth_status_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Oauth Status",
+        "tags": [
+          "feishu-oauth"
+        ]
+      }
+    },
+    "/api/v1/feishu/oauth/url": {
+      "get": {
+        "description": "生成飞书 OAuth 授权 URL",
+        "operationId": "get_oauth_url_api_v1_feishu_oauth_url_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "backend_origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Backend Origin"
+            }
+          },
+          {
+            "in": "query",
+            "name": "frontend_origin",
+            "required": false,
+            "schema": {
+              "default": "http://localhost:5173",
+              "maxLength": 256,
+              "title": "Frontend Origin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Oauth Url",
+        "tags": [
+          "feishu-oauth"
+        ]
+      }
+    },
+    "/api/v1/feishu/tasks": {
+      "get": {
+        "operationId": "get_tasks_api_v1_feishu_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tasks",
+        "tags": [
+          "feishu-context"
+        ]
+      },
+      "post": {
+        "operationId": "create_feishu_task_api_v1_feishu_tasks_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Feishu Task",
+        "tags": [
+          "feishu"
+        ]
+      }
+    },
+    "/api/v1/feishu/wiki/nodes/{space_id}": {
+      "get": {
+        "operationId": "get_wiki_nodes_api_v1_feishu_wiki_nodes__space_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Wiki Nodes",
+        "tags": [
+          "feishu-context"
+        ]
+      }
+    },
+    "/api/v1/feishu/wiki/spaces": {
+      "get": {
+        "operationId": "get_wiki_spaces_api_v1_feishu_wiki_spaces_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Wiki Spaces",
+        "tags": [
+          "feishu-context"
+        ]
+      }
+    },
+    "/api/v1/tasks": {
+      "get": {
+        "operationId": "list_tasks_api_v1_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 50,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TaskListItem"
+                  },
+                  "title": "Response List Tasks Api V1 Tasks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tasks",
+        "tags": [
+          "tasks"
+        ]
+      },
+      "post": {
+        "description": "提交任务。input_text 或 file 至少提供一个。\n返回 TaskPlanner 识别结果，用户确认后才正式执行。",
+        "operationId": "create_task_api_v1_tasks_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_task_api_v1_tasks_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Task",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/agents": {
+      "get": {
+        "description": "返回所有可用 Agent 模块信息",
+        "operationId": "list_agents_api_v1_tasks_agents_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Agents",
+        "tags": [
+          "feishu"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}": {
+      "delete": {
+        "operationId": "delete_task_api_v1_tasks__task_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Task",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/confirm": {
+      "post": {
+        "description": "用户确认模块选择后正式执行（BackgroundTasks 异步执行）",
+        "operationId": "confirm_task_api_v1_tasks__task_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Task",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/events": {
+      "get": {
+        "description": "SSE 流：推送任务执行进度事件（业务语言，非技术日志）",
+        "operationId": "task_events_api_v1_tasks__task_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 4096,
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Task Events",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/events-token": {
+      "post": {
+        "operationId": "task_events_token_api_v1_tasks__task_id__events_token_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Task Events Token",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/publish": {
+      "post": {
+        "operationId": "publish_task_api_v1_tasks__task_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Task",
+        "tags": [
+          "feishu"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/results": {
+      "get": {
+        "operationId": "get_results_api_v1_tasks__task_id__results_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResultsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Results",
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/status": {
+      "get": {
+        "operationId": "get_task_status_api_v1_tasks__task_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Task Status",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/workflow/agents": {
+      "get": {
+        "description": "七岗 Agent 完整目录（v8.6.20-r45）— 评审 / 用户 / 运维一眼看清系统装了哪些 agent。\n\n每个 agent 返回：id / name / description / dependencies / 加载的技能数 /\n激活的 prompt 提示数 / 熔断器状态。深入查单个岗位走 /agents/{id}/profile。",
+        "operationId": "workflow_agents_catalog_api_v1_workflow_agents_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Agents Catalog",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/agents/{agent_id}/profile": {
+      "get": {
+        "description": "单个 agent 的完整画像：身份 + DAG 依赖 + 加载的技能内容 +\n激活的 prompt 自演化 hint + 熔断状态。\n\n用途：评审 / 用户 想看「数据分析师到底装了什么 prompt 模板」。",
+        "operationId": "workflow_agent_profile_api_v1_workflow_agents__agent_id__profile_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Agent Profile",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/audit": {
+      "get": {
+        "description": "查询审计日志 — 评审 / 用户 / 运维核查工作流敏感操作历史。\n\n过滤维度：\n  - target：把同一记录的 setup / start / seed / confirm / native_apply 全拉出来\n  - action_prefix：prefix 匹配（\"workflow.\" / \"config.\" / \"oauth.\"），不传则不过滤\n  - limit：1-500，默认 50（按 created_at desc）\n\n返回 payload 已经过 redact_sensitive_data 处理（写入时就脱敏，读出来不会泄漏 token）。",
+        "operationId": "workflow_audit_api_v1_workflow_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "target",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action_prefix",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action Prefix"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Audit",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/cancel/{record_id}": {
+      "post": {
+        "description": "主动取消一条 in-flight 任务（v8.6.20-r43）。\n\n幂等：调用多次返回同样结果。`already_pending: true` 表示任务此前已被标记取消。\n\n取消信号是进程内 set，所以：\n  - 单实例部署：本调度循环立即看到，下一个 agent 入口抛 TaskCancelled\n    → pipeline 走清理路径 → 主表回写 异常状态/异常类型 = 用户取消\n  - 多实例部署：取消请求只对处理本任务的实例生效；其他实例不受影响\n    （未来可换 Redis pub/sub 全局广播）\n\n可选 `?app_token=` 用于把 Bitable 主表也立即标记 异常状态=已异常 + 异常类型=用户取消，\n避免下一轮 cycle 仍把这条 cancel 任务当 PENDING 重启。",
+        "operationId": "workflow_cancel_task_api_v1_workflow_cancel__record_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Record Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "App Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Cancel Task",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/confirm": {
+      "post": {
+        "description": "回写主表管理确认字段：拍板、执行落地、进入复盘。",
+        "operationId": "workflow_confirm_api_v1_workflow_confirm_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Confirm",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/export/{record_id}": {
+      "get": {
+        "description": "导出一条任务的全量产出为 Markdown — 供用户离线复盘 / 知识沉淀 / 评审下载。\n\n路径 record_id 是「分析任务」表的主表 record_id；可选 ?app_token= 显式指定\nbase，缺省走最近活跃 base。`?download=1` 触发浏览器下载（带 Content-Disposition\nattachment 头），不传则按 text/markdown 直接渲染。\n\n汇编内容：任务元数据 / 背景 / CEO 综合报告 / 七岗 Agent 分析 / 证据链 /\n交付动作 / 复核历史。任一从表缺失或读失败不影响其他段落。",
+        "operationId": "workflow_export_task_api_v1_workflow_export__record_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Record Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "App Token"
+            }
+          },
+          {
+            "in": "query",
+            "name": "download",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Download",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Export Task",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/native-assets": {
+      "get": {
+        "description": "返回指定 / 当前活跃 Base 的原生表单/自动化/工作流/仪表盘/角色蓝图。",
+        "operationId": "workflow_native_assets_api_v1_workflow_native_assets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "App Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Native Assets",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/native-manifest": {
+      "get": {
+        "description": "返回指定 / 当前活跃 Base 的飞书原生安装包、命令模板和安装顺序。",
+        "operationId": "workflow_native_manifest_api_v1_workflow_native_manifest_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "App Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Native Manifest",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/native-manifest/apply": {
+      "post": {
+        "description": "执行飞书原生安装包，把 advperm/form/workflow/dashboard/role 等对象落到云侧。",
+        "operationId": "workflow_apply_native_manifest_api_v1_workflow_native_manifest_apply_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyNativeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Apply Native Manifest",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/preflight": {
+      "get": {
+        "description": "部署前置体检 — 在调 /setup 之前先验证 Feishu / LLM / Redis 配置正确性。\n\n并发跑 4 个 check（30s 总超时）：\n  - Feishu tenant_access_token：app_id/secret 配置生效\n  - LLM 可达性：fast 档调一次最短 prompt\n  - 国内模型合规：base_url 不在 openai/anthropic 黑名单（竞赛一票否决）\n  - Redis 分布式锁：未配 REDIS_URL 视为单实例合规\n\n端点永远返 200；payload `ok` 字段表示是否全部通过，`checks[].advisory` 给\n每条失败的修复建议。前端拿来直接渲染体检报告。",
+        "operationId": "workflow_preflight_api_v1_workflow_preflight_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Preflight",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/records": {
+      "get": {
+        "description": "查看多维表格中的记录（可按状态过滤）。",
+        "operationId": "workflow_records_api_v1_workflow_records_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "App Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "table_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Table Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 50,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Records",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/replay/{record_id}": {
+      "post": {
+        "description": "复跑一条已完成 / 已异常 / 已取消的任务（v8.6.20-r44）。\n\n使用场景：\n  - 用户 /cancel 之后想重新跑（fix 数据后再 replay）\n  - 模板 / prompt 被更新过，想用新 prompt 复评同一条任务\n  - CEO 报告写错了 / 用户拍板后又改主意\n\n行为：\n  1. 拉记录验证当前不在 「分析中」（in-flight 时 409）\n  2. 清掉 cancellation 注册表里的标记（防 r43 残留把 replay 后的 cycle 立刻 cancel）\n  3. 把主表状态拉回「待分析」+ 清「异常状态/异常类型/异常说明」+ 进度=0\n  4. `?fresh=true` 时还清 task-level agent_cache，强制下一轮所有 agent 真打 LLM\n     （默认不清缓存：能复用就复用，省 tokens）\n\n端点本身不直接触发 cycle — 等下一轮调度循环（默认 30s）自动接手。\n多租户：可选 `?app_token=` 显式定位 base，缺省最近活跃 base。",
+        "operationId": "workflow_replay_task_api_v1_workflow_replay__record_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Record Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "App Token"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Fresh",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Replay Task",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/seed": {
+      "post": {
+        "description": "向分析任务表写入一条新的待处理任务。\n\nv8.6.20-r38：默认开启**重复任务保护** — 相同 title × dimension 已存在\n`待分析` 或 `分析中` 状态的记录时返 409，避免双击 / 网络重试 / 自动化误触发\n导致 7 岗 LLM 链路重复跑（每条任务约 12-18k tokens）。\n\n传 `?force=true` 显式跳过这一保护（例如：批量导入 / 真就是要复跑）。",
+        "operationId": "workflow_seed_api_v1_workflow_seed_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Force",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Seed",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/setup": {
+      "post": {
+        "description": "创建飞书多维表格结构（12 张业务表、精简工作流视图、模板中心）并写入初始分析任务。",
+        "operationId": "workflow_setup_api_v1_workflow_setup_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Setup",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/similar": {
+      "get": {
+        "description": "跨任务相似度检索 — AI 多智能体的长期记忆能力。\n\n给定新任务的 title / dimension / background，扫历史「已完成」+「已归档」\n任务，按 Jaccard 加权打分（title × 2 + dimension × 0.5 + background × 0.3）\n返回 top_k 最相似的过往任务。\n\n用途：\n- 创建任务前提示用户「6 个月前已分析过类似的 [xxx]」\n- CEO 决策时参考过往同维度结论\n- 评审场景演示 AI 的连续学习",
+        "operationId": "workflow_similar_tasks_api_v1_workflow_similar_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "title",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dimension",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 50,
+              "title": "Dimension",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "background",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 2000,
+              "title": "Background",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "App Token"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "maximum": 10,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Similar Tasks",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/start": {
+      "post": {
+        "description": "启动七岗多智能体持续调度循环（后台运行）。",
+        "operationId": "workflow_start_api_v1_workflow_start_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Start",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/status": {
+      "get": {
+        "description": "返回当前运行状态和多维表格信息。\n\nv8.6.20-r29：传 `?app_token=` 拿指定 base 的状态；不传则返回最近活跃 base\n（保持旧前端兼容）。多人同时用不同 base 时显式带 token 才能避免互看。",
+        "operationId": "workflow_status_api_v1_workflow_status_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "app_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "App Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Status",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/stop": {
+      "post": {
+        "description": "停止调度循环。",
+        "operationId": "workflow_stop_api_v1_workflow_stop_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Stop",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/stream-token/{task_record_id}": {
+      "post": {
+        "operationId": "workflow_stream_token_api_v1_workflow_stream_token__task_record_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_record_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Record Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Stream Token",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/stream/{task_record_id}": {
+      "get": {
+        "description": "SSE 流：实时推送 Bitable 工作流的 Wave 进度事件。\n\n订阅后立即接收 task.started / wave.completed / task.done / task.error 等事件。\n前端使用 EventSource 即可订阅；连接保持到 task.done/task.error 或客户端断开。",
+        "operationId": "workflow_stream_api_v1_workflow_stream__task_record_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_record_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Task Record Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 4096,
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Stream",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/v1/workflow/telemetry": {
+      "get": {
+        "description": "运维 / 评审用：返回当前进程内多 base 工作流的综合遥测数据。\n\n覆盖维度：\n  - workflow runner 状态（running / paused / 调度统计）\n  - 多租户注册表：当前 base 数 + 活跃 base（app_token 经 redact）\n  - LLM 用量（task / tenant_today / global_today，含 reasoning 单独维度）\n  - SSE 订阅队列规模（progress_broker 进程内对单机健康度的代理指标）\n\n没有时间窗回溯（避免拉 Bitable 重；日级用量靠 Redis 计数器自然滚动）。\n路由不带 ?app_token= — 用 ContextVar 里的 tenant_id；评审场景多用 default 租户。",
+        "operationId": "workflow_telemetry_api_v1_workflow_telemetry_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Api-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workflow Telemetry",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_alias_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Alias Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Alias",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "description": "Liveness：只确认 Python 进程可响应；任何依赖问题不影响这个端点。",
+        "operationId": "liveness_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Liveness Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "Readiness：检查 DB / Redis / LLM / Feishu 是否就绪。\n\nRedis 是 optional 依赖（缺失不阻断 ready），其余三项任一 fail 返回 503。",
+        "operationId": "readiness_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Readiness Readyz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness",
+        "tags": [
+          "health"
+        ]
+      }
+    }
+  }
+}

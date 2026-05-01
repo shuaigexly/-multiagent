@@ -245,6 +245,11 @@ AI 自动从以下 9 种类型识别并推荐 Agent 组合：
 | `GET`  | `/api/v1/workflow/similar` | **跨任务相似度检索（多智能体长期记忆）**：`?title=&dimension=&background=` Jaccard 加权打分扫已完成 / 已归档历史，返回 top_k 相似任务 + 健康度 + 决策摘要 |
 | `GET`  | `/api/v1/workflow/agents` | **七岗 Agent 目录**：每条返 id / name / description / DAG 依赖 / 加载技能数 / 激活 prompt hint 数 / 熔断器状态 |
 | `GET`  | `/api/v1/workflow/agents/{agent_id}/profile` | **单岗位完整画像**：身份 + 模型配置（max_tokens / temperature / plan_execute）+ 全部技能元数据 + 激活的 prompt 演化 hint + 熔断状态 |
+
+### Headless 工具
+
+- **OpenAPI spec 一键导出**：`cd backend && python -m scripts.export_openapi --pretty --out ../docs/openapi.json` → 拿到完整 OpenAPI 3.x JSON（55 paths / 58 operations / 115 KB），导入 Swagger UI / Postman 自助探查
+- **CLI 工具**：`python -m app.cli <command>` 14 个子命令覆盖全部端点（preflight / setup / start / stop / status / telemetry / agents / agent-profile / similar / cancel / replay / export / audit / seed）；环境变量 `PUFF_C21_API_BASE` + `PUFF_C21_API_KEY` 配置目标后端
 | `GET`  | `/api/v1/workflow/native-assets` | 查看当前 Base 的原生蓝图状态 |
 | `GET`  | `/api/v1/workflow/native-manifest` | 查看原生安装顺序、命令包和 Markdown 安装说明 |
 | `POST` | `/api/v1/workflow/native-manifest/apply` | 执行原生安装包，把蓝图落到飞书云侧 |
